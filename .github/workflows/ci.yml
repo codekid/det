@@ -14,8 +14,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: uv pip install --system -e ".[dev]"
+        # mcp extra required for tests/mcp; avoid --system (PEP 668 on ubuntu-latest)
+        run: uv sync --extra dev --extra mcp
       - name: Lint
-        run: ruff check .
+        run: uv run ruff check .
       - name: Pytest
-        run: pytest -q
+        run: uv run pytest -q
