@@ -1,0 +1,9 @@
+disaster_analytics:
+  target: duckdb
+  outputs:
+    duckdb:
+      type: duckdb
+      # Absolute path required under Cosmos (runs from a /tmp project clone).
+      # Default keeps local `cd dbt && dbt …` working.
+      path: "{{ env_var('DET_ANALYTICS_DUCKDB', '../data/analytics.duckdb') }}"
+      schema: main

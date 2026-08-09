@@ -1,0 +1,103 @@
+"""Shared env helpers for DET Airflow DAGs (not a DAG module)."""
+
+from __future__ import annotations
+
+import os
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+
+
+def project_root() -> Path:
+    return Path(os.environ.get("DET_PROJECT_ROOT", "/opt/det"))
+
+
+def pipeline_ref() -> str:
+    return os.environ.get("DET_PIPELINE_CONFIG", "noaa.storm_events")
+
+
+def pipeline_path() -> Path:
+    from det.runtime.pipelines import resolve_pipeline_ref
+
+    return resolve_pipeline_ref(pipeline_ref(), project_root=project_root()).path
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def pipeline_overrides() -> list[str]:
+    """Parse DET_PIPELINE_OVERRIDES as comma/newline-separated `key=value` (CLI --set)."""
+    raw = os.environ.get("DET_PIPELINE_OVERRIDES", "")
+    if not raw.strip():
+        return []
+    return [part.strip() for part in raw.replace("\n", ",").split(",") if part.strip()]
+
+
+def dbt_select_for_pipeline() -> list[str]:
+    """Same default select as ``det dbt`` / ``run_dbt`` (stg_{slug}+)."""
+    from det.runtime.config import load_pipeline_config
+    from det.runtime.dbt_runner import default_select_for_pipeline
+
+    config = load_pipeline_config(
+        pipeline_path(), overrides=pipeline_overrides() or None
+    )
+    return default_select_for_pipeline(config)
+
+
+def dbt_env_for_pipeline() -> dict[str, str]:
+    """Env Cosmos/dbt need to read DET bronze (lake path + SQL schema identity)."""
+    from det.destinations.models import lake_root
+    from det.runtime.config import load_pipeline_config
+    from det.runtime.ids import sql_names_for_config
+
+    root = project_root()
+    config = load_pipeline_config(
+        pipeline_path(), overrides=pipeline_overrides() or None
+    )
+    sql_schema, _ = sql_names_for_config(config)
+    lake = os.environ.get("DET_LAKE_PATH")
+    if not lake:
+        lake = str(lake_root(config.destination, root))
+    if config.destination.type == "duckdb":
+        bronze_source = "duckdb"
+    else:
+        bronze_source = "filesystem"
+    analytics_db = os.environ.get("DET_ANALYTICS_DUCKDB")
+    if not analytics_db:
+        analytics_db = str((root / "data" / "analytics.duckdb").resolve())
+    return {
+        "DET_LAKE_PATH": lake,
+        "DET_BRONZE_SOURCE": os.environ.get("DET_BRONZE_SOURCE", bronze_source),
+        "DET_BRONZE_SCHEMA": os.environ.get("DET_BRONZE_SCHEMA", sql_schema),
+        # Absolute: Cosmos clones the dbt project under /tmp, so profiles.yml
+        # relative paths would resolve to /tmp/data/...
+        "DET_ANALYTICS_DUCKDB": analytics_db,
+    }
+
+
+def daily_logical_dates_for_interval(
+    interval_start: str, interval_end: str
+) -> list[datetime]:
+    """Map DET ``[interval_start, interval_end)`` to Airflow ``@daily`` logical dates.
+
+    For each day ``D`` in the half-open range, the daily timetable uses
+    ``logical_date = D + 1 day`` so ``data_interval`` is ``[D, D+1)``.
+    """
+    start = date.fromisoformat(interval_start.strip()[:10])
+    end = date.fromisoformat(interval_end.strip()[:10])
+    if end <= start:
+        raise ValueError(
+            f"interval_end ({end.isoformat()}) must be after "
+            f"interval_start ({start.isoformat()})"
+        )
+    out: list[datetime] = []
+    day = start
+    while day < end:
+        out.append(
+            datetime(day.year, day.month, day.day, tzinfo=UTC) + timedelta(days=1)
+        )
+        day += timedelta(days=1)
+    return out

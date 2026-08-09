@@ -1,0 +1,37 @@
+---
+description: When to use DET MCP vs CLI; dry-run only; dlt boundaries
+alwaysApply: false
+---
+
+# DET MCP (v1)
+
+Use the **det** MCP server for inspect and dry-run planning inside Cursor. Prefer MCP
+tools over shelling out to `det` when exploring pipelines, lake partitions, prune
+plans, or scaffold/dbt previews.
+
+## v1 policy (dry-run / read-only)
+
+**Allowed via MCP:** `list_*`, `describe_pipeline`, `read_manifest`, `prune_dry_run`,
+`dbt_dry_run`, `scaffold_dbt_dry_run`, `init_pipeline_dry_run`, and `det://` resources.
+
+**Not in MCP v1 — use CLI deliberately:** `det extract` / `load` / `run`,
+`det prune --apply`, non-dry-run `scaffold-dbt` / `init-pipeline`.
+
+Paths are sandboxed under `DET_PROJECT_ROOT` (default cwd / project root).
+
+## MCP vs CLI
+
+| Goal | Prefer |
+| --- | --- |
+| List pipelines / describe config | MCP `list_pipelines` / `describe_pipeline` |
+| Debug missing raw / bronze runs | MCP `list_raw_partitions` / `list_bronze_partitions` / `read_manifest` |
+| Preview prune | MCP `prune_dry_run` then CLI `--apply` if approved |
+| Preview dbt/scaffold | MCP `*_dry_run` then CLI without `--dry-run` |
+| Mutating extract/load | CLI only |
+
+## dlt boundaries
+
+dlt is extraction tooling only. Never suggest `dlt.pipeline` / `pipeline.run` for
+bronze landing, dlt load state, or normalizer unnesting. DET owns validation, meta,
+and writers (`write_jsonl_partition`, `write_duckdb_table`, `write_postgres_table`).
+See also `dlt-boundaries` rule.

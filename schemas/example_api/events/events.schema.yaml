@@ -1,0 +1,11 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$title: example_api_events
+type: object
+required: [id, occurred_at]
+properties:
+  id: { type: string }
+  occurred_at: { type: string }
+  severity: { type: string }
+  level: { type: string }
+  state: { type: ["string", "null"] }
+additionalProperties: false

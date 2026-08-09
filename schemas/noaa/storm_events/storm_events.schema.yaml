@@ -1,0 +1,60 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$title: storm_events
+description: >
+  Bronze contract: snake_case names and typed values. DET coerces source strings
+  to these types before validation.
+type: object
+required: [begin_day, begin_time, event_id]
+properties:
+  begin_yearmonth: { type: ["integer", "null"] }
+  begin_day: { type: "integer" }
+  begin_time: { type: "integer" }
+  end_yearmonth: { type: ["integer", "null"] }
+  end_day: { type: ["integer", "null"] }
+  end_time: { type: ["integer", "null"] }
+  episode_id: { type: ["integer", "null"] }
+  event_id: { type: "integer" }
+  state: { type: ["string", "null"] }
+  state_fips: { type: ["integer", "null"] }
+  year: { type: ["integer", "null"] }
+  month_name: { type: ["string", "null"] }
+  event_type: { type: ["string", "null"] }
+  cz_type: { type: ["string", "null"] }
+  cz_fips: { type: ["integer", "null"] }
+  cz_name: { type: ["string", "null"] }
+  wfo: { type: ["string", "null"] }
+  begin_date_time: { type: ["string", "null"] }
+  cz_timezone: { type: ["string", "null"] }
+  end_date_time: { type: ["string", "null"] }
+  injuries_direct: { type: ["integer", "null"] }
+  injuries_indirect: { type: ["integer", "null"] }
+  deaths_direct: { type: ["integer", "null"] }
+  deaths_indirect: { type: ["integer", "null"] }
+  damage_property: { type: ["string", "null"] }
+  damage_crops: { type: ["string", "null"] }
+  source: { type: ["string", "null"] }
+  magnitude: { type: ["number", "null"] }
+  magnitude_type: { type: ["string", "null"] }
+  flood_cause: { type: ["string", "null"] }
+  category: { type: ["string", "null"] }
+  tor_f_scale: { type: ["string", "null"] }
+  tor_length: { type: ["number", "null"] }
+  tor_width: { type: ["integer", "null"] }
+  tor_other_wfo: { type: ["string", "null"] }
+  tor_other_cz_state: { type: ["string", "null"] }
+  tor_other_cz_fips: { type: ["string", "null"] }
+  tor_other_cz_name: { type: ["string", "null"] }
+  begin_range: { type: ["number", "null"] }
+  begin_azimuth: { type: ["string", "null"] }
+  begin_location: { type: ["string", "null"] }
+  end_range: { type: ["number", "null"] }
+  end_azimuth: { type: ["string", "null"] }
+  end_location: { type: ["string", "null"] }
+  begin_lat: { type: ["number", "null"] }
+  begin_lon: { type: ["number", "null"] }
+  end_lat: { type: ["number", "null"] }
+  end_lon: { type: ["number", "null"] }
+  episode_narrative: { type: ["string", "null"] }
+  event_narrative: { type: ["string", "null"] }
+  data_source: { type: ["string", "null"] }
+additionalProperties: false

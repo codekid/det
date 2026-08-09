@@ -1,0 +1,18 @@
+version: 2
+models:
+- name: silver_noaa_storm_events
+  description: Cleaned, deduped noaa_storm_events (silver)
+  columns:
+  - name: __row_hash
+    tests:
+    - unique
+    - not_null
+  - name: begin_day
+    tests:
+    - not_null
+  - name: begin_time
+    tests:
+    - not_null
+  - name: event_id
+    tests:
+    - not_null

@@ -1,0 +1,22 @@
+name: noaa.storm_events
+source:
+  type: noaa.storm_events
+# schema defaults to schemas/noaa/storm_events/storm_events.schema.yaml
+validation:
+  engine: jsonschema
+ingestion:
+  library: dlt
+destination:
+  type: filesystem
+  path: ./data/lake
+medallion:
+  bronze_prefix: bronze
+dbt:
+  silver:
+    materialized: table
+    unique_key: [__row_hash]
+    order_by: ["__extract_run_datetime desc"]
+    # Used when materialized: incremental
+    incremental_strategy: delete+insert
+    watermark: __extract_run_datetime
+    lookback: null

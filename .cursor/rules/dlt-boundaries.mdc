@@ -1,0 +1,28 @@
+---
+description: dlt may extract only — never manage state or unnest data
+alwaysApply: true
+---
+
+# dlt boundaries in DET
+
+dlt is extraction tooling only. DET owns validation, naming, meta, landing, state,
+and any reshaping of wire payloads into bronze.
+
+## Allowed
+
+- `@dlt.resource` / `DltResource` as an iterator when a source chooses to use it
+- `dlt.sources.helpers.requests` for HTTP retries (prefer plain `requests` when
+  retries/hangs are a problem — see NOAA)
+- `dlt.sources.helpers.rest_client` (`RESTClient`, paginators, auth)
+
+## Forbidden
+
+- `dlt.pipeline(...)` / `pipeline.run(...)` for bronze or any landed data
+- Letting dlt manage load/pipeline state (`_dlt_loads`, `_dlt_pipeline_state`,
+  `_dlt_version`, `_dlt_id`, `_dlt_load_id`)
+- Letting dlt's normalizer unnest nested fields or rename `__*` meta columns
+- Using dlt destinations as the bronze writer
+
+Source bytes land under `raw/.../data/`; DET sidecars under `raw/.../meta/`.
+Bronze lands through DET-owned writers (e.g. `write_jsonl_partition`). Rebuilds
+use `det migrate` from raw data files, not from a bronze payload column.

@@ -1,0 +1,38 @@
+version: 2
+
+sources:
+  - name: bronze_noaa
+    description: >
+      DET bronze for NOAA feeds. Filesystem: nested JSONL under bronze/noaa/.
+      DuckDB: native tables in schema bronze_noaa via DET_BRONZE_SOURCE=duckdb.
+    schema: bronze_noaa
+    meta:
+      # DET_LAKE_PATH should be absolute: it is baked into the persisted view, so a
+      # relative path only resolves for clients running from dbt/. `make` / det dbt set it.
+      # union_by_name tolerates additive schema changes across partitions.
+      # hive_partitioning=false because every partition key is also a column in the
+      # payload. Auto-detect would let the directory name win, which downgrades
+      # __interval_start_datetime from a timestamp to a compact string and strips
+      # the sub-second precision from __extract_run_datetime.
+      external_location: >-
+        read_json_auto(
+          '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/{name}/**/data.jsonl',
+          union_by_name=true,
+          hive_partitioning=false
+        )
+    tables:
+      - name: storm_events
+        description: DET bronze noaa.storm_events
+        columns:
+        - name: __row_hash
+          tests:
+          - not_null
+        - name: begin_day
+          tests:
+          - not_null
+        - name: begin_time
+          tests:
+          - not_null
+        - name: event_id
+          tests:
+          - not_null

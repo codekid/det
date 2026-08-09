@@ -1,0 +1,65 @@
+[project]
+name = "det"
+version = "0.1.0"
+description = "DET — Data Extract Tool: config-driven extraction runtime with pluggable ingestion"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "beautifulsoup4>=4.12.0",
+    "dlt[filesystem]>=1.24.0",
+    "duckdb>=1.5.1",
+    "jinja2>=3.1.0",
+    "jsonschema>=4.23.0",
+    "pendulum>=3.0.0",
+    "pydantic>=2.10.0",
+    "pyyaml>=6.0.0",
+    "requests>=2.32.0",
+    "structlog>=25.1.0",
+    "typer>=0.15.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.9.0",
+]
+dbt = [
+    "dbt-core>=1.9",
+    "dbt-duckdb>=1.9",
+]
+postgres = [
+    "psycopg[binary]>=3.1",
+]
+mcp = [
+    # FastMCP lives in mcp 1.x; mcp 2.0 replaced it with MCPServer.
+    "mcp>=1.2,<2",
+]
+
+[project.scripts]
+det = "det.cli:app"
+det-mcp = "det.mcp.server:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+det = ["scaffold/templates/*.j2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "integration: slower end-to-end tests",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

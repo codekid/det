@@ -1,0 +1,113 @@
+"""
+Airflow DAG: extract → load → optional bronze prune.
+
+Does not trigger dbt — silver/gold runs on ``det_dbt_silver_gold`` (separate schedule).
+
+Requires `det` installed in the Airflow environment.
+
+Env:
+  DET_PROJECT_ROOT, DET_PIPELINE_CONFIG (canonical id or YAML path; default noaa.storm_events)
+  DET_PIPELINE_OVERRIDES — comma-separated dotted.key=value (same as `det --set`)
+  DET_PRUNE=1              — run prune after load (default off)
+  DET_PRUNE_APPLY=1        — actually delete (otherwise dry-run plan only)
+  DET_PRUNE_KEEP=1         — newest extract runs to keep per interval
+"""
+
+from __future__ import annotations
+
+import os
+from datetime import datetime
+
+from airflow.decorators import dag, task
+from det_env import env_flag, pipeline_overrides, pipeline_path, project_root
+
+PROJECT_ROOT = project_root()
+
+
+@dag(
+    dag_id="det_extract_bronze",
+    start_date=datetime(2024, 1, 1),
+    schedule="@daily",
+    catchup=False,
+    tags=["det", "raw", "bronze"],
+)
+def det_extract_bronze():
+    @task
+    def extract_raw(data_interval_start=None, data_interval_end=None) -> dict:
+        from det.runtime.runner import PipelineRunner
+
+        if data_interval_start:
+            start = data_interval_start.isoformat()
+        else:
+            start = datetime.utcnow().date().isoformat()
+        end = data_interval_end.isoformat() if data_interval_end else None
+        result = PipelineRunner(PROJECT_ROOT).extract(
+            pipeline_path(),
+            interval_start=start,
+            interval_end=end,
+            overrides=pipeline_overrides() or None,
+        )
+        return {
+            "pipeline": result.pipeline,
+            "raw_dir": str(result.raw_dir),
+            "extract_run_datetime": result.extract_run_datetime,
+            "interval_start": result.interval_start,
+            "interval_end": result.interval_end,
+            "artifacts": result.artifacts,
+        }
+
+    @task
+    def load_bronze(extract_info: dict) -> dict:
+        from det.runtime.runner import PipelineRunner
+
+        result = PipelineRunner(PROJECT_ROOT).load(
+            pipeline_path(),
+            interval_start=extract_info["interval_start"],
+            interval_end=extract_info["interval_end"],
+            extract_run_datetime=extract_info["extract_run_datetime"],
+            overrides=pipeline_overrides() or None,
+        )
+        return {
+            "pipeline": result.pipeline,
+            "rows": result.rows,
+            "partition": str(result.partition_dir),
+            "data_interval_date": result.data_interval_date,
+            "raw_dir": str(result.raw_dir) if result.raw_dir else None,
+            "interval_start": extract_info["interval_start"],
+            "interval_end": extract_info["interval_end"],
+        }
+
+    @task
+    def prune_bronze(load_info: dict) -> dict:
+        """Optional bronze retention. Disabled unless DET_PRUNE=1."""
+        if not env_flag("DET_PRUNE"):
+            return {"skipped": True, "reason": "DET_PRUNE not set"}
+
+        from det.runtime.config import load_pipeline_config
+        from det.runtime.prune import BronzePruner
+
+        keep = int(os.environ.get("DET_PRUNE_KEEP", "1"))
+        apply = env_flag("DET_PRUNE_APPLY")
+        config = load_pipeline_config(pipeline_path(), overrides=pipeline_overrides() or None)
+        pruner = BronzePruner(PROJECT_ROOT)
+        plan = pruner.plan(
+            config,
+            interval_start=load_info["interval_start"],
+            interval_end=load_info["interval_end"],
+            keep=keep,
+        )
+        removed = pruner.apply(config, plan) if apply else 0
+        return {
+            "skipped": False,
+            "apply": apply,
+            "keep": keep,
+            "would_remove": plan.remove_count,
+            "removed": removed,
+        }
+
+    extracted = extract_raw()
+    loaded = load_bronze(extracted)
+    prune_bronze(loaded)
+
+
+det_extract_bronze()
