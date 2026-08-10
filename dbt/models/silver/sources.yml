@@ -36,3 +36,15 @@ sources:
         - name: event_id
           tests:
           - not_null
+      - name: fatalities
+        description: DET bronze noaa.fatalities
+        columns:
+        - name: __row_hash
+          tests:
+          - not_null
+        - name: fatality_id
+          tests:
+          - not_null
+        - name: event_id
+          tests:
+          - not_null
