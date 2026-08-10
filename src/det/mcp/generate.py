@@ -225,7 +225,7 @@ def schema_from_sample_dry_run(
             "Dry-run only — no file written. Review YAML, then write manually or via "
             f"a confirmed edit to {would_write}."
             + (
-                f" Path already exists."
+                " Path already exists."
                 if (base / out_path).is_file()
                 else ""
             )

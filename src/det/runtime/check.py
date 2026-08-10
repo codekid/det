@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Literal, Sequence
+from typing import Any, Literal
 
 from det.plugins import load_plugins
 from det.runtime.config import load_pipeline_config, resolve_path
