@@ -1,10 +1,13 @@
 """
-Airflow DAG: dbt silver + gold via Astronomer Cosmos (model-level tasks).
+Airflow DAG: dbt silver + gold in a single process.
 
-Scheduled independently of extract — DET owns bronze validation; dbt owns transforms.
-Trigger manually after a backfill if you need silver sooner than the next schedule.
+Scheduled independently of extract — DET owns bronze validation; dbt owns
+transforms. By default runs the **entire** dbt project. Narrow with
+``DET_DBT_SELECT`` if needed.
 
-Requires ``astronomer-cosmos`` and the ``[dbt]`` extra in the Airflow image.
+One ``dbt build`` (not Cosmos model tasks): DuckDB file destinations only allow
+a single writer, so parallel per-model Airflow tasks contend on
+``analytics.duckdb``. This matches local ``det dbt``.
 """
 
 from __future__ import annotations
@@ -13,42 +16,52 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from cosmos import DbtDag, ExecutionConfig, ProfileConfig, ProjectConfig, RenderConfig
-from cosmos.constants import ExecutionMode, InvocationMode, LoadMode
-from det_env import dbt_env_for_pipeline, dbt_select_for_pipeline, project_root
+from airflow.decorators import dag, task
+from det_env import dbt_env_for_pipeline, dbt_select, project_root
 
 PROJECT_ROOT = project_root()
 DBT_PROJECT = Path(os.environ.get("DET_DBT_PROJECT", str(PROJECT_ROOT / "dbt")))
 
-_select = dbt_select_for_pipeline()
-_env = dbt_env_for_pipeline()
 
-det_dbt_silver_gold = DbtDag(
+@dag(
     dag_id="det_dbt_silver_gold",
-    project_config=ProjectConfig(
-        dbt_project_path=DBT_PROJECT,
-        env_vars=_env,
-        install_dbt_deps=False,
-    ),
-    profile_config=ProfileConfig(
-        profile_name="disaster_analytics",
-        target_name="duckdb",
-        profiles_yml_filepath=DBT_PROJECT / "profiles.yml",
-    ),
-    render_config=RenderConfig(
-        select=_select,
-        load_method=LoadMode.DBT_LS,
-    ),
-    execution_config=ExecutionConfig(
-        execution_mode=ExecutionMode.LOCAL,
-        invocation_mode=InvocationMode.SUBPROCESS,
-    ),
-    operator_args={
-        "install_deps": False,
-        "append_env": True,
-    },
-    schedule="@daily",
     start_date=datetime(2024, 1, 1),
+    schedule="@daily",
     catchup=False,
-    tags=["det", "dbt", "silver", "gold", "cosmos"],
+    tags=["det", "dbt", "silver", "gold"],
 )
+def det_dbt_silver_gold():
+    @task
+    def dbt_build() -> dict:
+        from det.runtime.dbt_runner import DbtNotInstalledError, run_dbt
+
+        for key, value in dbt_env_for_pipeline().items():
+            os.environ[key] = value
+
+        select = dbt_select()
+        try:
+            result = run_dbt(
+                project_root=PROJECT_ROOT,
+                command="build",
+                project_dir=DBT_PROJECT,
+                select=select,
+            )
+        except DbtNotInstalledError:
+            raise
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"dbt build failed with exit code {result.returncode}"
+            )
+        return {
+            "command": result.command,
+            "returncode": result.returncode,
+            "select": list(result.select),
+            "lake_path": result.lake_path,
+            "bronze_source": result.bronze_source,
+        }
+
+    dbt_build()
+
+
+det_dbt_silver_gold()

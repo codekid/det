@@ -49,7 +49,7 @@ after the user confirms. Install: `uv pip install -e ".[mcp]"`.
 | --- | --- |
 | `det-migrate` | Contract change / rebuild bronze from raw |
 | `det-new-source` | Greenfield plugin + pipeline + schema |
-| `det-airflow` | Local Compose DAGs, backfill, Cosmos env |
+| `det-airflow` | Local Compose DAGs, backfill, dbt env |
 | `det-dbt` | scaffold / `det dbt` / silver knobs |
 
 ## Resources

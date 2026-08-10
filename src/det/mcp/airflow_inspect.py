@@ -376,7 +376,7 @@ def describe_airflow_det_env(*, root: Path | None = None) -> dict[str, Any]:
         analytics.startswith("/") or Path(analytics).is_absolute()
     ):
         analytics_notes.append(
-            "DET_ANALYTICS_DUCKDB should be absolute for Cosmos "
+            "DET_ANALYTICS_DUCKDB should be absolute in Compose/Airflow "
             f"(got {analytics!r})"
         )
 

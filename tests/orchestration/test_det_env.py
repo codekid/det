@@ -42,7 +42,9 @@ def test_dbt_select_and_env_for_pipeline(project_root: Path, monkeypatch):
     monkeypatch.setenv("DET_LAKE_PATH", str(project_root / "data" / "lake"))
     monkeypatch.delenv("DET_BRONZE_SCHEMA", raising=False)
     monkeypatch.delenv("DET_BRONZE_SOURCE", raising=False)
+    monkeypatch.delenv("DET_DBT_SELECT", raising=False)
     assert det_env.dbt_select_for_pipeline() == ["stg_noaa__storm_events+"]
+    assert det_env.dbt_select() is None
     env = det_env.dbt_env_for_pipeline()
     assert env["DET_BRONZE_SCHEMA"] == "bronze_noaa"
     assert env["DET_BRONZE_SOURCE"] == "filesystem"
@@ -50,6 +52,18 @@ def test_dbt_select_and_env_for_pipeline(project_root: Path, monkeypatch):
     assert env["DET_ANALYTICS_DUCKDB"] == str(
         (project_root / "data" / "analytics.duckdb").resolve()
     )
+
+
+def test_dbt_select_from_env(project_root: Path, monkeypatch):
+    det_env = _load_det_env(project_root)
+    monkeypatch.setenv(
+        "DET_DBT_SELECT",
+        "stg_noaa__storm_events+, stg_noaa__fatalities+",
+    )
+    assert det_env.dbt_select() == [
+        "stg_noaa__storm_events+",
+        "stg_noaa__fatalities+",
+    ]
 
 
 def test_daily_logical_dates_for_interval(project_root: Path):
