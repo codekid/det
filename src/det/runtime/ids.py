@@ -2,7 +2,8 @@
 Canonical provider.source identity helpers.
 
 Single resolution point for lake paths, SQL schema/table names, JSON schema
-defaults, and dbt slugs. Call sites must not join these strings ad hoc.
+defaults, and dbt slugs (``provider__source``). Call sites must not join these
+strings ad hoc.
 """
 
 from __future__ import annotations
@@ -85,8 +86,12 @@ def default_schema_path(canonical_id: str) -> str:
 
 
 def dbt_model_slug(canonical_id: str) -> str:
-    """Safe dbt model stem: ``noaa.storm_events`` → ``noaa_storm_events``."""
-    return validate_canonical_id(canonical_id).replace(".", "_")
+    """
+    dbt model stem with source/entity separator: ``noaa.storm_events`` →
+    ``noaa__storm_events`` (models are ``stg_noaa__storm_events``, etc.).
+    """
+    provider, source_name = parse_canonical_id(canonical_id)
+    return f"{provider}__{source_name}"
 
 
 def sql_names_for_config(config: PipelineConfig) -> tuple[str, str]:

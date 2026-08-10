@@ -42,7 +42,7 @@ def test_dbt_select_and_env_for_pipeline(project_root: Path, monkeypatch):
     monkeypatch.setenv("DET_LAKE_PATH", str(project_root / "data" / "lake"))
     monkeypatch.delenv("DET_BRONZE_SCHEMA", raising=False)
     monkeypatch.delenv("DET_BRONZE_SOURCE", raising=False)
-    assert det_env.dbt_select_for_pipeline() == ["stg_noaa_storm_events+"]
+    assert det_env.dbt_select_for_pipeline() == ["stg_noaa__storm_events+"]
     env = det_env.dbt_env_for_pipeline()
     assert env["DET_BRONZE_SCHEMA"] == "bronze_noaa"
     assert env["DET_BRONZE_SOURCE"] == "filesystem"

@@ -1,7 +1,7 @@
 version: 2
 models:
-- name: silver_noaa_storm_events
-  description: Cleaned, deduped noaa_storm_events (silver)
+- name: silver_noaa__storm_events
+  description: Cleaned, deduped noaa__storm_events (silver)
   columns:
   - name: __row_hash
     tests:
@@ -16,8 +16,8 @@ models:
   - name: event_id
     tests:
     - not_null
-- name: silver_noaa_fatalities
-  description: Cleaned, deduped noaa_fatalities (silver)
+- name: silver_noaa__fatalities
+  description: Cleaned, deduped noaa__fatalities (silver)
   columns:
   - name: __row_hash
     tests:

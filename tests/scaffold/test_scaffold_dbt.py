@@ -68,23 +68,23 @@ def test_scaffold_creates_and_skips_without_force(tmp_path: Path):
     models = tmp_path / "dbt" / "models" / "silver"
 
     first = scaffold_dbt(config, project_root=tmp_path, dbt_models_dir=models)
-    assert (models / "stg_noaa_storm_events.sql").exists()
-    assert (models / "silver_noaa_storm_events.sql").exists()
+    assert (models / "stg_noaa__storm_events.sql").exists()
+    assert (models / "silver_noaa__storm_events.sql").exists()
     assert any(a.action == "write" for a in first.actions)
 
-    stg = (models / "stg_noaa_storm_events.sql").read_text(encoding="utf-8")
+    stg = (models / "stg_noaa__storm_events.sql").read_text(encoding="utf-8")
     assert 'det_bronze_from("storm_events")' in stg
     assert "nullif(trim(cast(state as varchar))" in stg
     assert "__extract_run_datetime" in stg
 
-    silver = (models / "silver_noaa_storm_events.sql").read_text(encoding="utf-8")
+    silver = (models / "silver_noaa__storm_events.sql").read_text(encoding="utf-8")
     assert 'materialized="incremental"' in silver
     assert 'unique_key=["event_id"]' in silver
     assert "is_incremental()" in silver
     assert "interval '3 days'" in silver
     assert 'partition_by=["event_id"]' in silver
     assert "det_dedupe_latest_run" in silver
-    assert 'ref("stg_noaa_storm_events")' in silver
+    assert 'ref("stg_noaa__storm_events")' in silver
 
     sources = yaml.safe_load((models / "sources.yml").read_text(encoding="utf-8"))
     assert sources["sources"][0]["name"] == "bronze_noaa"
@@ -109,7 +109,7 @@ def test_scaffold_force_refreshes_stg_when_schema_gains_property(tmp_path: Path)
     schema_path.write_text(yaml.safe_dump(schema), encoding="utf-8")
 
     scaffold_dbt(config, project_root=tmp_path, force=True, dbt_models_dir=models)
-    stg = (models / "stg_noaa_storm_events.sql").read_text(encoding="utf-8")
+    stg = (models / "stg_noaa__storm_events.sql").read_text(encoding="utf-8")
     assert "cz_name" in stg
 
 

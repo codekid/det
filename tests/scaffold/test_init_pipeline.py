@@ -31,10 +31,10 @@ def test_init_pipeline_writes_and_scaffolds(tmp_path: Path):
     assert pipe.exists()
     assert schema.exists()
     assert (
-        tmp_path / "dbt" / "models" / "silver" / "stg_example_api_events.sql"
+        tmp_path / "dbt" / "models" / "silver" / "stg_example_api__events.sql"
     ).exists()
     assert (
-        tmp_path / "dbt" / "models" / "silver" / "silver_example_api_events.sql"
+        tmp_path / "dbt" / "models" / "silver" / "silver_example_api__events.sql"
     ).exists()
     assert result.scaffold is not None
     text = (tmp_path / "dbt" / "models" / "silver" / "sources.yml").read_text(
@@ -43,6 +43,6 @@ def test_init_pipeline_writes_and_scaffolds(tmp_path: Path):
     assert "read_json_auto" in text
     assert "bronze_example_api" in text
     stg = (
-        tmp_path / "dbt" / "models" / "silver" / "stg_example_api_events.sql"
+        tmp_path / "dbt" / "models" / "silver" / "stg_example_api__events.sql"
     ).read_text(encoding="utf-8")
     assert 'det_bronze_from("events")' in stg

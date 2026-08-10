@@ -146,7 +146,7 @@ def test_scaffold_and_init_dry_run(tmp_path: Path):
     assert scaffold["dataset"] == "example_api.events"
     assert scaffold["actions"]
     assert not (
-        tmp_path / "dbt" / "models" / "silver" / "stg_example_api_events.sql"
+        tmp_path / "dbt" / "models" / "silver" / "stg_example_api__events.sql"
     ).exists()
 
     init = init_pipeline_dry_run(
