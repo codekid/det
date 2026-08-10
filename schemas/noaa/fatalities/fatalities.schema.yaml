@@ -1,0 +1,19 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$title: fatalities
+description: >
+  Bronze contract for NOAA Storm Events fatality CSVs: snake_case names and
+  typed values. DET coerces source strings to these types before validation.
+type: object
+required: [fatality_id, event_id]
+properties:
+  fat_yearmonth: { type: ["integer", "null"] }
+  fat_day: { type: ["integer", "null"] }
+  fat_time: { type: ["integer", "null"] }
+  fatality_id: { type: "integer" }
+  event_id: { type: "integer" }
+  fatality_type: { type: ["string", "null"] }
+  fatality_date: { type: ["string", "null"] }
+  fatality_age: { type: ["integer", "null"] }
+  fatality_sex: { type: ["string", "null"] }
+  fatality_location: { type: ["string", "null"] }
+additionalProperties: false

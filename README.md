@@ -272,6 +272,16 @@ Expect:
 - Raw under `data/lake/raw/noaa/storm_events/…/data/` + `meta/manifest.json`
 - Bronze JSONL under `data/lake/bronze/noaa/storm_events/…/data.jsonl`
 
+NOAA fatality CSVs use the same NCEI index with `filename_substr=fatalities-ftp`
+(`noaa.fatalities`). Local smoke:
+
+```bash
+uv run det run -p noaa.fatalities -s 2026-08-06 \
+  --set source.overrides.local_csv_dir=fixtures/fatalities \
+  --set source.overrides.filename_substr=fatalities \
+  --set ingestion.library=thin
+```
+
 ### 3. Build silver + gold
 
 ```bash
@@ -576,7 +586,8 @@ det migrate -p noaa.storm_events \
 
 | mapper | use when |
 | --- | --- |
-| `storm_events_identity` | named NOAA row already matches the target schema |
+| `storm_events_identity` | named NOAA details row already matches the target schema |
+| `fatalities_identity` | named NOAA fatalities row already matches |
 | `identity` | named row already matches |
 | `example_api_v1_to_v2` | renames `severity` → `level` |
 

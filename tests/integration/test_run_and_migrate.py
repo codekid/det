@@ -57,6 +57,50 @@ def test_run_noaa_fixture_to_bronze(project_root: Path, tmp_path: Path):
     assert row["event_id"] == 9001
 
 
+
+def _fatalities_pipeline(project_root: Path, tmp_path: Path) -> Path:
+    pipeline = {
+        "name": "noaa.fatalities",
+        "source": {
+            "type": "noaa.fatalities",
+            "overrides": {
+                "local_csv_dir": str(project_root / "fixtures/fatalities"),
+                "filename_substr": "fatalities",
+            },
+        },
+        "schema": str(project_root / "schemas/noaa/fatalities/fatalities.schema.yaml"),
+        "ingestion": {"library": "thin"},
+        "destination": {"type": "filesystem", "path": str(tmp_path / "lake")},
+        "medallion": {"bronze_prefix": "bronze", "raw_prefix": "raw"},
+    }
+    pipe_path = tmp_path / "fatalities.yaml"
+    pipe_path.write_text(yaml.safe_dump(pipeline), encoding="utf-8")
+    return pipe_path
+
+
+@pytest.mark.integration
+def test_run_noaa_fatalities_fixture_to_bronze(project_root: Path, tmp_path: Path):
+    pipe_path = _fatalities_pipeline(project_root, tmp_path)
+
+    result = PipelineRunner(tmp_path).run(
+        pipe_path,
+        interval_start="2026-08-06",
+        interval_end="2026-08-07",
+    )
+    assert result.rows == 2
+    assert result.raw_dir is not None
+    assert "fatalities" in result.raw_dir.parts
+    assert (result.raw_dir / "meta" / "manifest.json").exists()
+    row = json.loads(
+        (result.partition_dir / "data.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert row["fatality_id"] == 90001
+    assert row["event_id"] == 9001
+    assert row["fatality_type"] == "D"
+    assert row["fatality_location"] == "In Water"
+    assert "__raw" not in row
+
+
 @pytest.mark.integration
 def test_extract_then_load_shares_run_stamp(project_root: Path, tmp_path: Path):
     pipe_path = _storm_pipeline(project_root, tmp_path)

@@ -879,7 +879,12 @@ def _sample_bronze_duckdb(
         "note": note,
     }
     if not db_path.exists():
-        return {**base_out, "rows": [], "errors": [{"message": "DuckDB file not found"}], "truncated": False}
+        return {
+            **base_out,
+            "rows": [],
+            "errors": [{"message": "DuckDB file not found"}],
+            "truncated": False,
+        }
 
     where, params = _sql_sample_filters(
         interval_start=interval_start,

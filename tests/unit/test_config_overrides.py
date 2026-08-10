@@ -4,6 +4,7 @@ import pytest
 
 from det.runtime.config import apply_overrides, load_pipeline_config
 from det.sources.base import merge_source_config
+from det.sources.noaa.fatalities import NoaaFatalitiesSource
 from det.sources.noaa.storm_events import NoaaStormEventsSource
 
 
@@ -12,6 +13,12 @@ def test_merge_overrides_win(tmp_path):
     merged = merge_source_config(defaults, {"filename_substr": "locations-ftp"})
     assert merged["filename_substr"] == "locations-ftp"
     assert merged["url"] == defaults["url"]
+
+
+def test_fatalities_defaults_use_fatalities_substr():
+    defaults = NoaaFatalitiesSource().defaults()
+    assert defaults["filename_substr"] == "fatalities-ftp"
+    assert defaults["url"] == NoaaStormEventsSource().defaults()["url"]
 
 
 def test_load_pipeline_config(project_root):

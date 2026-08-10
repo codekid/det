@@ -16,3 +16,16 @@ models:
   - name: event_id
     tests:
     - not_null
+- name: silver_noaa_fatalities
+  description: Cleaned, deduped noaa_fatalities (silver)
+  columns:
+  - name: __row_hash
+    tests:
+    - unique
+    - not_null
+  - name: fatality_id
+    tests:
+    - not_null
+  - name: event_id
+    tests:
+    - not_null
