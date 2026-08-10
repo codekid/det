@@ -3,7 +3,9 @@ disaster_analytics:
   outputs:
     duckdb:
       type: duckdb
-      # Absolute path required under Cosmos (runs from a /tmp project clone).
+      # Prefer absolute DET_ANALYTICS_DUCKDB in Airflow/Compose.
       # Default keeps local `cd dbt && dbt …` working.
       path: "{{ env_var('DET_ANALYTICS_DUCKDB', '../data/analytics.duckdb') }}"
       schema: main
+      # File-backed DuckDB: one writer; keep dbt single-threaded.
+      threads: 1

@@ -33,7 +33,7 @@ Install: `uv pip install -e ".[mcp,dbt]"`.
 | `DET_LAKE_PATH` | Filesystem lake root for `read_json_auto` |
 | `DET_BRONZE_SOURCE` | `filesystem` (default) or `duckdb` |
 | `DET_BRONZE_SCHEMA` | SQL schema when bronze is DuckDB/Postgres |
-| `DET_ANALYTICS_DUCKDB` | Absolute analytics DB path (required under Cosmos/Airflow) |
+| `DET_ANALYTICS_DUCKDB` | Absolute analytics DB path (prefer in Airflow/Compose) |
 
 Macro `det_bronze_from` switches stg to a native DuckDB table when
 `DET_BRONZE_SOURCE=duckdb`.

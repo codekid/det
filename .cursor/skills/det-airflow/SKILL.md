@@ -2,7 +2,7 @@
 name: det-airflow
 description: >-
   Local Airflow Compose for DET: DAG roles, env knobs, backfill conf, MCP
-  inspect tools, and Cosmos DuckDB path pitfalls. Extract/load stay on CLI or
+  inspect tools, and DuckDB path pitfalls. Extract/load stay on CLI or
   Airflow tasks — not MCP.
 ---
 
@@ -49,19 +49,21 @@ Unreachable local URL → `make airflow-up`. For a future remote Airflow, point
 | --- | --- |
 | `det_extract_bronze` | extract → load → optional prune (`@daily`) |
 | `det_backfill_extract_bronze` | trigger extract once per day for `[start, end)` |
-| `det_dbt_silver_gold` | Cosmos dbt (separate schedule; not chained from extract) |
+| `det_dbt_silver_gold` | single-process `dbt build` — **full project** by default (separate schedule) |
 
-Extract and dbt are **decoupled**.
+Extract and dbt are **decoupled**. Nightly dbt is not limited to `DET_PIPELINE_CONFIG`.
+File-backed DuckDB cannot safely fan out per-model writers, so dbt is one task.
 
 ## Important env (workers / Compose)
 
 | Var | Notes |
 | --- | --- |
 | `DET_PROJECT_ROOT` | Project mount (Compose default `/opt/det`) |
-| `DET_PIPELINE_CONFIG` | Canonical id or YAML path |
+| `DET_PIPELINE_CONFIG` | Canonical id for extract/load DAGs (not dbt select) |
 | `DET_PIPELINE_OVERRIDES` | Comma-separated `dotted.key=value` (same as `det --set`); leave empty for live NOAA |
+| `DET_DBT_SELECT` | Optional dbt `--select`; unset = entire dbt project |
 | `DET_BRONZE_SOURCE` / `DET_BRONZE_SCHEMA` | dbt bronze reader |
-| `DET_ANALYTICS_DUCKDB` | **Absolute** path (Cosmos clones dbt under `/tmp`; relative DuckDB breaks) |
+| `DET_ANALYTICS_DUCKDB` | Prefer **absolute** path in Compose |
 | `DET_PRUNE` / `DET_PRUNE_APPLY` / `DET_PRUNE_KEEP` | Optional prune after load |
 
 ## Backfill

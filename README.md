@@ -52,7 +52,7 @@ Also:
 - **Destinations** — filesystem JSONL (default), DuckDB append, or Postgres append
 - **Hive partitions** — interval start/end + extract run under `raw/` and `bronze/`
 - **dlt boundaries** — extract helpers only; DET owns validation, meta, and writers
-- **Local Airflow** — `make airflow-up` (Compose UI + Cosmos dbt graph); extract and dbt DAGs are decoupled
+- **Local Airflow** — `make airflow-up` (Compose UI); extract and dbt DAGs are decoupled
 
 ---
 
@@ -672,10 +672,10 @@ flowchart TD
   load[load]
   prune[prune optional]
   dag2[det_dbt_silver_gold]
-  cosmos[Cosmos model tasks]
+  dbtBuild[single dbt build]
   backfill -->|"one trigger per day"| dag1
   dag1 --> extract --> load --> prune
-  dag2 --> cosmos
+  dag2 --> dbtBuild
 ```
 
 Extract and dbt are **decoupled**: bronze lands on its own schedule; silver/gold
@@ -685,13 +685,13 @@ runs on a separate `@daily` (or manual trigger after backfill).
 | --- | --- |
 | `det_extract_bronze` | extract → load → optional prune |
 | `det_backfill_extract_bronze` | trigger `det_extract_bronze` once per day for `[interval_start, interval_end)` |
-| `det_dbt_silver_gold` | scheduled Cosmos `DbtDag` (one Airflow task per dbt model/test; not chained from extract) |
+| `det_dbt_silver_gold` | one Airflow task: `dbt build` for the whole project (not chained from extract) |
 
-dbt UI graph comes from [Astronomer Cosmos](https://github.com/astronomer/astronomer-cosmos)
-(`astronomer-cosmos` in the Airflow image). Select matches `det dbt`
-(`stg_{pipeline}+`). Env passed via Cosmos `ProjectConfig.env_vars`:
-`DET_LAKE_PATH`, `DET_BRONZE_*`, and **`DET_ANALYTICS_DUCKDB`** (absolute path —
-Cosmos clones the dbt project under `/tmp`, so relative DuckDB paths break).
+File-backed DuckDB only allows a single writer, so the dbt DAG is **one process**
+(same as local `det dbt`), not parallel per-model Cosmos tasks. By default it
+runs the **entire** dbt project. Narrow with optional `DET_DBT_SELECT`
+(space/comma selectors). Task env: `DET_LAKE_PATH`, `DET_BRONZE_*`, and
+**`DET_ANALYTICS_DUCKDB`** (prefer absolute in Compose).
 
 Backfill (no UI form required) — DET half-open interval, one child DagRun per day:
 
@@ -706,8 +706,8 @@ cd airflow && docker compose exec airflow-scheduler \
 
 Useful env vars (see `airflow/.env.example`): `DET_PROJECT_ROOT`,
 `DET_PIPELINE_CONFIG`, `DET_PIPELINE_OVERRIDES`, `DET_DBT_PROJECT`,
-`DET_LAKE_PATH`, `DET_ANALYTICS_DUCKDB`, `DET_BRONZE_SOURCE`, `DET_BRONZE_SCHEMA`,
-`DET_PRUNE`, `DET_PRUNE_APPLY`, `DET_PRUNE_KEEP`.
+`DET_DBT_SELECT`, `DET_LAKE_PATH`, `DET_ANALYTICS_DUCKDB`, `DET_BRONZE_SOURCE`,
+`DET_BRONZE_SCHEMA`, `DET_PRUNE`, `DET_PRUNE_APPLY`, `DET_PRUNE_KEEP`.
 
 ---
 
@@ -759,11 +759,11 @@ Load needs an existing raw partition for the **exact** interval. List
 `data/lake/raw/<dataset>/` or run `det extract` / `det run` for that window first.
 MCP: `list_raw_partitions` / `read_manifest`.
 
-**Cosmos / `det_dbt_silver_gold` → `Cannot open file "/tmp/data/analytics.duckdb"`**
+**`det_dbt_silver_gold` → DuckDB path / lock errors**
 
 Set `DET_ANALYTICS_DUCKDB` to an absolute path (Compose default:
-`/opt/det/data/analytics.duckdb`). Relative paths in `dbt/profiles.yml` resolve
-against Cosmos’s temp project clone, not the repo.
+`/opt/det/data/analytics.duckdb`). Conflicting locks mean another process still
+holds the file — stop other dbt/DuckDB clients and retry.
 
 ---
 
@@ -775,7 +775,7 @@ src/det/mcp/             # optional FastMCP stdio server (.[mcp])
 configs/pipelines/<provider>/  # pipeline YAML (provider.source)
 schemas/<provider>/<source>/   # typed bronze JSON Schema
 fixtures/                # sample extracts for local runs
-dags/                    # Airflow DAGs (+ Cosmos dbt DAG)
+dags/                    # Airflow DAGs (extract/load + single-process dbt)
 airflow/                 # Local Compose (Dockerfile, docker-compose, .env.example)
 dbt/                     # silver + gold + macros (+ profiles.yml)
 .cursor/                 # mcp.json, rules, skills

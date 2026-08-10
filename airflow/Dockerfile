@@ -17,8 +17,4 @@ COPY --chown=airflow:0 src /opt/det/src
 
 WORKDIR /opt/det
 # No Airflow constraints file: it pins duckdb==1.1.x while DET needs >=1.5.
-# Install DET+dbt first, then Cosmos without re-solving the whole graph
-# (joint install backtracks forever on dbt-core / protobuf).
-RUN pip install --no-cache-dir -e ".[dbt]" \
-    && pip install --no-cache-dir --no-deps "astronomer-cosmos==1.15.1" \
-    && pip install --no-cache-dir aenum deprecation msgpack
+RUN pip install --no-cache-dir -e ".[dbt]"

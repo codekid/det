@@ -37,7 +37,11 @@ def pipeline_overrides() -> list[str]:
 
 
 def dbt_select_for_pipeline() -> list[str]:
-    """Same default select as ``det dbt`` / ``run_dbt`` (stg_{slug}+)."""
+    """
+    Pipeline-scoped select (``stg_{slug}+``), same as ``det dbt -p …``.
+
+    Prefer :func:`dbt_select` for the nightly dbt DAG (full project by default).
+    """
     from det.runtime.config import load_pipeline_config
     from det.runtime.dbt_runner import default_select_for_pipeline
 
@@ -47,8 +51,21 @@ def dbt_select_for_pipeline() -> list[str]:
     return default_select_for_pipeline(config)
 
 
+def dbt_select() -> list[str] | None:
+    """
+    Optional dbt ``--select`` from ``DET_DBT_SELECT``.
+
+    Unset or empty → ``None`` (run the entire dbt project). Otherwise space- or
+    comma-separated selectors, e.g. ``stg_noaa__storm_events+ stg_noaa__fatalities+``.
+    """
+    raw = os.environ.get("DET_DBT_SELECT", "").strip()
+    if not raw:
+        return None
+    return [part.strip() for part in raw.replace(",", " ").split() if part.strip()]
+
+
 def dbt_env_for_pipeline() -> dict[str, str]:
-    """Env Cosmos/dbt need to read DET bronze (lake path + SQL schema identity)."""
+    """Env dbt needs to read DET bronze (lake path + SQL schema identity)."""
     from det.destinations.models import lake_root
     from det.runtime.config import load_pipeline_config
     from det.runtime.ids import sql_names_for_config
@@ -72,8 +89,7 @@ def dbt_env_for_pipeline() -> dict[str, str]:
         "DET_LAKE_PATH": lake,
         "DET_BRONZE_SOURCE": os.environ.get("DET_BRONZE_SOURCE", bronze_source),
         "DET_BRONZE_SCHEMA": os.environ.get("DET_BRONZE_SCHEMA", sql_schema),
-        # Absolute: Cosmos clones the dbt project under /tmp, so profiles.yml
-        # relative paths would resolve to /tmp/data/...
+        # Prefer absolute so profiles.yml does not depend on task cwd.
         "DET_ANALYTICS_DUCKDB": analytics_db,
     }
 
