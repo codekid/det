@@ -410,9 +410,9 @@ det prune -p noaa.storm_events -s 2026-08-01 -e 2026-09-01 \
   --keep 1 --apply
 
 # dbt (sets DET_LAKE_PATH + DET_BRONZE_SOURCE from the pipeline when -p is passed)
-det dbt -p noaa.storm_events          # select stg_<provider>_<source>+
+det dbt -p noaa.storm_events          # select stg_<provider>__<source>+
 det dbt                                                 # full project build
-det dbt --select silver_noaa_storm_events --command test
+det dbt --select silver_noaa__storm_events --command test
 det dbt --dry-run
 
 # Scaffold / greenfield
@@ -467,7 +467,7 @@ flowchart LR
   end
   subgraph dbtSide [dbt]
     macro[det_bronze_from]
-    stg[stg_noaa_storm_events]
+    stg[stg_noaa__storm_events]
     dedupe[det_dedupe_latest_run]
     silver[silver_dataset]
     gold[gold_*]
@@ -555,7 +555,7 @@ det dbt -p noaa.storm_events
 `det scaffold-dbt` (create-if-missing; `--force` overwrites) emits:
 
 - `sources.yml` table entry
-- `stg_<dataset>.sql` / `silver_<dataset>.sql`
+- `stg_<provider>__<source>.sql` / `silver_<provider>__<source>.sql`
 - `_silver__models.yml` tests
 
 `det init-pipeline` creates `configs/pipelines/<name>.yaml`, a minimal schema under

@@ -23,7 +23,8 @@ def test_parse_and_fs_parts():
     assert default_schema_path("noaa.storm_events") == (
         "schemas/noaa/storm_events/storm_events.schema.yaml"
     )
-    assert dbt_model_slug("noaa.storm_events") == "noaa_storm_events"
+    assert dbt_model_slug("noaa.storm_events") == "noaa__storm_events"
+    assert dbt_model_slug("example_api.events") == "example_api__events"
 
 
 def test_sql_schema_is_medallion_provider():

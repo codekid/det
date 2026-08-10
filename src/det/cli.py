@@ -255,7 +255,7 @@ def dbt_cmd(
         None,
         "--pipeline",
         "-p",
-        help=f"If set, select stg_<provider>_<source>+ for this pipeline. {_PIPELINE_HELP}",
+        help=f"If set, select stg_<provider>__<source>+ for this pipeline. {_PIPELINE_HELP}",
     ),
     select: list[str] = typer.Option(
         [],

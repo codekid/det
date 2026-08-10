@@ -23,7 +23,7 @@ Install: `uv pip install -e ".[mcp,dbt]"`.
 2. Preview scaffold: `scaffold_dbt_dry_run` → review actions → CLI
    `det scaffold-dbt -p …` (add `--force` only when overwriting is intended).
 3. Preview CLI argv/env: `dbt_dry_run` with pipeline (default select is
-   `stg_{slug}+`, same as `det dbt`).
+   `stg_{provider}__{source}+`, same as `det dbt`).
 4. Run locally: `det dbt -p <pipeline>` or `make dbt` (sets `DET_LAKE_PATH`).
 
 ## Bronze → stg env

@@ -6,7 +6,7 @@
 
 with d as (
     select *
-    from {{ ref("silver_noaa_storm_events") }}
+    from {{ ref("silver_noaa__storm_events") }}
 ),
 formatted as (
     select

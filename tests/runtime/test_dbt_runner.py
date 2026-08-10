@@ -22,7 +22,7 @@ def test_default_select_for_pipeline():
         source=SourceConfig(type="noaa.storm_events"),
         schema_path="schemas/noaa/storm_events/storm_events.schema.yaml",
     )
-    assert default_select_for_pipeline(config) == ["stg_noaa_storm_events+"]
+    assert default_select_for_pipeline(config) == ["stg_noaa__storm_events+"]
 
 
 def test_build_dbt_argv():
@@ -70,10 +70,10 @@ destination:
         dry_run=True,
     )
     assert result.returncode == 0
-    assert result.select == ("stg_noaa_storm_events+",)
+    assert result.select == ("stg_noaa__storm_events+",)
     assert result.lake_path == str((tmp_path / "data" / "lake").resolve())
     assert result.bronze_source == "filesystem"
-    assert "stg_noaa_storm_events+" in result.command
+    assert "stg_noaa__storm_events+" in result.command
 
 
 def test_run_dbt_sets_duckdb_bronze_source(
@@ -116,7 +116,7 @@ def test_run_dbt_missing_cli(tmp_path: Path):
         patch("det.runtime.dbt_runner.find_dbt_executable", return_value=None),
         pytest.raises(DbtNotInstalledError),
     ):
-        run_dbt(project_root=tmp_path, select=["silver_noaa_storm_events"])
+        run_dbt(project_root=tmp_path, select=["silver_noaa__storm_events"])
 
 
 def test_run_dbt_subprocess_streams_to_stdout(capsys: pytest.CaptureFixture[str]):
