@@ -187,15 +187,30 @@ def migrate_bronze(
     ),
     lake_path: str | None = typer.Option(None, "--lake-path"),
     ingestion: str = typer.Option("thin", "--ingestion"),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview partitions/rows/validation without writing bronze",
+    ),
+    validate_limit: int | None = typer.Option(
+        None,
+        "--validate-limit",
+        help="With --dry-run, cap rows checked per raw partition",
+    ),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     set_: list[str] = typer.Option([], "--set"),
 ) -> None:
     """Rebuild bronze from raw data/ for an interval."""
-    from det.runtime.migrate import BronzeMigrator
+    from det.runtime.migrate import BronzeMigrator, MigratePlan
 
     start, end = _resolve_interval(interval_start, interval_end)
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
+    if validate_limit is not None and not dry_run:
+        raise typer.BadParameter(
+            "--validate-limit requires --dry-run",
+            param_hint="--validate-limit",
+        )
     result = BronzeMigrator(root).migrate(
         pipeline=resolved.path,
         to_bronze=to_bronze,
@@ -207,7 +222,27 @@ def migrate_bronze(
         lake_path=lake_path,
         ingestion_library=ingestion,
         overrides=set_,
+        dry_run=dry_run,
+        validate_limit=validate_limit,
     )
+    if isinstance(result, MigratePlan):
+        typer.echo(
+            f"DRY-RUN migrate {result.from_raw} -> {result.to_bronze} "
+            f"mapper={result.mapper_name} partitions={result.partitions_planned} "
+            f"rows_checked={result.rows_checked} ok={result.ok}"
+        )
+        for part in result.partitions:
+            status = "ok" if part.ok else "FAIL"
+            trunc = " truncated" if part.truncated else ""
+            typer.echo(
+                f"  [{status}] rows={part.rows}{trunc} raw={part.raw_path} "
+                f"-> {part.would_write_bronze_path}"
+            )
+            for err in part.errors[:5]:
+                typer.echo(f"    - {err}", err=True)
+        if not result.ok:
+            raise typer.Exit(code=1)
+        return
     typer.echo(
         f"OK migrate {result.from_raw} -> {result.to_bronze} "
         f"partitions={result.partitions} rows={result.rows}"
@@ -455,6 +490,56 @@ def prune_bronze(
     typer.echo(
         f"OK prune pipeline={config.name} keep={keep} removed={removed}"
     )
+
+
+@app.command("check")
+def check_cmd(
+    pipeline: str | None = typer.Option(
+        None,
+        "--pipeline",
+        "-p",
+        help="Check a single pipeline (default: all under configs/pipelines/)",
+    ),
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help="Exit 1 on warnings as well as errors",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON findings"),
+) -> None:
+    """Validate pipeline structure (schema file, source plugin, optional dbt models)."""
+    import json
+
+    from det.runtime.check import (
+        check_project,
+        format_findings,
+        has_errors,
+        has_warnings,
+    )
+
+    root = _project_root(project_root)
+    findings = check_project(root, pipeline=pipeline)
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "ok": not has_errors(findings),
+                    "error_count": sum(1 for f in findings if f.severity == "error"),
+                    "warning_count": sum(
+                        1 for f in findings if f.severity == "warning"
+                    ),
+                    "findings": [f.to_dict() for f in findings],
+                },
+                indent=2,
+            )
+        )
+    else:
+        typer.echo(format_findings(findings))
+    if has_errors(findings):
+        raise typer.Exit(code=1)
+    if strict and has_warnings(findings):
+        raise typer.Exit(code=1)
 
 
 @app.command("list-pipelines")

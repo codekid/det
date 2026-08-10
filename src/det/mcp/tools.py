@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from det.destinations.models import bronze_dataset_dir, lake_root, raw_dataset_dir
+from det.mcp import airflow_inspect as af
+from det.mcp import generate as gen
+from det.mcp import inspect as insp
 from det.mcp.context import PathSandboxError, project_root, resolve_under_root
 from det.plugins import load_plugins
 from det.runtime.config import load_pipeline_config
@@ -18,7 +21,9 @@ from det.runtime.registry import describe_mappers, list_mappers, list_sources
 from det.scaffold.dbt import scaffold_dbt
 from det.scaffold.init_pipeline import init_pipeline
 
-DEFAULT_LIST_LIMIT = 200
+DEFAULT_LIST_LIMIT = insp.DEFAULT_LIST_LIMIT
+DEFAULT_SAMPLE_LIMIT = insp.DEFAULT_SAMPLE_LIMIT
+MAX_SAMPLE_LIMIT = insp.MAX_SAMPLE_LIMIT
 
 
 def _root(root: Path | None = None) -> Path:
@@ -363,3 +368,235 @@ def lake_path_for_pipeline(pipeline: str, *, root: Path | None = None) -> str:
     base = _root(root)
     config, _ = _load_pipeline(pipeline, base)
     return _rel(lake_root(config.destination, base), base)
+
+
+def diff_partitions(
+    pipeline: str,
+    *,
+    interval_start: str | None = None,
+    interval_end: str | None = None,
+    limit: int = DEFAULT_LIST_LIMIT,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Compare raw vs bronze extract-run coverage (hive and/or SQL meta)."""
+    return insp.diff_partitions(
+        pipeline,
+        interval_start=interval_start,
+        interval_end=interval_end,
+        limit=limit,
+        root=root,
+    )
+
+
+def sample_raw(
+    pipeline: str,
+    *,
+    stage: str = "named",
+    limit: int = DEFAULT_SAMPLE_LIMIT,
+    run_path: str | None = None,
+    interval_start: str | None = None,
+    interval_end: str | None = None,
+    extract_run_datetime: str | None = None,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Sample raw wire/rows at a load stage (wire|rows|named|coerced)."""
+    return insp.sample_raw(
+        pipeline,
+        stage=stage,  # type: ignore[arg-type]
+        limit=limit,
+        run_path=run_path,
+        interval_start=interval_start,
+        interval_end=interval_end,
+        extract_run_datetime=extract_run_datetime,
+        root=root,
+    )
+
+
+def validate_sample(
+    pipeline: str,
+    *,
+    limit: int = DEFAULT_SAMPLE_LIMIT,
+    max_errors: int = 20,
+    run_path: str | None = None,
+    interval_start: str | None = None,
+    interval_end: str | None = None,
+    extract_run_datetime: str | None = None,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Coerce + JSON Schema check on a capped raw sample (errors as data)."""
+    return insp.validate_sample(
+        pipeline,
+        limit=limit,
+        max_errors=max_errors,
+        run_path=run_path,
+        interval_start=interval_start,
+        interval_end=interval_end,
+        extract_run_datetime=extract_run_datetime,
+        root=root,
+    )
+
+
+def sample_bronze(
+    pipeline: str,
+    *,
+    limit: int = DEFAULT_SAMPLE_LIMIT,
+    run_path: str | None = None,
+    interval_start: str | None = None,
+    interval_end: str | None = None,
+    extract_run_datetime: str | None = None,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Sample landed bronze rows (filesystem JSONL or SQL LIMIT). Inspection only."""
+    return insp.sample_bronze(
+        pipeline,
+        limit=limit,
+        run_path=run_path,
+        interval_start=interval_start,
+        interval_end=interval_end,
+        extract_run_datetime=extract_run_datetime,
+        root=root,
+    )
+
+
+def diagnose_pipeline(
+    pipeline: str,
+    *,
+    interval_start: str | None = None,
+    interval_end: str | None = None,
+    sample_limit: int = DEFAULT_SAMPLE_LIMIT,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Composite coverage + validation diagnose with suggested CLI commands."""
+    return insp.diagnose_pipeline(
+        pipeline,
+        interval_start=interval_start,
+        interval_end=interval_end,
+        sample_limit=sample_limit,
+        root=root,
+    )
+
+
+def schema_from_sample_dry_run(
+    pipeline: str | None = None,
+    *,
+    run_path: str | None = None,
+    interval_start: str | None = None,
+    interval_end: str | None = None,
+    extract_run_datetime: str | None = None,
+    records: list[dict[str, Any]] | None = None,
+    limit: int = MAX_SAMPLE_LIMIT,
+    schema_out: str | None = None,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Infer bronze JSON Schema from sample rows (dry-run; never writes)."""
+    return gen.schema_from_sample_dry_run(
+        pipeline,
+        run_path=run_path,
+        interval_start=interval_start,
+        interval_end=interval_end,
+        extract_run_datetime=extract_run_datetime,
+        records=records,
+        limit=limit,
+        schema_out=schema_out,
+        root=root,
+    )
+
+
+def mapper_from_diff_dry_run(
+    from_schema: str,
+    to_schema: str,
+    mapper_name: str,
+    *,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Diff two schemas and draft a mapper stub (dry-run; never writes)."""
+    return gen.mapper_from_diff_dry_run(
+        from_schema,
+        to_schema,
+        mapper_name,
+        root=root,
+    )
+
+
+def airflow_health(*, root: Path | None = None) -> dict[str, Any]:
+    """Airflow /health via DET_AIRFLOW_* (Compose defaults). Never mutates."""
+    return af.airflow_health(root=root)
+
+
+def list_airflow_dags(*, root: Path | None = None) -> dict[str, Any]:
+    """List DET DAGs from Airflow REST API."""
+    return af.list_airflow_dags(root=root)
+
+
+def list_airflow_dag_runs(
+    dag_id: str,
+    *,
+    limit: int = 10,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """List recent DagRuns for one DAG (read-only)."""
+    return af.list_airflow_dag_runs(dag_id, limit=limit, root=root)
+
+
+def describe_airflow_det_env(*, root: Path | None = None) -> dict[str, Any]:
+    """Decode local airflow/.env DET_* knobs (passwords redacted)."""
+    return af.describe_airflow_det_env(root=root)
+
+
+def preview_backfill_conf(
+    interval_start: str,
+    interval_end: str,
+    *,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Preview backfill conf + trigger command strings (never triggers)."""
+    return af.preview_backfill_conf(
+        interval_start, interval_end, root=root
+    )
+
+
+def migrate_dry_run(
+    pipeline: str,
+    to_bronze: str,
+    schema: str,
+    mapper: str,
+    interval_start: str,
+    *,
+    interval_end: str | None = None,
+    from_raw: str | None = None,
+    validate_limit: int = MAX_SAMPLE_LIMIT,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Preview det migrate: parse/map/validate raw partitions; never writes bronze."""
+    from det.mcp.inspect import clamp_sample_limit
+    from det.runtime.migrate import BronzeMigrator, MigratePlan
+    from det.runtime.pipelines import resolve_pipeline_ref
+
+    base = _root(root)
+    capped = clamp_sample_limit(validate_limit)
+    resolved = resolve_pipeline_ref(pipeline, project_root=base)
+    schema_path = Path(schema)
+    if not schema_path.is_absolute():
+        schema_path = base / schema_path
+    plan = BronzeMigrator(base).migrate(
+        pipeline=resolved.path,
+        to_bronze=to_bronze,
+        schema_path=schema_path,
+        mapper_name=mapper,
+        interval_start=interval_start,
+        interval_end=interval_end,
+        from_raw=from_raw,
+        dry_run=True,
+        validate_limit=capped,
+    )
+    assert isinstance(plan, MigratePlan)
+    out = plan.to_dict()
+    out["validate_limit"] = capped
+    out["pipeline"] = resolved.canonical_id
+    out["note"] = (
+        "Dry-run only — no bronze written. Apply with "
+        f"`det migrate -p {resolved.canonical_id} --to-bronze {to_bronze} "
+        f"--schema {schema} --mapper {mapper} -s {interval_start}` "
+        "after user confirms."
+    )
+    return out

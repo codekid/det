@@ -35,19 +35,47 @@ def to_snake_case(name: str) -> str:
     return text.strip("_")
 
 
-def apply_naming(row: dict[str, Any], naming: BronzeNamingConfig) -> dict[str, Any]:
-    """Apply configured key naming. Raises ValueError if two source keys collide."""
-    if naming.style == "identity":
-        return dict(row)
+def _path_label(path: str) -> str:
+    return path if path else "<root>"
+
+
+def _rename_value(value: Any, naming: BronzeNamingConfig, *, path: str) -> Any:
+    if isinstance(value, dict):
+        return apply_naming(value, naming, path=path)
+    if isinstance(value, list):
+        out: list[Any] = []
+        for i, item in enumerate(value):
+            item_path = f"{path}[{i}]" if path else f"[{i}]"
+            if isinstance(item, dict):
+                out.append(apply_naming(item, naming, path=item_path))
+            else:
+                out.append(item)
+        return out
+    return value
+
+
+def apply_naming(
+    row: dict[str, Any],
+    naming: BronzeNamingConfig,
+    *,
+    path: str = "",
+) -> dict[str, Any]:
+    """
+    Apply configured key naming recursively through nested objects and arrays
+    of objects. Raises ValueError if two keys in the same object collide.
+    """
     out: dict[str, Any] = {}
     for key, value in row.items():
         if key is None:
             continue
-        new_key = to_snake_case(str(key))
+        raw_key = str(key)
+        new_key = raw_key if naming.style == "identity" else to_snake_case(raw_key)
         if new_key in out:
+            loc = _path_label(path)
             raise ValueError(
-                f"Naming collision: multiple keys map to {new_key!r} "
-                f"(duplicate includes {key!r})"
+                f"Naming collision at {loc}: multiple keys map to {new_key!r} "
+                f"(duplicate includes {raw_key!r})"
             )
-        out[new_key] = value
+        child_path = f"{path}.{new_key}" if path else new_key
+        out[new_key] = _rename_value(value, naming, path=child_path)
     return out

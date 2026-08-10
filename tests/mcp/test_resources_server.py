@@ -35,5 +35,18 @@ def test_create_server_registers_tools():
         "dbt_dry_run",
         "scaffold_dbt_dry_run",
         "init_pipeline_dry_run",
+        "diff_partitions",
+        "sample_raw",
+        "validate_sample",
+        "sample_bronze",
+        "diagnose_pipeline",
+        "schema_from_sample_dry_run",
+        "mapper_from_diff_dry_run",
+        "airflow_health",
+        "list_airflow_dags",
+        "list_airflow_dag_runs",
+        "describe_airflow_det_env",
+        "preview_backfill_conf",
+        "migrate_dry_run",
     ):
         assert expected in names

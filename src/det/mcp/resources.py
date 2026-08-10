@@ -14,7 +14,10 @@ _README_POINTER = """\
 - `det://pipelines/{name}` — pipeline YAML (`noaa.storm_events` or nested path)
 - `det://schemas/{provider}/{source}/{filename}` — nested schema YAML
 - `det://schemas/{relative_path}` — same, with `/` as `%2F` in a single segment
-- Tools: inspect pipelines/lake + dry-run prune/dbt/scaffold/init only (v1)
+- Tools: lake inspect + generate dry-runs + Airflow inspect + prune/dbt/scaffold dry-runs (v1)
+- Sample size: `limit` / `sample_limit` (default 5, max 50)
+- Generate tools never write files — review drafts, then CLI/manual apply
+- Airflow: DET_AIRFLOW_* (Compose defaults); never trigger DagRuns via MCP
 
 Canonical id is `provider.source`. Lake: `raw|bronze/{provider}/{source}/`.
 DuckDB/Postgres: `{medallion}_{provider}.{source}` (e.g. `bronze_noaa.storm_events`).

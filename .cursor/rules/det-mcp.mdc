@@ -11,11 +11,26 @@ plans, or scaffold/dbt previews.
 
 ## v1 policy (dry-run / read-only)
 
-**Allowed via MCP:** `list_*`, `describe_pipeline`, `read_manifest`, `prune_dry_run`,
-`dbt_dry_run`, `scaffold_dbt_dry_run`, `init_pipeline_dry_run`, and `det://` resources.
+**Allowed via MCP:** `list_*`, `describe_pipeline`, `read_manifest`,
+`diff_partitions`, `sample_raw`, `validate_sample`, `sample_bronze`,
+`diagnose_pipeline`, `schema_from_sample_dry_run`, `mapper_from_diff_dry_run`,
+`airflow_health`, `list_airflow_dags`, `list_airflow_dag_runs`,
+`describe_airflow_det_env`, `preview_backfill_conf`, `migrate_dry_run`,
+`prune_dry_run`, `dbt_dry_run`, `scaffold_dbt_dry_run`, `init_pipeline_dry_run`,
+and `det://` resources.
+
+Sample size for `sample_*` / `validate_sample` / `schema_from_sample_dry_run` is
+`limit` (default **5** for sample/validate, up to **50**). `diagnose_pipeline`
+uses `sample_limit` the same way.
 
 **Not in MCP v1 — use CLI deliberately:** `det extract` / `load` / `run`,
-`det prune --apply`, non-dry-run `scaffold-dbt` / `init-pipeline`.
+`det migrate` (write; use MCP `migrate_dry_run` to preview), `det prune --apply`,
+Airflow DagRun triggers, non-dry-run `scaffold-dbt` / `init-pipeline`, writing
+schema or mapper files from generate previews. Pipeline structure validation is
+CLI/CI (`det check`), not an MCP tool.
+
+Airflow inspect uses `DET_AIRFLOW_BASE_URL` / `USER` / `PASSWORD` (Compose
+defaults to `http://localhost:8080`). Never trigger DagRuns via MCP.
 
 Paths are sandboxed under `DET_PROJECT_ROOT` (default cwd / project root).
 
@@ -24,10 +39,16 @@ Paths are sandboxed under `DET_PROJECT_ROOT` (default cwd / project root).
 | Goal | Prefer |
 | --- | --- |
 | List pipelines / describe config | MCP `list_pipelines` / `describe_pipeline` |
-| Debug missing raw / bronze runs | MCP `list_raw_partitions` / `list_bronze_partitions` / `read_manifest` |
+| Debug missing raw / bronze / schema | MCP `diagnose_pipeline` (or `diff_partitions` / `sample_raw` / `validate_sample`) |
+| Sample bronze rows | MCP `sample_bronze` (filesystem JSONL or DuckDB/Postgres `LIMIT`) |
+| Draft schema from sample | MCP `schema_from_sample_dry_run` then write after confirm |
+| Draft migrate mapper | MCP `mapper_from_diff_dry_run` then register + `det migrate` |
+| Airflow health / DAG runs | MCP `airflow_health` / `list_airflow_dags` / `list_airflow_dag_runs` |
+| Preview backfill conf | MCP `preview_backfill_conf` then Compose/CLI trigger if approved |
+| Preview migrate | MCP `migrate_dry_run` then CLI `det migrate` (no `--dry-run`) |
 | Preview prune | MCP `prune_dry_run` then CLI `--apply` if approved |
 | Preview dbt/scaffold | MCP `*_dry_run` then CLI without `--dry-run` |
-| Mutating extract/load | CLI only |
+| Mutating extract/load / DagRun trigger | CLI / Airflow UI only |
 
 ## dlt boundaries
 

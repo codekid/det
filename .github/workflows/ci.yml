@@ -18,5 +18,7 @@ jobs:
         run: uv sync --extra dev --extra mcp
       - name: Lint
         run: uv run ruff check .
+      - name: Structure check
+        run: uv run det check
       - name: Pytest
         run: uv run pytest -q

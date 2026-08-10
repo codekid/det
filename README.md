@@ -39,12 +39,13 @@ optional Airflow DAGs, and a Cursor MCP server for inspect + dry-run ops.
 | `det load` | Raw → snake_case → coerce → JSON Schema → bronze |
 | `det run` | Extract then load with one shared run-start stamp |
 | `det prune` | Bronze retention (`--dry-run` or `--apply`; never touches raw) |
-| `det migrate` | Rebuild bronze from raw after a contract change |
+| `det migrate` | Rebuild bronze from raw (`--dry-run` to preview) |
 | `det scaffold-dbt` | Generate `sources.yml` + `stg_*` + `silver_*` from schema |
 | `det init-pipeline` | Greenfield pipeline YAML + schema stub + scaffold-dbt |
 | `det dbt` | Run dbt (`build` / `run` / `test`) for local testing |
 | `det list-pipelines` | Canonical ids under `configs/pipelines/` |
 | `det list-sources` / `list-mappers` | Discover plugins |
+| `det check` | Structure check (schema/source; dbt models warn) |
 
 Also:
 
@@ -470,8 +471,17 @@ flowchart LR
 
 ## Schemas, coerce, and meta
 
-Bronze schemas are **typed** JSON Schema under `schemas/`. DET coerces after snake_case
-naming and before validation (e.g. `"51.00"` → number/integer when whole).
+Bronze schemas are **typed** JSON Schema under `schemas/`. DET applies **recursive**
+snake_case naming (nested objects and arrays of objects keep the same shape; keys
+are renamed in place), then **recursive** coerce, then validation (e.g. `"51.00"` →
+number/integer when whole). Nested schema property names are the **post-naming**
+contract (`lat_lon`, not `latLon`). Bronze does not flatten.
+
+Silver may read nested paths as snake_case (`geo.lat_lon`). `det scaffold-dbt`
+still emits top-level columns only.
+
+Breaking note: on load/migrate, nested camelCase keys become snake_case. In-repo
+pipelines today use flat schemas, so NOAA / example_api are unaffected.
 
 ```text
 schemas/
@@ -546,9 +556,17 @@ det dbt -p noaa.storm_events
 ## Migrate
 
 Rebuild bronze from raw wire after a contract change (no dependence on a stored payload
-column in bronze):
+column in bronze). Preview first with `--dry-run` (or MCP `migrate_dry_run`), then run
+without `--dry-run` to write:
 
 ```bash
+det migrate -p noaa.storm_events \
+  --to-bronze noaa.storm_events_v2 \
+  --schema schemas/noaa/storm_events/storm_events.schema.yaml \
+  --mapper storm_events_identity \
+  -s 2026-08-01 -e 2026-09-01 \
+  --dry-run
+
 det migrate -p noaa.storm_events \
   --to-bronze noaa.storm_events_v2 \
   --schema schemas/noaa/storm_events/storm_events.schema.yaml \
@@ -581,12 +599,28 @@ Companion docs:
 
 - [`.cursor/rules/det-mcp.mdc`](.cursor/rules/det-mcp.mdc)
 - [`.cursor/skills/det-ops/SKILL.md`](.cursor/skills/det-ops/SKILL.md)
+- Skills: `det-migrate`, `det-new-source`, `det-airflow`, `det-dbt`
 
 | Tools | Resources |
 | --- | --- |
 | `list_pipelines`, `list_sources`, `list_mappers`, `describe_pipeline` | `det://pipelines/{name}` |
 | `list_raw_partitions`, `list_bronze_partitions`, `read_manifest` | `det://schemas/{dataset}/{filename}` |
-| `prune_dry_run`, `dbt_dry_run`, `scaffold_dbt_dry_run`, `init_pipeline_dry_run` | `det://readme` |
+| `diff_partitions`, `sample_raw`, `validate_sample`, `sample_bronze`, `diagnose_pipeline` | `det://readme` |
+| `schema_from_sample_dry_run`, `mapper_from_diff_dry_run` | |
+| `airflow_health`, `list_airflow_dags`, `list_airflow_dag_runs`, `describe_airflow_det_env`, `preview_backfill_conf` | |
+| `migrate_dry_run`, `prune_dry_run`, `dbt_dry_run`, `scaffold_dbt_dry_run`, `init_pipeline_dry_run` | |
+
+Sample size for `sample_*` / `validate_sample` is `limit` (default 5, max 50);
+`diagnose_pipeline` uses `sample_limit`. Bronze samples are inspection-only —
+rebuild via `det migrate` from raw.
+
+**Generate (dry-run):** `schema_from_sample_dry_run` and `mapper_from_diff_dry_run`
+return YAML/Python drafts only — write files after review, then `det migrate` /
+`det init-pipeline` as needed.
+
+**Airflow inspect (read-only):** defaults to local Compose
+(`DET_AIRFLOW_BASE_URL=http://localhost:8080`). Override `DET_AIRFLOW_*` for a
+remote Airflow later. MCP never triggers DagRuns.
 
 Mutating steps stay on the CLI after you confirm (e.g. `det prune … --apply`).
 
@@ -607,6 +641,17 @@ make airflow-down
 Config lives in `airflow/.env` (from `airflow/.env.example`). Leave
 `DET_PIPELINE_OVERRIDES` empty for live NOAA; set the fixture overrides there
 only when you want offline runs.
+
+Cursor agents can inspect status via MCP (`airflow_health`, `list_airflow_dags`,
+`list_airflow_dag_runs`, `describe_airflow_det_env`, `preview_backfill_conf`).
+Agent→API connection (defaults match Compose):
+
+| Env | Default |
+| --- | --- |
+| `DET_AIRFLOW_BASE_URL` | `http://localhost:8080` |
+| `DET_AIRFLOW_USER` / `DET_AIRFLOW_PASSWORD` | from `airflow/.env` or `airflow` |
+| `DET_AIRFLOW_AUTH` | `basic` (only mode today) |
+| `DET_AIRFLOW_TIMEOUT_SEC` | `10` |
 
 ```mermaid
 flowchart TD
@@ -661,6 +706,19 @@ Useful env vars (see `airflow/.env.example`): `DET_PROJECT_ROOT`,
 make test
 # or: uv run pytest
 ```
+
+Structure check (pipeline YAML loads, schema file exists, source registered;
+missing dbt silver models are warnings):
+
+```bash
+uv run det check
+# uv run det check -p noaa.storm_events --json
+# uv run det check --strict   # also fail on warnings
+```
+
+CI runs `det check` (errors fail the job; warnings do not). Cursor
+`afterFileEdit` hook under [`.cursor/hooks/`](.cursor/hooks/) surfaces the same
+findings when agents edit `configs/pipelines/` or `schemas/`.
 
 ---
 

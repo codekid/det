@@ -22,14 +22,57 @@ def _is_blank(value: Any) -> bool:
     return value is None or (isinstance(value, str) and value.strip() == "")
 
 
+def _schema_fragment_from_prop(prop: dict[str, Any]) -> dict[str, Any]:
+    """Treat a property schema as a record schema when it describes an object."""
+    return {
+        "type": "object",
+        "properties": prop.get("properties") or {},
+    }
+
+
 def coerce_value(value: Any, prop: dict[str, Any], *, field: str) -> Any:
     """
     Coerce a single value toward the JSON Schema property type.
 
-    Blank strings become null when null is allowed. Does not invent defaults for
-    required non-null fields — validation catches those.
+    Recurses into ``object`` / ``array`` using ``properties`` / ``items`` only
+    (no ``$ref`` / ``allOf`` / ``oneOf`` resolution). Blank strings become null
+    when null is allowed. Does not invent defaults for required non-null fields
+    — validation catches those.
     """
+    # Composition / $ref: leave as-is at this node (validate may still enforce).
+    if any(k in prop for k in ("$ref", "allOf", "oneOf", "anyOf", "patternProperties")):
+        return value
+
     allowed = _allowed_types(prop)
+
+    if isinstance(value, dict) and (
+        not allowed or "object" in allowed or "properties" in prop
+    ):
+        if "properties" in prop or "object" in allowed or not allowed:
+            return coerce_record(value, _schema_fragment_from_prop(prop), path=field)
+
+    if isinstance(value, list) and (not allowed or "array" in allowed or "items" in prop):
+        items = prop.get("items")
+        if isinstance(items, dict):
+            out: list[Any] = []
+            for i, item in enumerate(value):
+                item_field = f"{field}[{i}]"
+                item_allowed = _allowed_types(items)
+                if isinstance(item, dict) and (
+                    "properties" in items
+                    or "object" in item_allowed
+                    or not item_allowed
+                ):
+                    out.append(
+                        coerce_record(
+                            item, _schema_fragment_from_prop(items), path=item_field
+                        )
+                    )
+                else:
+                    out.append(coerce_value(item, items, field=item_field))
+            return out
+        return list(value)
+
     if not allowed:
         return value
 
@@ -99,18 +142,38 @@ def coerce_value(value: Any, prop: dict[str, Any], *, field: str) -> Any:
     return value
 
 
-def coerce_record(row: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+def coerce_record(
+    row: dict[str, Any], schema: dict[str, Any], *, path: str = ""
+) -> dict[str, Any]:
     """Apply schema property types to a named row (before JSON Schema validate)."""
     props = schema.get("properties") or {}
     if not isinstance(props, dict):
         return dict(row)
     out: dict[str, Any] = {}
     for key, value in row.items():
+        field = f"{path}.{key}" if path else str(key)
         prop = props.get(key)
         if not isinstance(prop, dict):
-            out[key] = value
+            # Unknown key: pass through; still walk nested structure without schema.
+            if isinstance(value, dict):
+                out[key] = coerce_record(
+                    value, {"type": "object", "properties": {}}, path=field
+                )
+            elif isinstance(value, list):
+                out[key] = [
+                    coerce_record(
+                        item,
+                        {"type": "object", "properties": {}},
+                        path=f"{field}[{i}]",
+                    )
+                    if isinstance(item, dict)
+                    else item
+                    for i, item in enumerate(value)
+                ]
+            else:
+                out[key] = value
             continue
-        out[key] = coerce_value(value, prop, field=key)
+        out[key] = coerce_value(value, prop, field=field)
     return out
 
 

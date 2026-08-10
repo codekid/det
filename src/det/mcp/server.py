@@ -20,7 +20,14 @@ def create_server():
         "det",
         instructions=(
             "DET (Data Extract Tool) MCP v1: read-only inspect and dry-run tools. "
-            "No extract/load/prune-apply/scaffold writes. "
+            "Inspect: diff_partitions, sample_raw, validate_sample, sample_bronze, "
+            "diagnose_pipeline (sample size via limit/sample_limit, default 5, max 50). "
+            "Generate (dry-run): schema_from_sample_dry_run, mapper_from_diff_dry_run. "
+            "Airflow inspect (read-only): airflow_health, list_airflow_dags, "
+            "list_airflow_dag_runs, describe_airflow_det_env, preview_backfill_conf. "
+            "Configure via DET_AIRFLOW_BASE_URL/USER/PASSWORD (Compose defaults). "
+            "migrate_dry_run previews bronze rebuild from raw (never writes). "
+            "Never trigger DagRuns or extract/load/prune-apply/migrate-write via MCP. "
             "dlt is extraction only — never suggest dlt.pipeline for landing."
         ),
     )
@@ -110,6 +117,179 @@ def create_server():
             connection=connection,
             lake_path=lake_path,
             skip_dbt=skip_dbt,
+        )
+
+    @mcp.tool()
+    def diff_partitions(
+        pipeline: str,
+        interval_start: str | None = None,
+        interval_end: str | None = None,
+        limit: int = t.DEFAULT_LIST_LIMIT,
+    ) -> dict[str, Any]:
+        """Compare raw vs bronze extract-run keys (hive and/or SQL meta columns)."""
+        return t.diff_partitions(
+            pipeline,
+            interval_start=interval_start,
+            interval_end=interval_end,
+            limit=limit,
+        )
+
+    @mcp.tool()
+    def sample_raw(
+        pipeline: str,
+        stage: str = "named",
+        limit: int = t.DEFAULT_SAMPLE_LIMIT,
+        run_path: str | None = None,
+        interval_start: str | None = None,
+        interval_end: str | None = None,
+        extract_run_datetime: str | None = None,
+    ) -> dict[str, Any]:
+        """Sample raw at stage wire|rows|named|coerced (limit default 5, max 50)."""
+        return t.sample_raw(
+            pipeline,
+            stage=stage,
+            limit=limit,
+            run_path=run_path,
+            interval_start=interval_start,
+            interval_end=interval_end,
+            extract_run_datetime=extract_run_datetime,
+        )
+
+    @mcp.tool()
+    def validate_sample(
+        pipeline: str,
+        limit: int = t.DEFAULT_SAMPLE_LIMIT,
+        max_errors: int = 20,
+        run_path: str | None = None,
+        interval_start: str | None = None,
+        interval_end: str | None = None,
+        extract_run_datetime: str | None = None,
+    ) -> dict[str, Any]:
+        """Coerce + JSON Schema validate a capped raw sample; errors returned as data."""
+        return t.validate_sample(
+            pipeline,
+            limit=limit,
+            max_errors=max_errors,
+            run_path=run_path,
+            interval_start=interval_start,
+            interval_end=interval_end,
+            extract_run_datetime=extract_run_datetime,
+        )
+
+    @mcp.tool()
+    def sample_bronze(
+        pipeline: str,
+        limit: int = t.DEFAULT_SAMPLE_LIMIT,
+        run_path: str | None = None,
+        interval_start: str | None = None,
+        interval_end: str | None = None,
+        extract_run_datetime: str | None = None,
+    ) -> dict[str, Any]:
+        """Sample bronze rows (filesystem JSONL or DuckDB/Postgres LIMIT). Inspection only."""
+        return t.sample_bronze(
+            pipeline,
+            limit=limit,
+            run_path=run_path,
+            interval_start=interval_start,
+            interval_end=interval_end,
+            extract_run_datetime=extract_run_datetime,
+        )
+
+    @mcp.tool()
+    def diagnose_pipeline(
+        pipeline: str,
+        interval_start: str | None = None,
+        interval_end: str | None = None,
+        sample_limit: int = t.DEFAULT_SAMPLE_LIMIT,
+    ) -> dict[str, Any]:
+        """Coverage diagnose + optional validate; returns findings and suggested CLI."""
+        return t.diagnose_pipeline(
+            pipeline,
+            interval_start=interval_start,
+            interval_end=interval_end,
+            sample_limit=sample_limit,
+        )
+
+    @mcp.tool()
+    def schema_from_sample_dry_run(
+        pipeline: str | None = None,
+        run_path: str | None = None,
+        interval_start: str | None = None,
+        interval_end: str | None = None,
+        extract_run_datetime: str | None = None,
+        records: list[dict[str, Any]] | None = None,
+        limit: int = t.MAX_SAMPLE_LIMIT,
+        schema_out: str | None = None,
+    ) -> dict[str, Any]:
+        """Infer bronze JSON Schema from sample rows or inline records (never writes)."""
+        return t.schema_from_sample_dry_run(
+            pipeline,
+            run_path=run_path,
+            interval_start=interval_start,
+            interval_end=interval_end,
+            extract_run_datetime=extract_run_datetime,
+            records=records,
+            limit=limit,
+            schema_out=schema_out,
+        )
+
+    @mcp.tool()
+    def mapper_from_diff_dry_run(
+        from_schema: str,
+        to_schema: str,
+        mapper_name: str,
+    ) -> dict[str, Any]:
+        """Diff two schema files and draft a mapper stub (never writes)."""
+        return t.mapper_from_diff_dry_run(from_schema, to_schema, mapper_name)
+
+    @mcp.tool()
+    def airflow_health() -> dict[str, Any]:
+        """Airflow /health (DET_AIRFLOW_* / Compose defaults). Read-only."""
+        return t.airflow_health()
+
+    @mcp.tool()
+    def list_airflow_dags() -> dict[str, Any]:
+        """List DET DAGs from Airflow REST (paused / import errors). Read-only."""
+        return t.list_airflow_dags()
+
+    @mcp.tool()
+    def list_airflow_dag_runs(dag_id: str, limit: int = 10) -> dict[str, Any]:
+        """Recent DagRuns for one DAG (limit default 10, max 50). Read-only."""
+        return t.list_airflow_dag_runs(dag_id, limit=limit)
+
+    @mcp.tool()
+    def describe_airflow_det_env() -> dict[str, Any]:
+        """Local airflow/.env DET_* knobs (passwords redacted). Read-only."""
+        return t.describe_airflow_det_env()
+
+    @mcp.tool()
+    def preview_backfill_conf(
+        interval_start: str, interval_end: str
+    ) -> dict[str, Any]:
+        """Preview backfill conf + trigger command strings; never triggers."""
+        return t.preview_backfill_conf(interval_start, interval_end)
+
+    @mcp.tool()
+    def migrate_dry_run(
+        pipeline: str,
+        to_bronze: str,
+        schema: str,
+        mapper: str,
+        interval_start: str,
+        interval_end: str | None = None,
+        from_raw: str | None = None,
+        validate_limit: int = t.MAX_SAMPLE_LIMIT,
+    ) -> dict[str, Any]:
+        """Preview migrate (name/map/validate); never writes bronze."""
+        return t.migrate_dry_run(
+            pipeline,
+            to_bronze,
+            schema,
+            mapper,
+            interval_start,
+            interval_end=interval_end,
+            from_raw=from_raw,
+            validate_limit=validate_limit,
         )
 
     @mcp.resource("det://pipelines/{name}")

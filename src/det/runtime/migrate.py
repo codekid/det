@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +46,55 @@ class MigrateResult:
     rows: int
 
 
+@dataclass
+class PartitionPlan:
+    raw_path: str
+    would_write_bronze_path: str | None
+    interval_start: str
+    interval_end: str
+    extract_run_datetime: str
+    rows: int
+    ok: bool
+    truncated: bool = False
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class MigratePlan:
+    """Dry-run migrate preview — no bronze writes."""
+
+    dry_run: bool
+    from_raw: str
+    to_bronze: str
+    mapper_name: str
+    schema_path: str
+    extract_run_datetime: str
+    partitions: list[PartitionPlan] = field(default_factory=list)
+    partitions_planned: int = 0
+    rows_checked: int = 0
+
+    @property
+    def ok(self) -> bool:
+        return all(p.ok for p in self.partitions)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "dry_run": self.dry_run,
+            "ok": self.ok,
+            "from_raw": self.from_raw,
+            "to_bronze": self.to_bronze,
+            "mapper_name": self.mapper_name,
+            "schema_path": self.schema_path,
+            "extract_run_datetime": self.extract_run_datetime,
+            "partitions_planned": self.partitions_planned,
+            "rows_checked": self.rows_checked,
+            "partitions": [p.to_dict() for p in self.partitions],
+        }
+
+
 def _raw_partitions_in_window(raw_dataset: Path, start: str, end: str) -> list[Path]:
     """
     Leaf raw dirs (…/__extract_run_datetime=…) whose interval start is in [start, end).
@@ -73,6 +122,13 @@ def _raw_partitions_in_window(raw_dataset: Path, start: str, end: str) -> list[P
     return parts
 
 
+def _rel(path: Path, root: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except ValueError:
+        return str(path.resolve())
+
+
 class BronzeMigrator:
     def __init__(self, project_root: Path | None = None) -> None:
         self.project_root = (project_root or Path.cwd()).resolve()
@@ -93,11 +149,20 @@ class BronzeMigrator:
         raw_prefix: str | None = None,
         ingestion_library: str = "thin",
         overrides: list[str] | None = None,
-    ) -> MigrateResult:
+        dry_run: bool = False,
+        validate_limit: int | None = None,
+    ) -> MigrateResult | MigratePlan:
         """
         Rebuild bronze from raw wire using the pipeline's source parser + naming,
         then apply a mapper and the target schema.
+
+        When ``dry_run=True``, parse/map/validate only and return a ``MigratePlan``
+        (never calls the bronze writer). ``validate_limit`` caps rows checked per
+        partition (dry-run only).
         """
+        if not dry_run and validate_limit is not None:
+            raise ValueError("validate_limit is only valid with dry_run=True")
+
         extract_ts = format_extract_run_datetime()
         config = (
             pipeline
@@ -119,18 +184,20 @@ class BronzeMigrator:
                 raw_prefix=raw_prefix or config.medallion.raw_prefix,
             )
 
-        schema = load_json_schema(
+        schema_resolved = (
             Path(schema_path)
             if Path(schema_path).is_absolute()
             else (self.project_root / schema_path).resolve()
         )
+        schema = load_json_schema(schema_resolved)
+        schema_rel = _rel(schema_resolved, self.project_root)
         mapper = get_mapper(mapper_name)
         source = get_source(config.source.type)
         effective = merge_source_config(source.defaults(), config.source.overrides)
         window_start, window_end = resolve_interval(interval_start, interval_end)
 
         raw_name = validate_canonical_id(from_raw or config.bronze_dataset())
-        to_bronze = validate_canonical_id(to_bronze)
+        to_bronze_id = validate_canonical_id(to_bronze)
         raw_dataset = raw_dataset_dir(
             config, self.project_root, dataset=raw_name
         )
@@ -146,8 +213,28 @@ class BronzeMigrator:
             destination=config.destination,
             medallion=config.medallion,
             bronze=config.bronze,
-            dataset=to_bronze,
+            dataset=to_bronze_id,
         )
+
+        if dry_run:
+            return self._migrate_dry_run(
+                config=config,
+                to_config=to_config,
+                source=source,
+                effective=effective,
+                mapper=mapper,
+                schema=schema,
+                schema_rel=schema_rel,
+                mapper_name=mapper_name,
+                raw_name=raw_name,
+                to_bronze_id=to_bronze_id,
+                source_parts=source_parts,
+                window_start=window_start,
+                window_end=window_end,
+                extract_ts=extract_ts,
+                validate_limit=validate_limit,
+            )
+
         backend = get_ingestion(ingestion_library)
         total_rows = 0
         written = 0
@@ -184,7 +271,7 @@ class BronzeMigrator:
                 for row, filename in named_rows
             ]
             out_part = hive_partition_dir(
-                bronze_dataset_dir(to_config, self.project_root, dataset=to_bronze),
+                bronze_dataset_dir(to_config, self.project_root, dataset=to_bronze_id),
                 interval_start_datetime=start_iso,
                 interval_end_datetime=end_iso,
                 extract_run_datetime=extract_ts,
@@ -202,7 +289,125 @@ class BronzeMigrator:
 
         return MigrateResult(
             from_raw=raw_name,
-            to_bronze=to_bronze,
+            to_bronze=to_bronze_id,
             partitions=written,
             rows=total_rows,
+        )
+
+    def _migrate_dry_run(
+        self,
+        *,
+        config: PipelineConfig,
+        to_config: PipelineConfig,
+        source: Any,
+        effective: dict[str, Any],
+        mapper: Any,
+        schema: dict[str, Any],
+        schema_rel: str,
+        mapper_name: str,
+        raw_name: str,
+        to_bronze_id: str,
+        source_parts: list[Path],
+        window_start: str,
+        window_end: str,
+        extract_ts: str,
+        validate_limit: int | None,
+    ) -> MigratePlan:
+        plans: list[PartitionPlan] = []
+        rows_checked = 0
+
+        for raw_dir in source_parts:
+            errors: list[str] = []
+            named_rows: list[tuple[dict[str, Any], str | None]] = []
+            truncated = False
+            try:
+                manifest = read_manifest(raw_dir)
+            except Exception as exc:
+                plans.append(
+                    PartitionPlan(
+                        raw_path=_rel(raw_dir, self.project_root),
+                        would_write_bronze_path=None,
+                        interval_start=window_start,
+                        interval_end=window_end,
+                        extract_run_datetime=extract_ts,
+                        rows=0,
+                        ok=False,
+                        errors=[f"manifest: {exc}"],
+                    )
+                )
+                continue
+
+            start_iso = str(manifest.get("interval_start") or window_start)
+            end_iso = str(manifest.get("interval_end") or window_end)
+            try:
+                start_iso, end_iso = resolve_interval(start_iso, end_iso)
+            except ValueError as exc:
+                errors.append(str(exc))
+
+            out_part = hive_partition_dir(
+                bronze_dataset_dir(to_config, self.project_root, dataset=to_bronze_id),
+                interval_start_datetime=start_iso,
+                interval_end_datetime=end_iso,
+                extract_run_datetime=extract_ts,
+            )
+
+            try:
+                for source_row in source.records_from_raw(
+                    config=effective, raw_dir=raw_dir, manifest=manifest
+                ):
+                    if validate_limit is not None and len(named_rows) >= validate_limit:
+                        truncated = True
+                        break
+                    try:
+                        named = apply_naming(source_row.data, config.bronze.naming)
+                        mapped = mapper(named)
+                        typed = coerce_record(mapped, schema)
+                    except (CoerceError, ValueError, TypeError) as exc:
+                        errors.append(str(exc))
+                        if len(errors) >= 20:
+                            truncated = True
+                            break
+                        continue
+                    named_rows.append((typed, source_row.filename))
+            except Exception as exc:
+                errors.append(f"records_from_raw: {exc}")
+
+            if named_rows and not errors:
+                try:
+                    validate_records([row for row, _ in named_rows], schema)
+                except SchemaValidationError as exc:
+                    errors.extend(exc.errors or [str(exc)])
+
+            part_ok = not errors
+            rows_checked += len(named_rows)
+            plans.append(
+                PartitionPlan(
+                    raw_path=_rel(raw_dir, self.project_root),
+                    would_write_bronze_path=_rel(out_part, self.project_root),
+                    interval_start=start_iso,
+                    interval_end=end_iso,
+                    extract_run_datetime=extract_ts,
+                    rows=len(named_rows),
+                    ok=part_ok,
+                    truncated=truncated,
+                    errors=errors[:20],
+                )
+            )
+            logger.info(
+                "migrate dry-run partition",
+                raw_dir=str(raw_dir),
+                rows=len(named_rows),
+                ok=part_ok,
+            )
+
+        return MigratePlan(
+            dry_run=True,
+            from_raw=raw_name,
+            to_bronze=to_bronze_id,
+            mapper_name=mapper_name,
+            schema_path=schema_rel,
+            extract_run_datetime=extract_ts,
+            partitions=plans,
+            partitions_planned=len(plans),
+            rows_checked=rows_checked,
         )
