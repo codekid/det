@@ -14,46 +14,6 @@ from det.sources.http_json import dig, write_json_page
 
 logger = get_logger(__name__)
 
-# Curated bronze contract keys (wire names). Open Library responses are open-ended;
-# we project once at extract so raw pages *are* the declared wire (see reshape policy
-# in README / det-new-source). Do not re-project in records_from_raw.
-_WORK_FIELDS = (
-    "key",
-    "title",
-    "edition_count",
-    "cover_id",
-    "cover_edition_key",
-    "first_publish_year",
-    "has_fulltext",
-    "public_scan",
-    "printdisabled",
-    "ia",
-    "lending_edition",
-    "lending_identifier",
-    "authors",
-    "subject",
-    "ia_collection",
-    "availability",
-)
-
-_AVAILABILITY_FIELDS = (
-    "status",
-    "available_to_browse",
-    "available_to_borrow",
-    "available_to_waitlist",
-    "is_printdisabled",
-    "is_readable",
-    "is_lendable",
-    "is_previewable",
-    "identifier",
-    "isbn",
-    "oclc",
-    "openlibrary_work",
-    "openlibrary_edition",
-    "is_restricted",
-    "is_browseable",
-)
-
 
 def _subject_slug(subject: str) -> str:
     text = (subject or "").strip().strip("/")
@@ -72,30 +32,6 @@ def _subject_path(subject: str) -> str:
 
 def _subject_key(subject: str) -> str:
     return f"/subjects/{_subject_slug(subject)}"
-
-
-def _project_work(work: dict[str, Any], *, subject_key: str) -> dict[str, Any]:
-    out: dict[str, Any] = {"subject_key": subject_key}
-    for field in _WORK_FIELDS:
-        if field not in work:
-            continue
-        value = work[field]
-        if field == "availability" and isinstance(value, dict):
-            out[field] = {
-                k: value[k] for k in _AVAILABILITY_FIELDS if k in value
-            }
-        elif field == "authors" and isinstance(value, list):
-            authors: list[dict[str, Any]] = []
-            for item in value:
-                if not isinstance(item, dict):
-                    continue
-                authors.append(
-                    {k: item[k] for k in ("key", "name") if k in item}
-                )
-            out[field] = authors
-        else:
-            out[field] = value
-    return out
 
 
 def _page_body(rows: list[dict[str, Any]], *, subject_key: str, record_path: str) -> dict[str, Any]:
@@ -117,10 +53,9 @@ class OpenLibrarySubjectsSource:
     Interval mode: ``partition_only`` — the Subjects API is a snapshot feed; start/end
     label the lake partition and are not sent as API filters.
 
-    Reshape: curated-contract exception — project works onto the bronze schema once
-    when writing raw pages; ``records_from_raw`` yields those rows as-is.
-    Grain: silver unique on ``(key, subject_key)`` so the same work under two subjects
-    keeps both rows.
+    Wire: land API work objects as-is (no field allowlist). ``records_from_raw`` only
+    injects ``subject_key``; unexpected properties fail JSON Schema validation so
+    contract drift is loud. Analytics adapts belong in ``dbt.stg``.
     """
 
     name = "openlibrary.subjects"
@@ -153,11 +88,7 @@ class OpenLibrarySubjectsSource:
         record_path = str(config.get("record_path") or "works")
         fixtures = config.get("fixture_records")
         if fixtures is not None:
-            rows = [
-                _project_work(dict(row), subject_key=subject_key)
-                for row in fixtures
-                if isinstance(row, dict)
-            ]
+            rows = [dict(row) for row in fixtures if isinstance(row, dict)]
             return [
                 write_json_page(
                     pages_dir=pages_dir,
@@ -212,11 +143,7 @@ class OpenLibrarySubjectsSource:
         for page in client.paginate(
             path, params=params or None, data_selector=record_path
         ):
-            rows = [
-                _project_work(row, subject_key=subject_key)
-                for row in page
-                if isinstance(row, dict)
-            ]
+            rows = [dict(row) for row in page if isinstance(row, dict)]
             page_num += 1
             artifacts.append(
                 write_json_page(
@@ -246,8 +173,8 @@ class OpenLibrarySubjectsSource:
         raw_dir: Path,
         manifest: dict[str, Any],
     ) -> Iterator[SourceRow]:
-        # Rows were projected at extract; yield as-is (curated wire = raw page works).
         record_path = str(config.get("record_path") or "works")
+        fallback_subject = _subject_key(str(config.get("subject") or "love"))
         for art in manifest.get("artifacts") or []:
             path = raw_dir / art["path"]
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -256,6 +183,14 @@ class OpenLibrarySubjectsSource:
                 works = payload
             if not isinstance(works, list):
                 raise ValueError(f"No works list at {record_path!r} in {path}")
+            page_subject = (
+                payload.get("key")
+                if isinstance(payload, dict) and isinstance(payload.get("key"), str)
+                else fallback_subject
+            )
             for row in works:
                 if isinstance(row, dict):
-                    yield SourceRow(data=dict(row), filename=Path(art["path"]).name)
+                    # Enrich only — do not strip unknown API fields; schema owns the contract.
+                    data = dict(row)
+                    data["subject_key"] = page_subject
+                    yield SourceRow(data=data, filename=Path(art["path"]).name)

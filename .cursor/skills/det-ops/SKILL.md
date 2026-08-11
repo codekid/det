@@ -1,8 +1,9 @@
 ---
 name: det-ops
 description: >-
-  DET agent workflows: debug missing raw partitions, preview bronze prune, and
-  scaffold/init from pipeline configs using MCP dry-run tools (or det CLI).
+  DET agent workflows: debug missing raw partitions, schema validation / contract
+  drift, preview bronze prune, and scaffold/init from pipeline configs using MCP
+  dry-run tools (or det CLI).
 ---
 
 # DET ops workflows
@@ -20,12 +21,34 @@ after the user confirms. Install: `uv pip install -e ".[mcp]"`.
 4. Dig deeper if needed:
    - `diff_partitions` — raw vs bronze extract-run coverage
    - `sample_raw` (`stage`: wire|rows|named|coerced) — adjust `limit` up/down
-   - `validate_sample` — coerce/schema errors as data
+   - `validate_sample` — coerce/schema errors as data (raise `limit` toward 50 for
+     nested/noisy APIs so rare extra fields show up)
    - `sample_bronze` — landed rows (FS / DuckDB / Postgres); inspection only
    - `read_manifest` on a raw run path
 5. If raw is empty: check extract interval (`-s`/`-e`), source plugin, and lake path.
    Bronze without raw usually means load/migrate was pointed at the wrong interval.
    Rebuild bronze from raw via `det migrate`, not from a bronze payload column.
+
+## Schema invalid / contract drift
+
+`schema_invalid` from `diagnose_pipeline`, failed `validate_sample`, or a red
+`det load` / `det run` means the wire and JSON Schema disagree. That is the alert.
+
+1. Read the validation errors (unexpected property, type, required). Prefer a
+   **representative** sample — bump `limit` / `sample_limit` (max 50); a 5-row
+   peek often misses nested extras (e.g. `availability.*`).
+2. Inspect with `sample_raw` (`stage`: `rows` or `coerced`) on the same interval.
+3. Decide with the user: add properties to `schemas/…/*.schema.yaml`, or
+   consciously open a subtree (`additionalProperties: true`) if junk is expected.
+4. **Do not** silently allowlist/strip fields in the source plugin. Enrichment-only
+   in `records_from_raw` (e.g. inject `subject_key`) is fine; pruning is not.
+5. After schema edits: re-run `validate_sample` / smoke `det load`. True wire breaks
+   that need rebuilds → `det-migrate`.
+
+Successful `det load` / migrate also stamps the raw partition
+`meta/manifest.json` with `validation.ok` + `schema_sha256` (and row count). That is a
+**receipt** for inspectability — missing `validation` is normal for fresh extract and
+does **not** fail load. Failures are not stamped (CLI/Airflow exit stays the alert).
 
 ## Preview prune
 

@@ -37,8 +37,7 @@ dlt may help HTTP (`RESTClient`, `@dlt.resource` as iterator). **Never**
    - `schema_from_sample_dry_run` → review `yaml` / `would_write`
    - Write schema only after confirm; keep `additionalProperties: false`
 5. `scaffold_dbt_dry_run` → then `det scaffold-dbt -p …` if needed.
-   Use `dbt.stg` for coalesce/sentinels/maps (see det-dbt); keep bronze wire-faithful
-   unless you take the curated-contract exception below.
+   Use `dbt.stg` for coalesce/sentinels/maps (see det-dbt); keep bronze wire-faithful.
 6. Smoke: `det run -p … -s …` (or extract/load), then `diagnose_pipeline` /
    `validate_sample`. Lake layout: `raw|bronze/{provider}/{source}/`.
 7. Leave `wire_version: 1` (init default). Bump only on true wire breaks together
@@ -46,12 +45,10 @@ dlt may help HTTP (`RESTClient`, `@dlt.resource` as iterator). **Never**
 
 ## Where may we reshape?
 
-- **Default:** land near-wire bytes in raw; project/allowlist only in
-  `records_from_raw` (or a migrate mapper). Analytics adapts belong in `dbt.stg`.
-- **Exception:** open-ended / unstable APIs with an intentional curated bronze
-  contract (`additionalProperties: false`) may land the projected payload as the
-  declared wire — project **once** (extract or parse, not both) and document it on
-  the plugin. Prefer `det.sources.http_json` for JSON page artifacts.
+- Land near-wire bytes in raw. Schema validation owns the contract — unexpected
+  properties should **fail load** (do not silently allowlist/strip in the source).
+- Enrichment-only in `records_from_raw` is OK (e.g. inject `subject_key`). Analytics
+  adapts belong in `dbt.stg`. Prefer `det.sources.http_json` for JSON page artifacts.
 
 State interval mode on the plugin docstring: `year_files` | `query_params` |
 `partition_only`.

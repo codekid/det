@@ -19,7 +19,11 @@ from det.runtime.config import (
     resolve_path,
 )
 from det.runtime.ids import validate_canonical_id
-from det.runtime.manifest import read_manifest
+from det.runtime.manifest import (
+    read_manifest,
+    sha256_file,
+    stamp_validation_success,
+)
 from det.runtime.meta import (
     attach_meta,
     format_extract_run_datetime,
@@ -310,6 +314,14 @@ class BronzeMigrator:
                 project_root=self.project_root,
                 partition_dir=out_part,
                 destination=to_config.destination,
+            )
+            stamp_validation_success(
+                raw_dir,
+                schema_path=schema_rel,
+                schema_sha256=sha256_file(schema_resolved),
+                row_count=len(enriched),
+                wire_version=to_config.wire_version,
+                validated_at=format_extract_run_datetime(),
             )
             total_rows += len(enriched)
             written += 1

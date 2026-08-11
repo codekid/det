@@ -3,10 +3,14 @@ from __future__ import annotations
 import pytest
 
 from det.sources.openlibrary.subjects import (
-    _project_work,
     _subject_key,
     _subject_path,
     _subject_slug,
+)
+from det.validation.jsonschema_validator import (
+    SchemaValidationError,
+    load_json_schema,
+    validate_records,
 )
 
 
@@ -25,22 +29,32 @@ def test_subject_slug_and_path(raw: str, slug: str):
     assert _subject_key(raw) == f"/subjects/{slug}"
 
 
-def test_project_work_adds_subject_key_and_trims_availability():
-    work = {
+def test_fixture_works_validate_with_subject_key(project_root):
+    schema = load_json_schema(
+        project_root / "schemas/openlibrary/subjects/subjects.schema.yaml"
+    )
+    fixtures = (
+        project_root / "tests/fixtures/openlibrary/subjects_love.json"
+    ).read_text(encoding="utf-8")
+    import json
+
+    rows = [
+        {**row, "subject_key": "/subjects/love"}
+        for row in json.loads(fixtures)
+    ]
+    validate_records(rows, schema)
+
+
+def test_unknown_work_field_fails_schema(project_root):
+    """Contract drift should be loud — do not silently strip in the source."""
+    schema = load_json_schema(
+        project_root / "schemas/openlibrary/subjects/subjects.schema.yaml"
+    )
+    row = {
         "key": "/works/OL1W",
+        "subject_key": "/subjects/love",
         "title": "Demo",
-        "authors": [{"key": "/authors/OL1A", "name": "Ada", "extra": 1}],
-        "availability": {
-            "status": "open",
-            "__src__": "ignore-me",
-            "is_readable": True,
-        },
         "unknown_field": True,
     }
-    out = _project_work(work, subject_key="/subjects/love")
-    assert out["subject_key"] == "/subjects/love"
-    assert out["key"] == "/works/OL1W"
-    assert "unknown_field" not in out
-    assert out["authors"] == [{"key": "/authors/OL1A", "name": "Ada"}]
-    assert out["availability"] == {"status": "open", "is_readable": True}
-    assert "__src__" not in out["availability"]
+    with pytest.raises(SchemaValidationError):
+        validate_records([row], schema)

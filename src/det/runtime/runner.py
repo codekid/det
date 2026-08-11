@@ -14,7 +14,12 @@ from det.logging import get_logger
 from det.plugins import load_plugins
 from det.runtime.coerce import CoerceError, coerce_record
 from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
-from det.runtime.manifest import read_manifest, write_manifest
+from det.runtime.manifest import (
+    read_manifest,
+    sha256_file,
+    stamp_validation_success,
+    write_manifest,
+)
 from det.runtime.meta import (
     attach_meta,
     data_interval_date,
@@ -205,6 +210,14 @@ class PipelineRunner:
             project_root=self.project_root,
             partition_dir=partition,
             destination=config.destination,
+        )
+        stamp_validation_success(
+            raw_dir,
+            schema_path=config.schema_path,
+            schema_sha256=sha256_file(resolve_path(self.project_root, config.schema_path)),
+            row_count=len(enriched),
+            wire_version=config.wire_version,
+            validated_at=format_extract_run_datetime(),
         )
         logger.info(
             "load complete",

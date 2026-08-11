@@ -1,6 +1,6 @@
 # Live bronze contract for pipeline openlibrary.subjects.
-# Grain: one row per (work key, subject_key). Raw pages are the curated wire
-# (projected once at extract); see reshape policy in README / det-new-source.
+# Grain: one row per (work key, subject_key). Source lands API works wire-faithful
+# and only injects subject_key; unexpected properties fail validation (loud drift).
 $schema: https://json-schema.org/draft/2020-12/schema
 $title: openlibrary.subjects
 type: object
@@ -51,5 +51,11 @@ properties:
       openlibrary_edition: { type: ["string", "null"] }
       is_restricted: { type: ["boolean", "null"] }
       is_browseable: { type: ["boolean", "null"] }
+      # Seen on live Subjects API availability blobs (2026-08).
+      __src__: { type: ["string", "null"] }
+      last_loan_date: { type: ["string", "null"] }
+      last_waitlist_date: { type: ["string", "null"] }
+      num_waitlist: { type: ["integer", "null"] }
+      error_message: { type: ["string", "null"] }
     additionalProperties: false
 additionalProperties: false

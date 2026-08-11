@@ -40,3 +40,31 @@ def read_manifest(raw_dir: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"Invalid manifest in {path}")
     return data
+
+
+def stamp_validation_success(
+    raw_dir: Path,
+    *,
+    schema_path: str,
+    schema_sha256: str,
+    row_count: int,
+    wire_version: int,
+    validated_at: str,
+) -> dict[str, Any]:
+    """
+    Merge a validation success receipt into the raw partition manifest.
+
+    Receipt only — callers must invoke this after bronze write succeeds. Missing
+    ``validation`` never gates load; absence means not yet proven under a recorded schema.
+    """
+    payload = read_manifest(raw_dir)
+    payload["validation"] = {
+        "ok": True,
+        "validated_at": validated_at,
+        "schema_path": schema_path,
+        "schema_sha256": schema_sha256,
+        "row_count": int(row_count),
+        "wire_version": int(wire_version),
+    }
+    write_manifest(raw_dir, payload)
+    return payload

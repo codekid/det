@@ -84,18 +84,3 @@ def test_meta_fields_not_required_in_schema(project_root):
     props = schema.get("properties", {})
     assert "__raw" not in props
     assert "__row_hash" not in props
-
-
-def test_openlibrary_work_fields_align_with_schema(project_root):
-    """Curated allowlist and JSON Schema properties must stay in sync (+ subject_key)."""
-    from det.sources.openlibrary.subjects import _AVAILABILITY_FIELDS, _WORK_FIELDS
-
-    schema = load_json_schema(
-        project_root / "schemas/openlibrary/subjects/subjects.schema.yaml"
-    )
-    props = set(schema.get("properties") or {})
-    assert set(_WORK_FIELDS) | {"subject_key"} == props
-
-    availability = (schema.get("properties") or {}).get("availability") or {}
-    avail_props = set((availability.get("properties") or {}))
-    assert set(_AVAILABILITY_FIELDS) == avail_props

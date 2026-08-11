@@ -181,7 +181,9 @@ data/lake/raw/noaa/storm_events/
     __interval_end_datetime=20260802T000000Z/
       __extract_run_datetime=20260806T232208Z/
         data/                 # source payload bytes
-        meta/manifest.json
+        meta/manifest.json    # extract metadata; after successful load also
+                              # validation: { ok, schema_path, schema_sha256, … }
+                              # (receipt only — missing validation never gates load)
 
 data/lake/bronze/noaa/storm_events/          # filesystem destination only
   __interval_start_datetime=…/
@@ -802,13 +804,13 @@ Plugins under `src/det/sources/` implement `defaults()`, `extract_to_raw(...)`, 
 
 **Where may we reshape?**
 
-- **Default:** land near-wire bytes in raw; project/allowlist only in
-  `records_from_raw` (or a migrate mapper). Keep bronze wire-faithful; push analytics
-  adapts into `dbt.stg`.
-- **Exception:** if the API is open-ended / unstable and bronze is an intentional
-  curated contract (`additionalProperties: false`), land the **projected** payload as
-  the declared wire — but project **once** (at extract or at parse, not both). Document
-  that choice on the plugin. Open Library subjects uses this exception.
+- Land near-wire bytes in raw; keep bronze wire-faithful. JSON Schema
+  (`additionalProperties: false`) owns the contract — unexpected fields should
+  **fail load** so you can decide whether to update the schema.
+- Enrichment only in `records_from_raw` when needed (e.g. Open Library injects
+  `subject_key`). Do **not** silently allowlist/strip API fields in the source.
+- Analytics adapts (rename/coalesce/exclude) belong in `dbt.stg`. True wire breaks
+  use a migrate mapper + `wire_version` / lake `dataset:` cutover.
 
 **Interval modes** (state on the plugin docstring): `year_files` | `query_params` |
 `partition_only`.
