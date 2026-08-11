@@ -13,9 +13,27 @@ from det.runtime.config import (
     DbtSilverConfig,
     DbtStgConfig,
     PipelineConfig,
+    RelationConfig,
     resolve_path,
 )
 from det.runtime.ids import dbt_model_slug, parse_canonical_id, sql_names_for_config
+from det.scaffold.adapt_scope import (
+    FlatAdapt,
+    compile_relation_adapt,
+    compile_stg_fields,
+    flat_adapt_from_root_stg,
+    merge_flat_adapt,
+)
+from det.scaffold.flatten import (
+    FlattenLeaf,
+    detect_flatten_collisions,
+    flattened_roots,
+    is_array_prop,
+    is_object_prop,
+    iter_relation_paths,
+    plan_flatten,
+    relation_item_schema_at,
+)
 from det.validation.jsonschema_validator import load_json_schema
 
 logger = get_logger(__name__)
@@ -78,6 +96,8 @@ def _allowed_types(prop: dict[str, Any]) -> set[str]:
 
 def duckdb_type_for_prop(prop: dict[str, Any]) -> str:
     """Map a JSON Schema property to a DuckDB read_json column type."""
+    if is_object_prop(prop) or is_array_prop(prop):
+        return "JSON"
     allowed = _allowed_types(prop)
     if "integer" in allowed:
         return "INTEGER"
@@ -159,6 +179,8 @@ def _sql_string_literal(value: str) -> str:
 
 def _cast_macro_call(name: str, prop: dict[str, Any] | None) -> str:
     """dbt Jinja cast macro call without alias (``{{ det_as_string('x') }}``)."""
+    if prop is not None and (is_object_prop(prop) or is_array_prop(prop)):
+        return name
     allowed = _allowed_types(prop) if prop else set()
     if "integer" in allowed:
         return f"{{{{ det_as_integer('{name}') }}}}"
@@ -171,14 +193,19 @@ def _cast_macro_call(name: str, prop: dict[str, Any] | None) -> str:
     return f"{{{{ det_as_string('{name}') }}}}"
 
 
-def _stg_column_expr(name: str, prop: dict[str, Any]) -> str:
-    """
-    Typed stg select expr using det_as_* macros (JSON-safe casts).
-
-    Emitted as dbt Jinja (``{{ det_as_string(col) }}``) so macros expand at
-    compile time.
-    """
-    return f"{_cast_macro_call(name, prop)} as {name}"
+def _path_cast_macro_call(
+    root_col: str, extract_path: str, prop: dict[str, Any] | None
+) -> str:
+    """dbt Jinja path extract + cast (``{{ det_json_path_string('a', '$.b') }}``)."""
+    allowed = _allowed_types(prop) if prop else set()
+    path_lit = extract_path.replace("'", "''")
+    if "integer" in allowed:
+        return f"{{{{ det_json_path_integer('{root_col}', '{path_lit}') }}}}"
+    if "number" in allowed:
+        return f"{{{{ det_json_path_double('{root_col}', '{path_lit}') }}}}"
+    if "boolean" in allowed:
+        return f"{{{{ det_json_path_boolean('{root_col}', '{path_lit}') }}}}"
+    return f"{{{{ det_json_path_string('{root_col}', '{path_lit}') }}}}"
 
 
 def _apply_null_sentinels(expr: str, sentinels: list[Any]) -> str:
@@ -205,37 +232,131 @@ def _apply_value_map(expr: str, mapping: dict[str, str]) -> str:
     return f"case {body} else ({expr}) end"
 
 
+def _adapt_column_expr(
+    logical_name: str,
+    expr: str,
+    adapt: FlatAdapt,
+) -> tuple[str, str]:
+    """Apply null_sentinels → map → rename; return (out_name, full select expr)."""
+    if logical_name in adapt.null_sentinels:
+        expr = _apply_null_sentinels(expr, adapt.null_sentinels[logical_name])
+    if logical_name in adapt.map:
+        expr = _apply_value_map(expr, adapt.map[logical_name])
+    out_name = adapt.rename.get(logical_name, logical_name)
+    return out_name, f"{expr} as {out_name}"
+
+
+def _parent_flat_adapt(stg: DbtStgConfig) -> FlatAdapt:
+    """Compiled ``dbt.stg.fields`` scopes, then root scalar knobs (root wins ties)."""
+    return merge_flat_adapt(
+        compile_stg_fields(stg.fields),
+        flat_adapt_from_root_stg(
+            coalesce=stg.coalesce,
+            null_sentinels=stg.null_sentinels,
+            map=stg.map,
+            rename=stg.rename,
+            exclude=stg.exclude,
+        ),
+    )
+
+
+def default_parent_key(
+    schema: dict[str, Any],
+    silver: DbtSilverConfig,
+    explicit: str | None,
+) -> str:
+    if explicit:
+        return explicit
+    for key in silver.unique_key:
+        if isinstance(key, str) and not key.startswith("__"):
+            return key
+    for col in schema.get("required") or []:
+        if isinstance(col, str) and not col.startswith("__"):
+            return col
+    raise ValueError(
+        "cannot determine relations parent_key; set dbt.stg.relations.*.parent_key "
+        "or a non-meta dbt.silver.unique_key"
+    )
+
+
+def _leaf_or_top_expr(
+    name: str,
+    *,
+    leaf_by_name: dict[str, FlattenLeaf],
+    props: dict[str, Any],
+) -> str:
+    leaf = leaf_by_name.get(name)
+    if leaf is not None:
+        return _path_cast_macro_call(leaf.root, leaf.extract_path, leaf.prop)
+    prop = props.get(name) if isinstance(props.get(name), dict) else None
+    return _cast_macro_call(name, prop or {"type": "string"})
+
+
 def stg_columns_from_schema(
     schema: dict[str, Any],
     stg: DbtStgConfig | None = None,
 ) -> list[dict[str, str]]:
     """
     Build stg select column exprs from schema + optional ``dbt.stg`` adaptations.
+
+    Order: flatten → coalesce → null_sentinels → map → rename → exclude.
     """
     stg = stg or DbtStgConfig()
+    adapt = _parent_flat_adapt(stg)
     props = schema.get("properties") or {}
     if not isinstance(props, dict):
         props = {}
 
-    # Business columns: schema props ∪ coalesce canonicals, minus exclude.
+    relation_paths = {rel.path or name for name, rel in stg.relations.items()}
+    leaves = plan_flatten(
+        schema,
+        stg.flatten,
+        relation_paths=relation_paths,
+    )
+    flat_roots = flattened_roots(leaves)
+    reserved: set[str] = set()
+    for name, prop in props.items():
+        if not isinstance(name, str):
+            continue
+        if name in relation_paths or name in flat_roots:
+            continue
+        reserved.add(name)
+    leaf_by_name = {leaf.column_name: leaf for leaf in leaves}
+    # Coalesce onto an existing flatten leaf is an adaptation, not a name collision.
+    for canonical in adapt.coalesce:
+        if canonical not in leaf_by_name:
+            reserved.add(canonical)
+    detect_flatten_collisions(leaves, reserved=reserved)
+
+    columns: list[dict[str, str]] = []
+    seen_out: set[str] = set()
+
+    def _append(logical_name: str, expr: str) -> None:
+        if logical_name in adapt.exclude:
+            return
+        out_name, full = _adapt_column_expr(logical_name, expr, adapt)
+        if out_name in seen_out:
+            return
+        seen_out.add(out_name)
+        columns.append({"name": out_name, "expr": full})
+
+    # Top-level scalars / undeclared arrays / coalesce canonicals (not flattened roots).
     names: list[str] = []
     seen: set[str] = set()
     for name in props:
         if isinstance(name, str) and name not in seen:
             names.append(name)
             seen.add(name)
-    for canonical in stg.coalesce:
-        if canonical not in seen:
+    for canonical in adapt.coalesce:
+        if canonical not in seen and canonical not in leaf_by_name:
             names.append(canonical)
             seen.add(canonical)
 
-    exclude = set(stg.exclude)
-    columns: list[dict[str, str]] = []
     for name in names:
-        if name in exclude:
+        if name in relation_paths or name in flat_roots:
             continue
         prop = props.get(name) if isinstance(props.get(name), dict) else None
-        sources = stg.coalesce.get(name)
+        sources = adapt.coalesce.get(name)
         if sources:
             cast_prop = prop
             if cast_prop is None:
@@ -244,10 +365,7 @@ def stg_columns_from_schema(
                         cast_prop = props[src]  # type: ignore[assignment]
                         break
             parts = [
-                _cast_macro_call(
-                    src,
-                    props.get(src) if isinstance(props.get(src), dict) else cast_prop,
-                )
+                _leaf_or_top_expr(src, leaf_by_name=leaf_by_name, props=props)
                 for src in sources
             ]
             expr = f"coalesce({', '.join(parts)})"
@@ -255,13 +373,97 @@ def stg_columns_from_schema(
             expr = _cast_macro_call(name, prop)
         else:
             expr = _cast_macro_call(name, {"type": "string"})
+        _append(name, expr)
 
-        if name in stg.null_sentinels:
-            expr = _apply_null_sentinels(expr, stg.null_sentinels[name])
-        if name in stg.map:
-            expr = _apply_value_map(expr, stg.map[name])
-        out_name = stg.rename.get(name, name)
-        columns.append({"name": out_name, "expr": f"{expr} as {out_name}"})
+    # Flattened nested scalars (after top-level; adaptations use default __ names).
+    for leaf in leaves:
+        sources = adapt.coalesce.get(leaf.column_name)
+        if sources:
+            parts = [
+                _leaf_or_top_expr(src, leaf_by_name=leaf_by_name, props=props)
+                for src in sources
+            ]
+            expr = f"coalesce({', '.join(parts)})"
+        else:
+            expr = _path_cast_macro_call(leaf.root, leaf.extract_path, leaf.prop)
+        _append(leaf.column_name, expr)
+
+    for meta in _META_COLUMNS:
+        columns.append({"name": meta, "expr": meta})
+    return columns
+
+
+def relation_index_columns(depth: int) -> list[str]:
+    """Index column names for a relation path_chain of length ``depth``."""
+    if depth < 1:
+        raise ValueError("relation depth must be >= 1")
+    if depth == 1:
+        return ["__rel_index"]
+    return [f"__rel_index_{i}" for i in range(depth)]
+
+
+def relation_stg_columns(
+    schema: dict[str, Any],
+    *,
+    path_chain: list[str],
+    relation: RelationConfig,
+    parent_key: str,
+    stg: DbtStgConfig,
+    index_columns: list[str] | None = None,
+) -> list[dict[str, str]]:
+    """Column exprs for a relation stg model (parent_key + indexes + flatten + meta)."""
+    item_schema = relation_item_schema_at(schema, path_chain)
+    nested_paths = {child.path or name for name, child in relation.relations.items()}
+    leaves = plan_flatten(
+        item_schema,
+        relation.flatten,
+        relation_paths=nested_paths,
+        include_root_scalars=True,
+        relative_extract=True,
+    )
+    idx_cols = index_columns or relation_index_columns(len(path_chain))
+    reserved = {parent_key, *idx_cols, *_META_COLUMNS}
+    detect_flatten_collisions(leaves, reserved=reserved)
+
+    adapt = compile_relation_adapt(relation)
+    # Parent key may still use root rename/sentinels (top-level id).
+    root_adapt = flat_adapt_from_root_stg(
+        coalesce=stg.coalesce,
+        null_sentinels=stg.null_sentinels,
+        map=stg.map,
+        rename=stg.rename,
+        exclude=stg.exclude,
+    )
+    leaf_by_name = {leaf.column_name: leaf for leaf in leaves}
+    item_props = item_schema.get("properties") or {}
+    if not isinstance(item_props, dict):
+        item_props = {}
+
+    columns: list[dict[str, str]] = []
+    props = schema.get("properties") or {}
+    parent_prop = props.get(parent_key) if isinstance(props.get(parent_key), dict) else None
+    pk_expr = _cast_macro_call(parent_key, parent_prop or {"type": "string"})
+    if parent_key not in root_adapt.exclude and parent_key not in adapt.exclude:
+        out_pk, pk_full = _adapt_column_expr(parent_key, pk_expr, root_adapt)
+        columns.append({"name": out_pk, "expr": pk_full})
+
+    for idx in idx_cols:
+        columns.append({"name": idx, "expr": idx})
+
+    for leaf in leaves:
+        if leaf.column_name in adapt.exclude:
+            continue
+        sources = adapt.coalesce.get(leaf.column_name)
+        if sources:
+            parts = [
+                _leaf_or_top_expr(src, leaf_by_name=leaf_by_name, props=item_props)
+                for src in sources
+            ]
+            expr = f"coalesce({', '.join(parts)})"
+        else:
+            expr = _path_cast_macro_call("_rel", leaf.extract_path, leaf.prop)
+        out_name, full = _adapt_column_expr(leaf.column_name, expr, adapt)
+        columns.append({"name": out_name, "expr": full})
 
     for meta in _META_COLUMNS:
         columns.append({"name": meta, "expr": meta})
@@ -584,12 +786,14 @@ def scaffold_dbt(
     force: bool = False,
     dry_run: bool = False,
     dbt_models_dir: Path | None = None,
+    warn: bool = True,
 ) -> ScaffoldResult:
     """
     Emit/merge dbt bronze source + stg + silver for a pipeline dataset.
 
     Create-if-missing by default; `--force` overwrites generated SQL and refreshes
-    YAML entries for the dataset.
+    YAML entries for the dataset. When ``warn`` is true, emit advisory view-size
+    warnings for large view-materialized relations.
     """
     root = project_root.resolve()
     canonical = config.bronze_dataset()
@@ -654,5 +858,83 @@ def scaffold_dbt(
         dry_run=dry_run,
         actions=actions,
     )
+
+    for name_parts, path_chain_t, rel in iter_relation_paths(stg_cfg.relations):
+        path_chain = list(path_chain_t)
+        parent_key = default_parent_key(schema, silver, rel.parent_key)
+        rel_slug = f"{model_slug}__{'__'.join(name_parts)}"
+        idx_cols = relation_index_columns(len(path_chain))
+        rel_columns = relation_stg_columns(
+            schema,
+            path_chain=path_chain,
+            relation=rel,
+            parent_key=parent_key,
+            stg=stg_cfg,
+            index_columns=idx_cols,
+        )
+        path_display = "[]".join(path_chain) + "[]"
+        rel_stg_sql = _render(
+            "stg_relation.sql.j2",
+            sql_table=sql_table,
+            sql_schema=sql_schema,
+            relation_name="__".join(name_parts),
+            path_chain=path_chain,
+            path_display=path_display,
+            index_columns=idx_cols,
+            parent_key=parent_key,
+            materialized=rel.materialized,
+            columns=rel_columns,
+        )
+        rel_unique_key = [parent_key, *idx_cols]
+        rel_silver_sql = _render(
+            "silver_relation.sql.j2",
+            model_slug=rel_slug,
+            relation_name="__".join(name_parts),
+            materialized=rel.materialized,
+            unique_key=rel_unique_key,
+            order_by=list(silver.order_by),
+        )
+        _write_or_skip(
+            models_dir / f"stg_{rel_slug}.sql",
+            rel_stg_sql,
+            force=force,
+            dry_run=dry_run,
+            actions=actions,
+        )
+        _write_or_skip(
+            models_dir / f"silver_{rel_slug}.sql",
+            rel_silver_sql,
+            force=force,
+            dry_run=dry_run,
+            actions=actions,
+        )
+        rel_adapt = compile_relation_adapt(rel)
+        rel_not_null = [parent_key]
+        for col in rel_adapt.not_null:
+            if col not in rel_not_null:
+                rel_not_null.append(col)
+        rel_silver_cfg = silver.model_copy(
+            update={
+                "materialized": rel.materialized,
+                "unique_key": rel_unique_key,
+                "not_null": rel_not_null,
+                "unique": list(rel_adapt.unique),
+                "accepted_values": dict(rel_adapt.accepted_values),
+            }
+        )
+        _merge_silver_models_yml(
+            models_dir / "_silver__models.yml",
+            dataset=rel_slug,
+            silver=rel_silver_cfg,
+            required=[parent_key],
+            force=force,
+            dry_run=dry_run,
+            actions=actions,
+        )
+
+    if warn:
+        from det.scaffold.view_warn import emit_view_size_warnings
+
+        emit_view_size_warnings(config, project_root=root)
 
     return ScaffoldResult(dataset=canonical, actions=actions)

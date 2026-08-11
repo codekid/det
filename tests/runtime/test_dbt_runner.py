@@ -25,6 +25,31 @@ def test_default_select_for_pipeline():
     assert default_select_for_pipeline(config) == ["stg_noaa__storm_events+"]
 
 
+def test_default_select_includes_stg_relations():
+    config = PipelineConfig(
+        name="example_api.orders",
+        source=SourceConfig(type="example_api.orders"),
+        schema_path="schemas/example_api/orders/orders.schema.yaml",
+        dbt={
+            "stg": {
+                "relations": {
+                    "discount_codes": {"materialized": "view"},
+                    "line_items": {
+                        "materialized": "view",
+                        "relations": {"tax_lines": {"materialized": "view"}},
+                    },
+                },
+            }
+        },
+    )
+    assert default_select_for_pipeline(config) == [
+        "stg_example_api__orders+",
+        "stg_example_api__orders__discount_codes+",
+        "stg_example_api__orders__line_items+",
+        "stg_example_api__orders__line_items__tax_lines+",
+    ]
+
+
 def test_build_dbt_argv():
     argv = build_dbt_argv(
         command="build",

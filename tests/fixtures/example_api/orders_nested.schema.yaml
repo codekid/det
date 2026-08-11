@@ -1,0 +1,91 @@
+# Nested fixture (Shopify-shaped, deep + multi-array) for flatten/relations tests.
+$schema: https://json-schema.org/draft/2020-12/schema
+$title: example_api_orders_nested
+type: object
+required: [id]
+properties:
+  id: { type: string }
+  email: { type: ["string", "null"] }
+  customer:
+    type: ["object", "null"]
+    properties:
+      id: { type: ["string", "null"] }
+      loyalty:
+        type: ["object", "null"]
+        properties:
+          tier:
+            type: ["object", "null"]
+            properties:
+              name: { type: ["string", "null"] }
+      default_address:
+        type: ["object", "null"]
+        properties:
+          city: { type: ["string", "null"] }
+          geo:
+            type: ["object", "null"]
+            properties:
+              coords:
+                type: ["object", "null"]
+                properties:
+                  lat: { type: ["number", "null"] }
+                  lon: { type: ["number", "null"] }
+  shipping_address:
+    type: ["object", "null"]
+    properties:
+      city: { type: ["string", "null"] }
+      country_code: { type: ["string", "null"] }
+      geo:
+        type: ["object", "null"]
+        properties:
+          coords:
+            type: ["object", "null"]
+            properties:
+              lat: { type: ["number", "null"] }
+              lon: { type: ["number", "null"] }
+  discount_codes:
+    type: array
+    items:
+      type: object
+      properties:
+        code: { type: ["string", "null"] }
+        amount: { type: ["string", "null"] }
+  line_items:
+    type: array
+    items:
+      type: object
+      properties:
+        sku: { type: ["string", "null"] }
+        quantity: { type: ["integer", "null"] }
+        variant:
+          type: ["object", "null"]
+          properties:
+            id: { type: ["string", "null"] }
+            product:
+              type: ["object", "null"]
+              properties:
+                category:
+                  type: ["object", "null"]
+                  properties:
+                    name: { type: ["string", "null"] }
+        price_set:
+          type: ["object", "null"]
+          properties:
+            shop_money:
+              type: ["object", "null"]
+              properties:
+                amount: { type: ["string", "null"] }
+        tax_lines:
+          type: array
+          items:
+            type: object
+            properties:
+              title: { type: ["string", "null"] }
+              rate: { type: ["number", "null"] }
+              price_set:
+                type: ["object", "null"]
+                properties:
+                  shop_money:
+                    type: ["object", "null"]
+                    properties:
+                      amount: { type: ["string", "null"] }
+additionalProperties: false

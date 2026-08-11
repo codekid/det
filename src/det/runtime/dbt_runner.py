@@ -94,8 +94,20 @@ def resolve_dbt_project_dir(project_root: Path, project_dir: Path | str | None =
 
 
 def default_select_for_pipeline(config: PipelineConfig) -> list[str]:
-    """stg + downstream (silver, and gold if it depends on silver)."""
-    return [f"stg_{dbt_model_slug(config.bronze_dataset())}+"]
+    """
+    Parent stg + downstream, plus each ``dbt.stg.relations`` child stg+
+    (including nested relations).
+
+    Relation models read bronze directly (not ``ref`` parent), so they are not
+    pulled in by ``stg_<parent>+`` alone.
+    """
+    from det.scaffold.flatten import iter_relation_paths
+
+    slug = dbt_model_slug(config.bronze_dataset())
+    selects = [f"stg_{slug}+"]
+    for name_parts, _chain, _rel in iter_relation_paths(config.dbt.stg.relations):
+        selects.append(f"stg_{slug}__{'__'.join(name_parts)}+")
+    return selects
 
 
 def build_dbt_argv(

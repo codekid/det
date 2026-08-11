@@ -545,9 +545,22 @@ det dbt -p noaa.storm_events
 | --- | --- |
 | `sources.yml` | Filesystem bronze via schema-aware `read_json` + `DET_LAKE_PATH` |
 | `det_bronze_from` | Switches stg to native DuckDB table when `DET_BRONZE_SOURCE=duckdb` |
-| `stg_*` | View; schema-driven select + trim/nullif on strings |
+| `stg_*` | View; schema-driven select + `dbt.stg` flatten/adaptations |
 | `silver_*` | Dedupe via `det_dedupe_latest_run` (identity + order from `dbt.silver`) |
 | Gold | Hand-written only (never scaffolded) |
+
+`dbt.stg.flatten` promotes nested structs onto the parent (`shipping_address.city` →
+`shipping_address__city`; depth default unlimited). Nested struct adaptations live under
+`dbt.stg.fields` with **relative** keys (scoped rename keeps the path prefix). Arrays
+become child models only when listed under `dbt.stg.relations`
+(`stg_<provider>__<source>__<relation>`); relation `materialized` (default `view`)
+applies to both child stg and silver, and relations may declare their own
+`not_null` / `unique` / `accepted_values`. `view_warn` samples the lake and warns when a
+view relation looks large (advisory only).
+
+Showcase: `example_api.orders` (built-in fixture orders) — try
+`det run -p example_api.orders -s 2026-01-01 -e 2026-01-02` then
+`det dbt -p example_api.orders`.
 
 ### scaffold-dbt / init-pipeline
 
@@ -555,6 +568,7 @@ det dbt -p noaa.storm_events
 
 - `sources.yml` table entry
 - `stg_<provider>__<source>.sql` / `silver_<provider>__<source>.sql`
+- optional relation models when `dbt.stg.relations` is set
 - `_silver__models.yml` tests
 
 `det init-pipeline` creates `configs/pipelines/<name>.yaml`, a minimal schema under

@@ -312,6 +312,16 @@ def dbt_cmd(
     pipe = None
     if pipeline is not None:
         pipe = _resolve_pipeline(pipeline, root).path
+        from det.runtime.config import load_pipeline_config
+        from det.scaffold.view_warn import emit_view_size_warnings
+
+        cfg = load_pipeline_config(pipe, overrides=set_ or None)
+        for w in emit_view_size_warnings(
+            cfg,
+            project_root=root,
+            lake_path=lake_path.resolve() if lake_path is not None else None,
+        ):
+            typer.echo(f"WARNING: {w.message}", err=True)
 
     try:
         result = run_dbt(
@@ -434,7 +444,11 @@ def scaffold_dbt_cmd(
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
     config = load_pipeline_config(resolved.path, overrides=set_)
-    result = scaffold_dbt(config, project_root=root, force=force, dry_run=dry_run)
+    from det.scaffold.view_warn import collect_view_size_warnings
+
+    result = scaffold_dbt(
+        config, project_root=root, force=force, dry_run=dry_run, warn=False
+    )
     mode = "DRY-RUN" if dry_run else "OK"
     typer.echo(f"{mode} scaffold-dbt dataset={result.dataset}")
     for action in result.actions:
@@ -444,6 +458,8 @@ def scaffold_dbt_cmd(
         except ValueError:
             pass
         typer.echo(f"  {action.action}: {rel}" + (f" ({action.detail})" if action.detail else ""))
+    for w in collect_view_size_warnings(config, project_root=root):
+        typer.echo(f"WARNING: {w.message}", err=True)
 
 
 @app.command("prune")

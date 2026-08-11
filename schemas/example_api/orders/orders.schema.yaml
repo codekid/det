@@ -1,0 +1,103 @@
+# Live bronze contract for pipeline example_api.orders.
+# Deep nested structs flatten in dbt.stg (a.b.c.d → a__b__c__d);
+# arrays explode via dbt.stg.relations (including nested arrays).
+$schema: https://json-schema.org/draft/2020-12/schema
+$title: example_api_orders
+type: object
+required: [id]
+properties:
+  id: { type: string }
+  email: { type: ["string", "null"] }
+  currency: { type: ["string", "null"] }
+  # Wire status code; dbt.stg.map turns "1"/"2" into labels in stg.
+  status: { type: ["string", "null"] }
+  customer:
+    type: ["object", "null"]
+    properties:
+      id: { type: ["string", "null"] }
+      loyalty:
+        type: ["object", "null"]
+        properties:
+          tier:
+            type: ["object", "null"]
+            properties:
+              code: { type: ["string", "null"] }
+              name: { type: ["string", "null"] }
+      default_address:
+        type: ["object", "null"]
+        properties:
+          city: { type: ["string", "null"] }
+          geo:
+            type: ["object", "null"]
+            properties:
+              coords:
+                type: ["object", "null"]
+                properties:
+                  lat: { type: ["number", "null"] }
+                  lon: { type: ["number", "null"] }
+  shipping_address:
+    type: ["object", "null"]
+    properties:
+      city: { type: ["string", "null"] }
+      country_code: { type: ["string", "null"] }
+      geo:
+        type: ["object", "null"]
+        properties:
+          coords:
+            type: ["object", "null"]
+            properties:
+              lat: { type: ["number", "null"] }
+              lon: { type: ["number", "null"] }
+          accuracy_m: { type: ["number", "null"] }
+  discount_codes:
+    type: array
+    items:
+      type: object
+      properties:
+        code: { type: ["string", "null"] }
+        amount: { type: ["string", "null"] }
+        discount_type: { type: ["string", "null"] }
+  line_items:
+    type: array
+    items:
+      type: object
+      properties:
+        sku: { type: ["string", "null"] }
+        quantity: { type: ["integer", "null"] }
+        variant:
+          type: ["object", "null"]
+          properties:
+            id: { type: ["string", "null"] }
+            product:
+              type: ["object", "null"]
+              properties:
+                id: { type: ["string", "null"] }
+                category:
+                  type: ["object", "null"]
+                  properties:
+                    id: { type: ["string", "null"] }
+                    name: { type: ["string", "null"] }
+        price_set:
+          type: ["object", "null"]
+          properties:
+            shop_money:
+              type: ["object", "null"]
+              properties:
+                amount: { type: ["string", "null"] }
+                currency_code: { type: ["string", "null"] }
+        tax_lines:
+          type: array
+          items:
+            type: object
+            properties:
+              title: { type: ["string", "null"] }
+              rate: { type: ["number", "null"] }
+              price_set:
+                type: ["object", "null"]
+                properties:
+                  shop_money:
+                    type: ["object", "null"]
+                    properties:
+                      amount: { type: ["string", "null"] }
+                      currency_code: { type: ["string", "null"] }
+additionalProperties: false

@@ -98,4 +98,26 @@ sources:
         - name: occurred_at
           tests:
           - not_null
-
+      - name: orders
+        description: DET bronze example_api.orders
+        meta:
+          # Schema-aware columns avoid read_json_auto promoting mixed
+          # partitions to JSON (values that look like "48" / "").
+          # formatter=template: columns={...} braces must not go through
+          # str.format_map (dbt-duckdb default newstyle).
+          # hive_partitioning=false: partition keys are also payload cols.
+          formatter: template
+          external_location: >-
+            read_json(
+              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/example_api/orders/**/data.jsonl',
+              columns={'id': 'VARCHAR', 'email': 'VARCHAR', 'currency': 'VARCHAR', 'status': 'VARCHAR', 'customer': 'JSON', 'shipping_address': 'JSON', 'discount_codes': 'JSON', 'line_items': 'JSON', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
+              union_by_name=true,
+              hive_partitioning=false
+            )
+        columns:
+        - name: __row_hash
+          tests:
+          - not_null
+        - name: id
+          tests:
+          - not_null

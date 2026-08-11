@@ -31,7 +31,7 @@ dbt:
       status: [open, closed, archived]
   # Wire-faithful bronze → analytics adaptations in scaffolded stg.
   # Re-run: det scaffold-dbt -p example_api.events --force
-  # Nested flatten is not supported here yet.
+  # Nested structs: dbt.stg.flatten (a.b → a__b). Arrays: dbt.stg.relations.
   stg:
     # Historical wire names → one stable column (preference order).
     # Widens read_json columns so older JSONL keys stay visible.
