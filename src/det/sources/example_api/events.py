@@ -11,25 +11,19 @@ from dlt.sources.helpers.rest_client.auth import BearerTokenAuth
 from dlt.sources.helpers.rest_client.paginators import JSONLinkPaginator
 
 from det.logging import get_logger
-from det.runtime.manifest import sha256_file
 from det.sources.base import Interval, SourceRow
+from det.sources.http_json import dig, nest_under_path, write_json_page
 
 logger = get_logger(__name__)
-
-
-def _dig(payload: Any, path: str) -> Any:
-    cur = payload
-    for part in path.split("."):
-        if not isinstance(cur, dict) or part not in cur:
-            return None
-        cur = cur[part]
-    return cur
 
 
 class ExampleApiSource:
     """
     Sample HTTP JSON source. Connection details live in code defaults;
     YAML may override base_url / path / etc.
+
+    Interval mode: ``query_params`` (start/end on the request).
+    Raw pages are wire-shaped ``{"data": {"events": [...]}}``; no reshape at extract.
     """
 
     name = "example_api.events"
@@ -53,11 +47,16 @@ class ExampleApiSource:
     ) -> list[dict[str, Any]]:
         pages_dir = data_dir / "pages"
         pages_dir.mkdir(parents=True, exist_ok=True)
+        record_path = config.get("record_path") or "data.events"
         fixtures = config.get("fixture_records")
         if fixtures is not None:
             return [
-                self._write_page(
-                    pages_dir, data_dir, 1, list(fixtures), origin="fixture_records"
+                write_json_page(
+                    pages_dir=pages_dir,
+                    data_dir=data_dir,
+                    page_num=1,
+                    body=nest_under_path(list(fixtures), record_path=record_path),
+                    origin="fixture_records",
                 )
             ]
 
@@ -67,7 +66,7 @@ class ExampleApiSource:
             base_url=config["base_url"],
             auth=BearerTokenAuth(token) if token else None,
             paginator=JSONLinkPaginator(next_url_path=config.get("next_url_path")),
-            data_selector=config.get("record_path") or None,
+            data_selector=record_path or None,
         )
         params = {"start": interval.start, "end": interval.end}
         logger.info("Fetching example API", path=config["path"], params=params)
@@ -77,11 +76,23 @@ class ExampleApiSource:
             rows = [row for row in page if isinstance(row, dict)]
             page_num += 1
             artifacts.append(
-                self._write_page(pages_dir, data_dir, page_num, rows, origin="example_api")
+                write_json_page(
+                    pages_dir=pages_dir,
+                    data_dir=data_dir,
+                    page_num=page_num,
+                    body=nest_under_path(rows, record_path=record_path),
+                    origin="example_api",
+                )
             )
         if not artifacts:
             artifacts.append(
-                self._write_page(pages_dir, data_dir, 1, [], origin="example_api")
+                write_json_page(
+                    pages_dir=pages_dir,
+                    data_dir=data_dir,
+                    page_num=1,
+                    body=nest_under_path([], record_path=record_path),
+                    origin="example_api",
+                )
             )
         return artifacts
 
@@ -96,7 +107,7 @@ class ExampleApiSource:
         for art in manifest.get("artifacts") or []:
             path = raw_dir / art["path"]
             payload = json.loads(path.read_text(encoding="utf-8"))
-            events = _dig(payload, record_path)
+            events = dig(payload, record_path)
             if events is None and isinstance(payload, list):
                 events = payload
             if not isinstance(events, list):
@@ -104,30 +115,6 @@ class ExampleApiSource:
             for row in events:
                 if isinstance(row, dict):
                     yield SourceRow(data=dict(row), filename=Path(art["path"]).name)
-
-    def _write_page(
-        self,
-        pages_dir: Path,
-        data_dir: Path,
-        page_num: int,
-        rows: list[dict[str, Any]],
-        *,
-        origin: str,
-    ) -> dict[str, Any]:
-        dest = pages_dir / f"{page_num:04d}.json"
-        body = {"data": {"events": rows}}
-        text = json.dumps(body)
-        json.loads(text)
-        dest.write_text(text, encoding="utf-8")
-        return {
-            "path": dest.relative_to(data_dir.parent).as_posix(),
-            "origin": origin,
-            "sha256": sha256_file(dest),
-            "bytes": dest.stat().st_size,
-            "format": "json_page",
-            "content_encoding": "identity",
-            "format_check": "ok",
-        }
 
 
 def example_api_v1_to_v2(row: dict[str, Any]) -> dict[str, Any]:

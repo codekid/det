@@ -95,7 +95,7 @@ def init_pipeline(
         "source": {"type": source_type},
         # schema omitted → default_schema_path
         "validation": {"engine": "jsonschema"},
-        "ingestion": {"library": "dlt"},
+        "ingestion": {"library": "det"},
         "destination": dest,
         "medallion": {"bronze_prefix": "bronze", "raw_prefix": "raw"},
         # Bump only on true wire breaks together with dataset: …_vN

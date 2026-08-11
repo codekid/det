@@ -17,7 +17,7 @@ clean-targets:
 models:
   disaster_analytics:
     silver:
-      +schema: silver
+      # Per-model schema=silver_{provider} from scaffold (see generate_schema_name).
       +materialized: view
     gold:
       +schema: gold

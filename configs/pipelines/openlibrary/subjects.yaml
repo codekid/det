@@ -1,0 +1,27 @@
+name: openlibrary.subjects
+source:
+  type: openlibrary.subjects
+  # defaults (base_url, subject=love, page_size, max_pages) live in
+  # src/det/sources/openlibrary/subjects.py
+  # overrides:
+  #   subject: love            # or /subjects/love
+  #   max_pages: 2             # null = paginate through work_count
+  #   details: true
+  #   ebooks: true
+  #   published_in: 1800-1900
+# schema defaults to schemas/openlibrary/subjects/subjects.schema.yaml
+validation:
+  engine: jsonschema
+ingestion:
+  library: det
+destination:
+  type: duckdb
+  path: ./data/lake
+  connection: ./data/analytics.duckdb
+  dataset: bronze
+medallion:
+  bronze_prefix: bronze
+  raw_prefix: raw
+# Stamp on raw manifests. Bump only on true wire/parse breaks, together with
+# dataset: openlibrary.subjects_vN (keep raw+bronze lake ids paired).
+wire_version: 1

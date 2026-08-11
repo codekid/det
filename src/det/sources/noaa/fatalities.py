@@ -13,6 +13,8 @@ class NoaaFatalitiesSource(NoaaStormEventsSource):
 
     Files match ``StormEvents_fatalities-ftp_*.csv.gz``; extract/parse reuse the
     shared storm-events CSV downloader.
+
+    Interval mode: ``year_files`` (inherited). Lands gzip CSV bytes wire-faithful.
     """
 
     name = "noaa.fatalities"
@@ -22,8 +24,3 @@ class NoaaFatalitiesSource(NoaaStormEventsSource):
             **super().defaults(),
             "filename_substr": DEFAULT_FILENAME_SUBSTR,
         }
-
-
-def fatalities_identity_mapper(row: dict[str, Any]) -> dict[str, Any]:
-    """Pass-through for migrate rebuilds that only need meta refresh / schema re-check."""
-    return dict(row)

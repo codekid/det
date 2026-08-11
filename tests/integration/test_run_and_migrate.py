@@ -206,7 +206,7 @@ def test_migrate_rebuilds_from_raw_wire(project_root: Path, tmp_path: Path):
         pipeline=pipe_path,
         to_bronze="noaa.storm_events_rebuilt",
         schema_path=project_root / "schemas/noaa/storm_events/storm_events.schema.yaml",
-        mapper_name="storm_events_identity",
+        mapper_name="identity",
         interval_start="2026-08-06",
         interval_end="2026-08-07",
         lake_path=str(tmp_path / "lake"),

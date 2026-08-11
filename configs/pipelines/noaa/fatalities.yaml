@@ -8,12 +8,14 @@ source:
 validation:
   engine: jsonschema
 ingestion:
-  library: dlt
+  library: det
 destination:
   type: filesystem
   path: ./data/lake
 medallion:
   bronze_prefix: bronze
+  raw_prefix: raw
+wire_version: 1
 dbt:
   silver:
     materialized: table

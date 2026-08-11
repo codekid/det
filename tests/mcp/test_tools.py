@@ -47,7 +47,7 @@ def _write_pipeline(root: Path, canonical: str = "example_api.events") -> Path:
                 "name": canonical,
                 "source": {"type": canonical},
                 "schema": schema_rel,
-                "ingestion": {"library": "dlt"},
+                "ingestion": {"library": "det"},
                 "destination": {"type": "filesystem", "path": "./data/lake"},
                 "medallion": {"bronze_prefix": "bronze", "raw_prefix": "raw"},
             }

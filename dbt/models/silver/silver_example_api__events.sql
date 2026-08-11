@@ -1,6 +1,7 @@
 {{
     config(
         materialized="table",
+        schema="silver_example_api",
     )
 }}
 

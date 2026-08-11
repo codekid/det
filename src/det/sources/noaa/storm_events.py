@@ -82,6 +82,13 @@ def _artifact(
 
 
 class NoaaStormEventsSource:
+    """
+    NOAA Storm Events details CSVs from the NCEI public index.
+
+    Interval mode: ``year_files`` — select ``*_dYYYY_*`` archives whose year
+    overlaps the extract window. Lands gzip CSV bytes wire-faithful.
+    """
+
     name = "noaa.storm_events"
 
     def defaults(self) -> dict[str, Any]:
@@ -296,11 +303,3 @@ class NoaaStormEventsSource:
         return selected
 
 
-def storm_events_identity_mapper(row: dict[str, Any]) -> dict[str, Any]:
-    """
-    Source-native or already-named NOAA row → bronze shape.
-
-    Naming (snake_case) is applied by the runtime before mappers; this mapper is a
-    pass-through for rebuilds that only need meta refresh / schema re-check.
-    """
-    return dict(row)

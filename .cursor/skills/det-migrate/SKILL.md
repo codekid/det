@@ -32,7 +32,7 @@ CLI after the user confirms. Install: `uv pip install -e ".[mcp]"`.
 
 1. `list_pipelines` / `describe_pipeline` — confirm pipeline, schema path, destination.
 2. `list_mappers` — reuse an existing mapper when it fits (`identity`,
-   `storm_events_identity`, `example_api_v1_to_v2`, …).
+   `example_api_v1_to_v2`, …).
 3. Lake health: `diagnose_pipeline` (optional interval) or `diff_partitions`.
 4. If drafting a new mapper from two schemas:
    - `mapper_from_diff_dry_run(from_schema, to_schema, mapper_name)`

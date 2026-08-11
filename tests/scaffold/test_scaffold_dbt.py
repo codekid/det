@@ -268,9 +268,13 @@ destination:
     scaffold_dbt(config, project_root=tmp_path, dbt_models_dir=models)
 
     stg = (models / "stg_example_api__events.sql").read_text(encoding="utf-8")
+    assert 'schema="silver_example_api"' in stg
     assert "coalesce(" in stg
     assert "event_severity" in stg
     assert "nullif(" in stg
+
+    silver_sql = (models / "silver_example_api__events.sql").read_text(encoding="utf-8")
+    assert 'schema="silver_example_api"' in silver_sql
 
     sources = (models / "sources.yml").read_text(encoding="utf-8")
     assert "'level': 'VARCHAR'" in sources

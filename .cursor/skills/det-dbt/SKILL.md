@@ -14,6 +14,11 @@ Install: `uv pip install -e ".[mcp,dbt]"`.
 
 - DET owns raw + bronze (wire-faithful typed landing).
 - dbt owns silver + gold (`stg_*` → `silver_*` → hand-written gold).
+- SQL schemas mirror bronze: `bronze_{provider}` → `silver_{provider}`; gold stays `gold`.
+  Silver schema comes from model `config(schema="silver_{provider}")` (scaffold), not
+  `dbt_project.yml +schema`. `generate_schema_name` prevents `target.schema` prefixing
+  (`main_silver_*`). Note: `stg_*` models also land in `silver_{provider}` (not a
+  separate `stg_*` SQL schema).
 - Gold is **never** scaffolded.
 - Frequent wire **renames / sentinels / value maps** → `dbt.stg` + scaffold (not bronze mappers).
 - True wire parse/layout breaks → `wire_version` + new lake `dataset:` (see det-migrate).
@@ -27,7 +32,7 @@ Install: `uv pip install -e ".[mcp,dbt]"`.
 3. Preview CLI argv/env: `dbt_dry_run` with pipeline (default select is
    `stg_{provider}__{source}+` plus each `dbt.stg.relations` child `stg_…__{relation}+`).
 4. Run locally: `det dbt -p <pipeline>` or `make dbt` (sets `DET_LAKE_PATH`).
-   Nested showcase: `example_api.orders` (flatten + `line_items` relation).
+   Nested flatten/relations: configure `dbt.stg` then `det scaffold-dbt -p …`.
 
 ## `dbt.stg` / `dbt.silver` (scaffold knobs)
 

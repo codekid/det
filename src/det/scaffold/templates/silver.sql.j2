@@ -1,6 +1,7 @@
 {{ '{{' }}
     config(
         materialized="{{ silver.materialized }}",
+        schema="silver_{{ provider }}",
 {%- if silver.materialized == "incremental" %}
         unique_key={{ silver.unique_key | tojson }},
         incremental_strategy="{{ silver.incremental_strategy }}",

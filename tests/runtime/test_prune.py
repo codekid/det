@@ -34,7 +34,7 @@ def _fs_config(tmp_path: Path) -> PipelineConfig:
         name="noaa.storm_events",
         source=SourceConfig(type="noaa.storm_events"),
         schema_path="schemas/noaa/storm_events/storm_events.schema.yaml",
-        ingestion=IngestionConfig(library="dlt"),
+        ingestion=IngestionConfig(library="det"),
         destination=DestinationConfig(type="filesystem", path=str(tmp_path / "lake")),
         medallion=MedallionConfig(bronze_prefix="bronze", raw_prefix="raw"),
     )
@@ -45,7 +45,7 @@ def _duck_config(tmp_path: Path, db_path: Path) -> PipelineConfig:
         name="noaa.storm_events",
         source=SourceConfig(type="noaa.storm_events"),
         schema_path="schemas/noaa/storm_events/storm_events.schema.yaml",
-        ingestion=IngestionConfig(library="dlt"),
+        ingestion=IngestionConfig(library="det"),
         destination=DestinationConfig(
             type="duckdb",
             path=str(tmp_path / "lake"),

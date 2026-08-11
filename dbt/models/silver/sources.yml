@@ -1,69 +1,6 @@
 version: 2
 
 sources:
-  - name: bronze_noaa
-    description: >
-      DET bronze for provider feeds under this SQL schema / lake prefix.
-      Tables set schema-aware read_json(... columns={...}) in meta.external_location.
-      DuckDB native tables use det_bronze_from when DET_BRONZE_SOURCE=duckdb
-      (set by det dbt --pipeline).
-    schema: bronze_noaa
-    tables:
-      - name: storm_events
-        description: DET bronze noaa.storm_events
-        meta:
-          # Schema-aware columns avoid read_json_auto promoting mixed
-          # partitions to JSON (values that look like "48" / "").
-          # formatter=template: columns={...} braces must not go through
-          # str.format_map (dbt-duckdb default newstyle).
-          # hive_partitioning=false: partition keys are also payload cols.
-          formatter: template
-          external_location: >-
-            read_json(
-              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/storm_events/**/data.jsonl',
-              columns={'begin_yearmonth': 'INTEGER', 'begin_day': 'INTEGER', 'begin_time': 'INTEGER', 'end_yearmonth': 'INTEGER', 'end_day': 'INTEGER', 'end_time': 'INTEGER', 'episode_id': 'INTEGER', 'event_id': 'INTEGER', 'state': 'VARCHAR', 'state_fips': 'INTEGER', 'year': 'INTEGER', 'month_name': 'VARCHAR', 'event_type': 'VARCHAR', 'cz_type': 'VARCHAR', 'cz_fips': 'INTEGER', 'cz_name': 'VARCHAR', 'wfo': 'VARCHAR', 'begin_date_time': 'VARCHAR', 'cz_timezone': 'VARCHAR', 'end_date_time': 'VARCHAR', 'injuries_direct': 'INTEGER', 'injuries_indirect': 'INTEGER', 'deaths_direct': 'INTEGER', 'deaths_indirect': 'INTEGER', 'damage_property': 'VARCHAR', 'damage_crops': 'VARCHAR', 'source': 'VARCHAR', 'magnitude': 'DOUBLE', 'magnitude_type': 'VARCHAR', 'flood_cause': 'VARCHAR', 'category': 'VARCHAR', 'tor_f_scale': 'VARCHAR', 'tor_length': 'DOUBLE', 'tor_width': 'INTEGER', 'tor_other_wfo': 'VARCHAR', 'tor_other_cz_state': 'VARCHAR', 'tor_other_cz_fips': 'VARCHAR', 'tor_other_cz_name': 'VARCHAR', 'begin_range': 'DOUBLE', 'begin_azimuth': 'VARCHAR', 'begin_location': 'VARCHAR', 'end_range': 'DOUBLE', 'end_azimuth': 'VARCHAR', 'end_location': 'VARCHAR', 'begin_lat': 'DOUBLE', 'begin_lon': 'DOUBLE', 'end_lat': 'DOUBLE', 'end_lon': 'DOUBLE', 'episode_narrative': 'VARCHAR', 'event_narrative': 'VARCHAR', 'data_source': 'VARCHAR', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
-              union_by_name=true,
-              hive_partitioning=false
-            )
-        columns:
-        - name: __row_hash
-          tests:
-          - not_null
-        - name: begin_day
-          tests:
-          - not_null
-        - name: begin_time
-          tests:
-          - not_null
-        - name: event_id
-          tests:
-          - not_null
-      - name: fatalities
-        description: DET bronze noaa.fatalities
-        meta:
-          # Schema-aware columns avoid read_json_auto promoting mixed
-          # partitions to JSON (values that look like "48" / "").
-          # formatter=template: columns={...} braces must not go through
-          # str.format_map (dbt-duckdb default newstyle).
-          # hive_partitioning=false: partition keys are also payload cols.
-          formatter: template
-          external_location: >-
-            read_json(
-              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/fatalities/**/data.jsonl',
-              columns={'fat_yearmonth': 'INTEGER', 'fat_day': 'INTEGER', 'fat_time': 'INTEGER', 'fatality_id': 'INTEGER', 'event_id': 'INTEGER', 'fatality_type': 'VARCHAR', 'fatality_date': 'VARCHAR', 'fatality_age': 'INTEGER', 'fatality_sex': 'VARCHAR', 'fatality_location': 'VARCHAR', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
-              union_by_name=true,
-              hive_partitioning=false
-            )
-        columns:
-        - name: __row_hash
-          tests:
-          - not_null
-        - name: fatality_id
-          tests:
-          - not_null
-        - name: event_id
-          tests:
-          - not_null
   - name: bronze_example_api
     description: >
       DET bronze for provider feeds under this SQL schema / lake prefix.
@@ -98,8 +35,16 @@ sources:
         - name: occurred_at
           tests:
           - not_null
-      - name: orders
-        description: DET bronze example_api.orders
+  - name: bronze_noaa
+    description: >
+      DET bronze for provider feeds under this SQL schema / lake prefix.
+      Tables set schema-aware read_json(... columns={...}) in meta.external_location.
+      DuckDB native tables use det_bronze_from when DET_BRONZE_SOURCE=duckdb
+      (set by det dbt --pipeline).
+    schema: bronze_noaa
+    tables:
+      - name: fatalities
+        description: DET bronze noaa.fatalities
         meta:
           # Schema-aware columns avoid read_json_auto promoting mixed
           # partitions to JSON (values that look like "48" / "").
@@ -109,8 +54,8 @@ sources:
           formatter: template
           external_location: >-
             read_json(
-              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/example_api/orders/**/data.jsonl',
-              columns={'id': 'VARCHAR', 'email': 'VARCHAR', 'currency': 'VARCHAR', 'status': 'VARCHAR', 'customer': 'JSON', 'shipping_address': 'JSON', 'discount_codes': 'JSON', 'line_items': 'JSON', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
+              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/fatalities/**/data.jsonl',
+              columns={'fat_yearmonth': 'INTEGER', 'fat_day': 'INTEGER', 'fat_time': 'INTEGER', 'fatality_id': 'INTEGER', 'event_id': 'INTEGER', 'fatality_type': 'VARCHAR', 'fatality_date': 'VARCHAR', 'fatality_age': 'INTEGER', 'fatality_sex': 'VARCHAR', 'fatality_location': 'VARCHAR', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
               union_by_name=true,
               hive_partitioning=false
             )
@@ -118,6 +63,39 @@ sources:
         - name: __row_hash
           tests:
           - not_null
-        - name: id
+        - name: fatality_id
           tests:
           - not_null
+        - name: event_id
+          tests:
+          - not_null
+      - name: storm_events
+        description: DET bronze noaa.storm_events
+        meta:
+          # Schema-aware columns avoid read_json_auto promoting mixed
+          # partitions to JSON (values that look like "48" / "").
+          # formatter=template: columns={...} braces must not go through
+          # str.format_map (dbt-duckdb default newstyle).
+          # hive_partitioning=false: partition keys are also payload cols.
+          formatter: template
+          external_location: >-
+            read_json(
+              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/storm_events/**/data.jsonl',
+              columns={'begin_yearmonth': 'INTEGER', 'begin_day': 'INTEGER', 'begin_time': 'INTEGER', 'end_yearmonth': 'INTEGER', 'end_day': 'INTEGER', 'end_time': 'INTEGER', 'episode_id': 'INTEGER', 'event_id': 'INTEGER', 'state': 'VARCHAR', 'state_fips': 'INTEGER', 'year': 'INTEGER', 'month_name': 'VARCHAR', 'event_type': 'VARCHAR', 'cz_type': 'VARCHAR', 'cz_fips': 'INTEGER', 'cz_name': 'VARCHAR', 'wfo': 'VARCHAR', 'begin_date_time': 'VARCHAR', 'cz_timezone': 'VARCHAR', 'end_date_time': 'VARCHAR', 'injuries_direct': 'INTEGER', 'injuries_indirect': 'INTEGER', 'deaths_direct': 'INTEGER', 'deaths_indirect': 'INTEGER', 'damage_property': 'VARCHAR', 'damage_crops': 'VARCHAR', 'source': 'VARCHAR', 'magnitude': 'DOUBLE', 'magnitude_type': 'VARCHAR', 'flood_cause': 'VARCHAR', 'category': 'VARCHAR', 'tor_f_scale': 'VARCHAR', 'tor_length': 'DOUBLE', 'tor_width': 'INTEGER', 'tor_other_wfo': 'VARCHAR', 'tor_other_cz_state': 'VARCHAR', 'tor_other_cz_fips': 'VARCHAR', 'tor_other_cz_name': 'VARCHAR', 'begin_range': 'DOUBLE', 'begin_azimuth': 'VARCHAR', 'begin_location': 'VARCHAR', 'end_range': 'DOUBLE', 'end_azimuth': 'VARCHAR', 'end_location': 'VARCHAR', 'begin_lat': 'DOUBLE', 'begin_lon': 'DOUBLE', 'end_lat': 'DOUBLE', 'end_lon': 'DOUBLE', 'episode_narrative': 'VARCHAR', 'event_narrative': 'VARCHAR', 'data_source': 'VARCHAR', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
+              union_by_name=true,
+              hive_partitioning=false
+            )
+        columns:
+        - name: __row_hash
+          tests:
+          - not_null
+        - name: begin_day
+          tests:
+          - not_null
+        - name: begin_time
+          tests:
+          - not_null
+        - name: event_id
+          tests:
+          - not_null
+

@@ -347,7 +347,7 @@ source:
 validation:
   engine: jsonschema
 ingestion:
-  library: dlt                 # or thin (filesystem only)
+  library: det                 # det (default) | dlt (alias) | thin (filesystem only)
 destination:
   type: filesystem             # filesystem | duckdb | postgres
   path: ./data/lake            # always the raw lake root
@@ -545,6 +545,7 @@ det dbt -p noaa.storm_events
 | --- | --- |
 | `sources.yml` | Filesystem bronze via schema-aware `read_json` + `DET_LAKE_PATH` |
 | `det_bronze_from` | Switches stg to native DuckDB table when `DET_BRONZE_SOURCE=duckdb` |
+| SQL schemas | Bronze `bronze_{provider}`; stg/silver `silver_{provider}` (model `config(schema=…)`, not `dbt_project.yml +schema`); gold `gold`. `generate_schema_name` keeps custom schemas as-is (no `main_silver_*` prefix). |
 | `stg_*` | View; schema-driven select + `dbt.stg` flatten/adaptations |
 | `silver_*` | Dedupe via `det_dedupe_latest_run` (identity + order from `dbt.silver`) |
 | Gold | Hand-written only (never scaffolded) |
@@ -559,8 +560,8 @@ applies to both child stg and silver, and relations may declare their own
 view relation looks large (advisory only).
 
 Showcase: `example_api.orders` (built-in fixture orders) — try
-`det run -p example_api.orders -s 2026-01-01 -e 2026-01-02` then
-`det dbt -p example_api.orders`.
+`det run -p example_api.orders -s 2026-01-01 -e 2026-01-02`. Scaffold silver with
+`det scaffold-dbt -p example_api.orders` when you want stg/silver models.
 
 ### scaffold-dbt / init-pipeline
 
@@ -586,22 +587,20 @@ without `--dry-run` to write:
 det migrate -p noaa.storm_events \
   --to-bronze noaa.storm_events_v2 \
   --schema schemas/noaa/storm_events/storm_events.schema.yaml \
-  --mapper storm_events_identity \
+  --mapper identity \
   -s 2026-08-01 -e 2026-09-01 \
   --dry-run
 
 det migrate -p noaa.storm_events \
   --to-bronze noaa.storm_events_v2 \
   --schema schemas/noaa/storm_events/storm_events.schema.yaml \
-  --mapper storm_events_identity \
+  --mapper identity \
   -s 2026-08-01 -e 2026-09-01
 ```
 
 | mapper | use when |
 | --- | --- |
-| `storm_events_identity` | named NOAA details row already matches the target schema |
-| `fatalities_identity` | named NOAA fatalities row already matches |
-| `identity` | named row already matches |
+| `identity` | named row already matches the target schema |
 | `example_api_v1_to_v2` | renames `severity` → `level` |
 
 ---
@@ -798,9 +797,25 @@ tests/
 ### Sources and dlt boundaries
 
 Plugins under `src/det/sources/` implement `defaults()`, `extract_to_raw(...)`, and
-`records_from_raw(...)`.
+`records_from_raw(...)`. Shared JSON HTTP helpers live in `src/det/sources/http_json.py`
+(`dig`, `nest_under_path`, `write_json_page`).
+
+**Where may we reshape?**
+
+- **Default:** land near-wire bytes in raw; project/allowlist only in
+  `records_from_raw` (or a migrate mapper). Keep bronze wire-faithful; push analytics
+  adapts into `dbt.stg`.
+- **Exception:** if the API is open-ended / unstable and bronze is an intentional
+  curated contract (`additionalProperties: false`), land the **projected** payload as
+  the declared wire — but project **once** (at extract or at parse, not both). Document
+  that choice on the plugin. Open Library subjects uses this exception.
+
+**Interval modes** (state on the plugin docstring): `year_files` | `query_params` |
+`partition_only`.
 
 **dlt is extraction only.** Allowed: `@dlt.resource` as an iterator, `rest_client`,
 careful use of `requests`. Forbidden: `dlt.pipeline` / `pipeline.run` for landing,
 dlt load/pipeline state, and normalizer unnesting. Landing is DET-owned
-(`write_jsonl_partition`, `write_duckdb_table`, `write_postgres_table`).
+(`DetBackend` / `library: det` → `write_jsonl_partition`, `write_duckdb_table`,
+`write_postgres_table`). `library: dlt` is a deprecated alias for the same backend;
+`thin` is filesystem-only.

@@ -11,8 +11,8 @@ from dlt.sources.helpers.rest_client.auth import BearerTokenAuth
 from dlt.sources.helpers.rest_client.paginators import JSONLinkPaginator
 
 from det.logging import get_logger
-from det.runtime.manifest import sha256_file
 from det.sources.base import Interval, SourceRow
+from det.sources.http_json import dig, nest_under_path, write_json_page
 
 logger = get_logger(__name__)
 
@@ -165,20 +165,14 @@ _DEMO_ORDERS: list[dict[str, Any]] = [
 ]
 
 
-def _dig(payload: Any, path: str) -> Any:
-    cur = payload
-    for part in path.split("."):
-        if not isinstance(cur, dict) or part not in cur:
-            return None
-        cur = cur[part]
-    return cur
-
-
 class ExampleApiOrdersSource:
     """
     Nested orders showcase for dbt.stg flatten + relations.
 
     Defaults include fixture_records so local extract works without a token.
+
+    Interval mode: ``query_params`` (start/end on the request).
+    Raw pages are wire-shaped ``{"data": {"orders": [...]}}``; no reshape at extract.
     """
 
     name = "example_api.orders"
@@ -202,11 +196,16 @@ class ExampleApiOrdersSource:
     ) -> list[dict[str, Any]]:
         pages_dir = data_dir / "pages"
         pages_dir.mkdir(parents=True, exist_ok=True)
+        record_path = config.get("record_path") or "data.orders"
         fixtures = config.get("fixture_records")
         if fixtures is not None:
             return [
-                self._write_page(
-                    pages_dir, data_dir, 1, list(fixtures), origin="fixture_records"
+                write_json_page(
+                    pages_dir=pages_dir,
+                    data_dir=data_dir,
+                    page_num=1,
+                    body=nest_under_path(list(fixtures), record_path=record_path),
+                    origin="fixture_records",
                 )
             ]
 
@@ -216,7 +215,7 @@ class ExampleApiOrdersSource:
             base_url=config["base_url"],
             auth=BearerTokenAuth(token) if token else None,
             paginator=JSONLinkPaginator(next_url_path=config.get("next_url_path")),
-            data_selector=config.get("record_path") or None,
+            data_selector=record_path or None,
         )
         params = {"start": interval.start, "end": interval.end}
         logger.info("Fetching example API orders", path=config["path"], params=params)
@@ -226,11 +225,23 @@ class ExampleApiOrdersSource:
             rows = [row for row in page if isinstance(row, dict)]
             page_num += 1
             artifacts.append(
-                self._write_page(pages_dir, data_dir, page_num, rows, origin="example_api")
+                write_json_page(
+                    pages_dir=pages_dir,
+                    data_dir=data_dir,
+                    page_num=page_num,
+                    body=nest_under_path(rows, record_path=record_path),
+                    origin="example_api",
+                )
             )
         if not artifacts:
             artifacts.append(
-                self._write_page(pages_dir, data_dir, 1, [], origin="example_api")
+                write_json_page(
+                    pages_dir=pages_dir,
+                    data_dir=data_dir,
+                    page_num=1,
+                    body=nest_under_path([], record_path=record_path),
+                    origin="example_api",
+                )
             )
         return artifacts
 
@@ -245,7 +256,7 @@ class ExampleApiOrdersSource:
         for art in manifest.get("artifacts") or []:
             path = raw_dir / art["path"]
             payload = json.loads(path.read_text(encoding="utf-8"))
-            orders = _dig(payload, record_path)
+            orders = dig(payload, record_path)
             if orders is None and isinstance(payload, list):
                 orders = payload
             if not isinstance(orders, list):
@@ -254,26 +265,3 @@ class ExampleApiOrdersSource:
                 if isinstance(row, dict):
                     yield SourceRow(data=dict(row), filename=Path(art["path"]).name)
 
-    def _write_page(
-        self,
-        pages_dir: Path,
-        data_dir: Path,
-        page_num: int,
-        rows: list[dict[str, Any]],
-        *,
-        origin: str,
-    ) -> dict[str, Any]:
-        dest = pages_dir / f"{page_num:04d}.json"
-        body = {"data": {"orders": rows}}
-        text = json.dumps(body)
-        json.loads(text)
-        dest.write_text(text, encoding="utf-8")
-        return {
-            "path": dest.relative_to(data_dir.parent).as_posix(),
-            "origin": origin,
-            "sha256": sha256_file(dest),
-            "bytes": dest.stat().st_size,
-            "format": "json_page",
-            "content_encoding": "identity",
-            "format_check": "ok",
-        }

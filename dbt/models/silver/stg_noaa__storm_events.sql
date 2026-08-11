@@ -1,6 +1,7 @@
 {{
     config(
-        materialized="view"
+        materialized="view",
+        schema="silver_noaa"
     )
 }}
 

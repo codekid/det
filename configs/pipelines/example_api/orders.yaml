@@ -9,86 +9,11 @@ source:
 validation:
   engine: jsonschema
 ingestion:
-  library: dlt
+  library: det
 destination:
   type: filesystem
   path: ./data/lake
 medallion:
   bronze_prefix: bronze
+  raw_prefix: raw
 wire_version: 1
-dbt:
-  silver:
-    materialized: table
-    unique_key: [id]
-    order_by: ["__extract_run_datetime desc"]
-    not_null: [id]
-    unique: [id]
-    accepted_values:
-      status: [open, closed]
-  # Showcase: deep flatten + path-scoped adapts + nested relations. Re-run:
-  #   det scaffold-dbt -p example_api.orders --force
-  stg:
-    # Top-level scalars only
-    null_sentinels:
-      email: ["", "NA"]
-    map:
-      status:
-        "1": open
-        "2": closed
-    # Struct scopes — keys under each scope are relative (no parent prefix)
-    fields:
-      shipping_address:
-        null_sentinels:
-          city: ["", "NA"]
-        rename:
-          city: ship_city
-        exclude: [geo.accuracy_m]
-        geo:
-          coords:
-            rename:
-              lat: ship_lat
-              lon: ship_lon
-      customer:
-        loyalty:
-          tier:
-            map:
-              code:
-                gold: gold
-                silver: silver
-            rename:
-              name: loyalty_tier
-    relations:
-      # Top-level arrays → sibling child models
-      discount_codes:
-        path: discount_codes
-        materialized: view
-        parent_key: id
-      line_items:
-        path: line_items
-        materialized: view
-        parent_key: id
-        rename:
-          sku: line_sku
-        not_null: [sku, quantity]
-        variant:
-          product:
-            category:
-              rename:
-                name: category
-              not_null: [name]
-        # Nested array under each line item → …__line_items__tax_lines
-        relations:
-          tax_lines:
-            path: tax_lines
-            materialized: view
-            parent_key: id
-            not_null: [title, rate]
-            price_set:
-              shop_money:
-                rename:
-                  amount: tax_amount
-    view_warn:
-      enabled: true
-      sample_rows: 5000
-      parent_rows: 500000
-      child_rows: 2000000

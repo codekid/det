@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
-from det.ingestion.dlt_backend import DltBackend
+from det.ingestion.det_backend import DetBackend
 from det.ingestion.postgres_writer import write_postgres_table
 from det.runtime.config import (
     DestinationConfig,
@@ -23,7 +23,7 @@ def test_postgres_destination_requires_connection():
         DestinationConfig(type="postgres", path="./data/lake")
 
 
-def test_dlt_backend_writes_postgres_via_helper(tmp_path: Path):
+def test_det_backend_writes_postgres_via_helper(tmp_path: Path):
     dest = DestinationConfig(
         type="postgres",
         path=str(tmp_path / "lake"),
@@ -34,7 +34,7 @@ def test_dlt_backend_writes_postgres_via_helper(tmp_path: Path):
         name="noaa.storm_events",
         source=SourceConfig(type="noaa.storm_events"),
         schema_path="schemas/noaa/storm_events/storm_events.schema.yaml",
-        ingestion=IngestionConfig(library="dlt"),
+        ingestion=IngestionConfig(library="det"),
         destination=dest,
         medallion=MedallionConfig(),
     )
@@ -47,9 +47,9 @@ def test_dlt_backend_writes_postgres_via_helper(tmp_path: Path):
             "__interval_end_datetime": "2026-08-07T00:00:00+00:00",
         }
     ]
-    with patch("det.ingestion.dlt_backend.write_postgres_table") as write:
+    with patch("det.ingestion.det_backend.write_postgres_table") as write:
         write.return_value = dest.connection
-        out = DltBackend().write(
+        out = DetBackend().write(
             records,
             config=config,
             project_root=tmp_path,

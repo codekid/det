@@ -12,7 +12,11 @@ logger = get_logger(__name__)
 
 class ThinBackend:
     """
-    Non-dlt ingestion backend (Option A proof): write JSONL into the hive partition.
+    Filesystem-only bronze writer (proof / migrate tests).
+
+    Prefer ``DetBackend`` (``library: det``) for real pipelines — it covers
+    filesystem, DuckDB, and Postgres. Keep ``thin`` when you explicitly want a
+    minimal JSONL-only path.
     """
 
     name = "thin"

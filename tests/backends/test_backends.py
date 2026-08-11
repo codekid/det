@@ -7,7 +7,7 @@ import duckdb
 import pytest
 from pydantic import ValidationError
 
-from det.ingestion.dlt_backend import DltBackend
+from det.ingestion.det_backend import DetBackend
 from det.ingestion.thin_backend import ThinBackend
 from det.runtime.config import (
     DestinationConfig,
@@ -51,13 +51,13 @@ def _records():
     ]
 
 
-def test_thin_and_dlt_write_comparable_jsonl(tmp_path: Path):
+def test_thin_and_det_write_comparable_jsonl(tmp_path: Path):
     records = _records()
     partition_thin = tmp_path / "thin" / "__interval_start_datetime=20260806T000000Z"
-    partition_dlt = tmp_path / "dlt" / "__interval_start_datetime=20260806T000000Z"
+    partition_det = tmp_path / "det" / "__interval_start_datetime=20260806T000000Z"
 
     cfg_thin = _config(tmp_path, "thin")
-    cfg_dlt = _config(tmp_path, "dlt")
+    cfg_det = _config(tmp_path, "det")
 
     ThinBackend().write(
         records,
@@ -66,27 +66,27 @@ def test_thin_and_dlt_write_comparable_jsonl(tmp_path: Path):
         partition_dir=partition_thin,
         destination=cfg_thin.destination,
     )
-    DltBackend().write(
+    DetBackend().write(
         records,
-        config=cfg_dlt,
+        config=cfg_det,
         project_root=tmp_path,
-        partition_dir=partition_dlt,
-        destination=cfg_dlt.destination,
+        partition_dir=partition_det,
+        destination=cfg_det.destination,
     )
 
     thin_rows = [
         json.loads(line)
         for line in (partition_thin / "data.jsonl").read_text(encoding="utf-8").splitlines()
     ]
-    dlt_rows = [
+    det_rows = [
         json.loads(line)
-        for line in (partition_dlt / "data.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (partition_det / "data.jsonl").read_text(encoding="utf-8").splitlines()
     ]
-    assert len(thin_rows) == len(dlt_rows) == 1
-    assert thin_rows[0]["event_id"] == dlt_rows[0]["event_id"]
+    assert len(thin_rows) == len(det_rows) == 1
+    assert thin_rows[0]["event_id"] == det_rows[0]["event_id"]
     assert thin_rows[0]["__data_interval_date"] == "2026-08-06"
     # Every backend lands the contract byte-for-byte.
-    assert thin_rows[0] == dlt_rows[0] == records[0]
+    assert thin_rows[0] == det_rows[0] == records[0]
 
 
 def test_no_backend_lets_dlt_manage_state_or_unnest(tmp_path: Path):
@@ -95,7 +95,11 @@ def test_no_backend_lets_dlt_manage_state_or_unnest(tmp_path: Path):
     _dlt_version next to the data, add _dlt_id and _dlt_load_id columns, and strip
     the leading __ from the meta columns.
     """
-    for library, backend in (("thin", ThinBackend()), ("dlt", DltBackend())):
+    for library, backend in (
+        ("thin", ThinBackend()),
+        ("det", DetBackend()),
+        ("dlt", DetBackend()),  # deprecated alias
+    ):
         config = _config(tmp_path, library)
         partition = tmp_path / library / "__interval_start_datetime=20260806T000000Z"
         backend.write(
@@ -117,7 +121,7 @@ def test_duckdb_destination_requires_connection():
         DestinationConfig(type="duckdb", path="./data/lake")
 
 
-def test_dlt_backend_writes_duckdb_append(tmp_path: Path):
+def test_det_backend_writes_duckdb_append(tmp_path: Path):
     db_path = tmp_path / "analytics.duckdb"
     dest = DestinationConfig(
         type="duckdb",
@@ -125,8 +129,8 @@ def test_dlt_backend_writes_duckdb_append(tmp_path: Path):
         connection=str(db_path),
         dataset="bronze",
     )
-    config = _config(tmp_path, "dlt", destination=dest)
-    backend = DltBackend()
+    config = _config(tmp_path, "det", destination=dest)
+    backend = DetBackend()
     written = backend.write(
         _records(),
         config=config,
@@ -172,18 +176,18 @@ def test_dlt_backend_writes_duckdb_append(tmp_path: Path):
         con.close()
 
 
-def test_dlt_backend_postgres_delegates_to_writer(tmp_path: Path):
+def test_det_backend_postgres_delegates_to_writer(tmp_path: Path):
     """Postgres landing is DET-owned (same as duckdb), not a dlt pipeline."""
     from unittest.mock import patch
 
-    backend = DltBackend()
+    backend = DetBackend()
     dest = DestinationConfig(
         type="postgres",
         path=str(tmp_path / "lake"),
         connection="postgresql://localhost/det",
     )
-    config = _config(tmp_path, "dlt", destination=dest)
-    with patch("det.ingestion.dlt_backend.write_postgres_table") as write:
+    config = _config(tmp_path, "det", destination=dest)
+    with patch("det.ingestion.det_backend.write_postgres_table") as write:
         write.return_value = dest.connection
         out = backend.write(
             _records(),

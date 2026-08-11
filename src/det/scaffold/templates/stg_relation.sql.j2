@@ -1,6 +1,7 @@
 {{ '{{' }}
     config(
-        materialized="{{ materialized }}"
+        materialized="{{ materialized }}",
+        schema="silver_{{ provider }}"
     )
 {{ '}}' }}
 
@@ -17,12 +18,9 @@ with exploded as (
         t{{ loop.index0 }}.__rel_index as {{ index_columns[loop.index0] }},
 {%- endif %}
 {%- endfor %}
-        _parent.__row_hash as __row_hash,
-        _parent.__filename as __filename,
-        _parent.__extract_run_datetime as __extract_run_datetime,
-        _parent.__interval_start_datetime as __interval_start_datetime,
-        _parent.__interval_end_datetime as __interval_end_datetime,
-        _parent.__data_interval_date as __data_interval_date
+{%- for meta in meta_columns %}
+        _parent.{{ meta }} as {{ meta }}{{ "," if not loop.last else "" }}
+{%- endfor %}
     from {{ '{{' }} det_bronze_from("{{ sql_table }}", "{{ sql_schema }}") {{ '}}' }} as _parent
 {%- for step in path_chain %}
 {%- if loop.first %}

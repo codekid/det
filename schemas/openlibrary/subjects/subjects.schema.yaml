@@ -1,0 +1,55 @@
+# Live bronze contract for pipeline openlibrary.subjects.
+# Grain: one row per (work key, subject_key). Raw pages are the curated wire
+# (projected once at extract); see reshape policy in README / det-new-source.
+$schema: https://json-schema.org/draft/2020-12/schema
+$title: openlibrary.subjects
+type: object
+required: [key, subject_key]
+properties:
+  key: { type: string }
+  subject_key: { type: string }
+  title: { type: ["string", "null"] }
+  edition_count: { type: ["integer", "null"] }
+  cover_id: { type: ["integer", "null"] }
+  cover_edition_key: { type: ["string", "null"] }
+  first_publish_year: { type: ["integer", "null"] }
+  has_fulltext: { type: ["boolean", "null"] }
+  public_scan: { type: ["boolean", "null"] }
+  printdisabled: { type: ["boolean", "null"] }
+  ia: { type: ["string", "null"] }
+  lending_edition: { type: ["string", "null"] }
+  lending_identifier: { type: ["string", "null"] }
+  authors:
+    type: array
+    items:
+      type: object
+      properties:
+        key: { type: ["string", "null"] }
+        name: { type: ["string", "null"] }
+      additionalProperties: false
+  subject:
+    type: array
+    items: { type: string }
+  ia_collection:
+    type: array
+    items: { type: string }
+  availability:
+    type: ["object", "null"]
+    properties:
+      status: { type: ["string", "null"] }
+      available_to_browse: { type: ["boolean", "null"] }
+      available_to_borrow: { type: ["boolean", "null"] }
+      available_to_waitlist: { type: ["boolean", "null"] }
+      is_printdisabled: { type: ["boolean", "null"] }
+      is_readable: { type: ["boolean", "null"] }
+      is_lendable: { type: ["boolean", "null"] }
+      is_previewable: { type: ["boolean", "null"] }
+      identifier: { type: ["string", "null"] }
+      isbn: { type: ["string", "null"] }
+      oclc: { type: ["string", "null"] }
+      openlibrary_work: { type: ["string", "null"] }
+      openlibrary_edition: { type: ["string", "null"] }
+      is_restricted: { type: ["boolean", "null"] }
+      is_browseable: { type: ["boolean", "null"] }
+    additionalProperties: false
+additionalProperties: false

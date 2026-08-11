@@ -25,7 +25,7 @@ def test_load_pipeline_config(project_root):
     cfg = load_pipeline_config(project_root / "configs/pipelines/noaa/storm_events.yaml")
     assert cfg.name == "noaa.storm_events"
     assert cfg.source.type == "noaa.storm_events"
-    assert cfg.ingestion.library == "dlt"
+    assert cfg.ingestion.library == "det"
     assert cfg.destination.type == "filesystem"
 
 

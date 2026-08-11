@@ -568,6 +568,31 @@ def _sources_has_source(text: str, source_name: str) -> bool:
     ) is not None
 
 
+def _insert_source_block(text: str, source_only: str, *, source_name: str) -> str:
+    """
+    Insert a top-level source block in alphabetical order by ``- name:``.
+
+    Table force-replace stays in-place; this only runs when adding a *new* source
+    so provider order stays stable across scaffolds.
+    """
+    matches = list(re.finditer(r"(?m)^(?P<indent>\s*)- name:\s*(?P<name>\S+)\s*$", text))
+    # Only consider top-level source entries (indent under ``sources:``, typically 2 spaces).
+    source_headers = [
+        m
+        for m in matches
+        if m.group("indent") in {"  ", "\t"}
+        or (len(m.group("indent")) == 2 and m.group("indent").isspace())
+    ]
+    insert_at: int | None = None
+    for m in source_headers:
+        if m.group("name") > source_name:
+            insert_at = m.start()
+            break
+    if insert_at is None:
+        return text.rstrip() + "\n" + source_only
+    return text[:insert_at] + source_only + text[insert_at:]
+
+
 def _merge_sources_table(
     sources_path: Path,
     *,
@@ -632,8 +657,8 @@ def _merge_sources_table(
             tables_yaml=table_yaml + "\n",
         )
         # Append only the source entry (skip version: 2 / sources: header).
-        source_only = block.split("sources:\n", 1)[-1]
-        text = text.rstrip() + "\n" + source_only
+        source_only = block.split("sources:\n", 1)[-1].rstrip() + "\n"
+        text = _insert_source_block(text, source_only, source_name=source_name)
         detail = f"add source {source_name}"
         if dry_run:
             actions.append(ScaffoldAction(path=sources_path, action="would_patch", detail=detail))
@@ -817,11 +842,13 @@ def scaffold_dbt(
         sql_table=sql_table,
         sql_schema=sql_schema,
         columns=columns,
+        provider=provider,
     )
     silver_sql = _render(
         "silver.sql.j2",
         model_slug=model_slug,
         silver=silver,
+        provider=provider,
     )
 
     _write_or_skip(
@@ -884,6 +911,8 @@ def scaffold_dbt(
             parent_key=parent_key,
             materialized=rel.materialized,
             columns=rel_columns,
+            provider=provider,
+            meta_columns=_META_COLUMNS,
         )
         rel_unique_key = [parent_key, *idx_cols]
         rel_silver_sql = _render(
@@ -893,6 +922,7 @@ def scaffold_dbt(
             materialized=rel.materialized,
             unique_key=rel_unique_key,
             order_by=list(silver.order_by),
+            provider=provider,
         )
         _write_or_skip(
             models_dir / f"stg_{rel_slug}.sql",

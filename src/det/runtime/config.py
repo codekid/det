@@ -34,7 +34,9 @@ class ValidationConfig(BaseModel):
 
 
 class IngestionConfig(BaseModel):
-    library: Literal["dlt", "thin"] = "dlt"
+    # ``det`` is the multi-destination bronze writer. ``dlt`` is a deprecated alias
+    # for the same backend (dlt never lands bronze). ``thin`` is filesystem-only.
+    library: Literal["det", "dlt", "thin"] = "det"
 
 
 class DestinationConfig(BaseModel):

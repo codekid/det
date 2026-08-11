@@ -5,12 +5,16 @@ source:
 validation:
   engine: jsonschema
 ingestion:
-  library: dlt
+  library: det
 destination:
   type: filesystem
   path: ./data/lake
 medallion:
   bronze_prefix: bronze
+  raw_prefix: raw
+# Stamp on raw manifests. Bump only on true wire/parse breaks, together with
+# dataset: noaa.storm_events_vN (keep raw+bronze lake ids paired).
+wire_version: 1
 dbt:
   silver:
     materialized: table
