@@ -292,6 +292,7 @@ class BronzeMigrator:
             start_iso = str(manifest.get("interval_start") or window_start)
             end_iso = str(manifest.get("interval_end") or window_end)
             start_iso, end_iso = resolve_interval(start_iso, end_iso)
+            bronze_loaded_at = format_extract_run_datetime()
             enriched = [
                 attach_meta(
                     row,
@@ -299,6 +300,7 @@ class BronzeMigrator:
                     extract_run_datetime=extract_ts,
                     interval_start_datetime=start_iso,
                     interval_end_datetime=end_iso,
+                    bronze_loaded_at=bronze_loaded_at,
                 )
                 for row, filename in named_rows
             ]

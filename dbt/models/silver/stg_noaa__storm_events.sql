@@ -62,6 +62,7 @@ select
 __row_hash,
 __filename,
 __extract_run_datetime,
+__bronze_loaded_at,
 __interval_start_datetime,
 __interval_end_datetime,
 __data_interval_date

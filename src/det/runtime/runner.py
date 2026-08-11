@@ -180,6 +180,7 @@ class PipelineRunner:
         logger.info("validating rows against schema", rows=len(named_rows))
         validate_records([row for row, _ in named_rows], schema)
         logger.info("attaching meta columns", rows=len(named_rows))
+        bronze_loaded_at = format_extract_run_datetime()
         enriched = [
             attach_meta(
                 row,
@@ -187,6 +188,7 @@ class PipelineRunner:
                 extract_run_datetime=extract_ts,
                 interval_start_datetime=start_iso,
                 interval_end_datetime=end_iso,
+                bronze_loaded_at=bronze_loaded_at,
             )
             for row, filename in named_rows
         ]

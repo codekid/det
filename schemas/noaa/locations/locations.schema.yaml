@@ -1,0 +1,20 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$title: locations
+description: >
+  Bronze contract for NOAA Storm Events location CSVs: snake_case names and
+  typed values. DET coerces source strings to these types before validation.
+type: object
+required: [event_id, location_index]
+properties:
+  yearmonth: { type: ["integer", "null"] }
+  episode_id: { type: ["integer", "null"] }
+  event_id: { type: "integer" }
+  location_index: { type: "integer" }
+  range: { type: ["number", "null"] }
+  azimuth: { type: ["string", "null"] }
+  location: { type: ["string", "null"] }
+  latitude: { type: ["number", "null"] }
+  longitude: { type: ["number", "null"] }
+  lat2: { type: ["integer", "null"] }
+  lon2: { type: ["integer", "null"] }
+additionalProperties: false

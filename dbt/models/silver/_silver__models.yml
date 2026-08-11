@@ -58,3 +58,39 @@ models:
         - open
         - closed
         - archived
+- name: silver_noaa__locations
+  description: Cleaned, deduped noaa__locations (silver)
+  columns:
+  - name: __row_hash
+    tests:
+    - unique
+    - not_null
+  - name: event_id
+    tests:
+    - not_null
+  - name: location_index
+    tests:
+    - not_null
+- name: silver_openlibrary__subjects
+  description: Cleaned, deduped openlibrary__subjects (silver)
+  columns:
+  - name: __row_hash
+    tests:
+    - unique
+    - not_null
+  - name: key
+    tests:
+    - not_null
+  - name: subject_key
+    tests:
+    - not_null
+- name: silver_example_api__orders
+  description: Cleaned, deduped example_api__orders (silver)
+  columns:
+  - name: __row_hash
+    tests:
+    - unique
+    - not_null
+  - name: id
+    tests:
+    - not_null

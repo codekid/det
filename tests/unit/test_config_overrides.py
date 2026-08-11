@@ -21,6 +21,14 @@ def test_fatalities_defaults_use_fatalities_substr():
     assert defaults["url"] == NoaaStormEventsSource().defaults()["url"]
 
 
+def test_locations_defaults_use_locations_substr():
+    from det.sources.noaa.locations import NoaaLocationsSource
+
+    defaults = NoaaLocationsSource().defaults()
+    assert defaults["filename_substr"] == "locations-ftp"
+    assert defaults["url"] == NoaaStormEventsSource().defaults()["url"]
+
+
 def test_load_pipeline_config(project_root):
     cfg = load_pipeline_config(project_root / "configs/pipelines/noaa/storm_events.yaml")
     assert cfg.name == "noaa.storm_events"

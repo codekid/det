@@ -9,10 +9,16 @@
 with base as (
     select *
     from {{ ref("stg_noaa__storm_events") }}
+),
+deduped as (
+    {{ det_dedupe_latest_run(
+        "base",
+        partition_by=["__row_hash"],
+        order_by=["__extract_run_datetime desc"]
+    ) }}
 )
-
-{{ det_dedupe_latest_run(
-    "base",
-    partition_by=["__row_hash"],
-    order_by=["__extract_run_datetime desc"]
-) }}
+select
+    deduped.*,
+    current_timestamp as __silver_processed_at,
+    current_timestamp as __silver_updated_at
+from deduped

@@ -115,6 +115,7 @@ def attach_meta(
     extract_run_datetime: str,
     interval_start_datetime: str,
     interval_end_datetime: str,
+    bronze_loaded_at: str,
 ) -> dict[str, Any]:
     """Attach runtime __* meta columns after schema validation (no __raw)."""
     out = dict(canonical)
@@ -122,6 +123,7 @@ def attach_meta(
     out["__row_hash"] = row_hash(canonical)
     out["__filename"] = filename
     out["__extract_run_datetime"] = extract_run_datetime
+    out["__bronze_loaded_at"] = bronze_loaded_at
     out["__interval_start_datetime"] = start_iso
     out["__interval_end_datetime"] = end_iso
     out["__data_interval_date"] = data_interval_date(start_iso)

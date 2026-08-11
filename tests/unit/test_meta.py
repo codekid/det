@@ -40,8 +40,10 @@ def test_attach_meta_adds_prefixed_fields():
         extract_run_datetime="2026-08-06T15:04:05.123456+00:00",
         interval_start_datetime="2026-08-06",
         interval_end_datetime="2026-08-07",
+        bronze_loaded_at="2026-08-06T15:10:00.000000+00:00",
     )
     assert out["__extract_run_datetime"] == "2026-08-06T15:04:05.123456+00:00"
+    assert out["__bronze_loaded_at"] == "2026-08-06T15:10:00.000000+00:00"
     assert out["event_id"] == "1"
     assert "__raw" not in out
     assert out["__filename"] == "file.csv"

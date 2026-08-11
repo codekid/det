@@ -16,11 +16,13 @@ def load_plugins() -> None:
     from det.sources.example_api.events import ExampleApiSource, example_api_v1_to_v2
     from det.sources.example_api.orders import ExampleApiOrdersSource
     from det.sources.noaa.fatalities import NoaaFatalitiesSource
+    from det.sources.noaa.locations import NoaaLocationsSource
     from det.sources.noaa.storm_events import NoaaStormEventsSource
     from det.sources.openlibrary.subjects import OpenLibrarySubjectsSource
 
     register_source("noaa.storm_events", NoaaStormEventsSource)
     register_source("noaa.fatalities", NoaaFatalitiesSource)
+    register_source("noaa.locations", NoaaLocationsSource)
     register_source("example_api.events", ExampleApiSource)
     register_source("example_api.orders", ExampleApiOrdersSource)
     register_source("openlibrary.subjects", OpenLibrarySubjectsSource)

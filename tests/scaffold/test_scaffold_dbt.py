@@ -86,6 +86,7 @@ def test_read_json_columns_from_schema_includes_meta():
     assert cols["magnitude"] == "DOUBLE"
     assert cols["__row_hash"] == "VARCHAR"
     assert cols["__extract_run_datetime"] == "TIMESTAMP"
+    assert cols["__bronze_loaded_at"] == "TIMESTAMP"
     struct = format_read_json_columns(cols)
     assert "'event_id': 'INTEGER'" in struct
     assert struct.startswith("{") and struct.endswith("}")
@@ -107,6 +108,7 @@ def test_scaffold_creates_and_skips_without_force(tmp_path: Path):
     assert "{{ det_as_integer('event_id') }}" in stg
     assert "{{ det_as_double('magnitude') }}" in stg
     assert "__extract_run_datetime" in stg
+    assert "__bronze_loaded_at" in stg
 
     silver = (models / "silver_noaa__storm_events.sql").read_text(encoding="utf-8")
     assert 'materialized="incremental"' in silver
@@ -116,6 +118,9 @@ def test_scaffold_creates_and_skips_without_force(tmp_path: Path):
     assert 'partition_by=["event_id"]' in silver
     assert "det_dedupe_latest_run" in silver
     assert 'ref("stg_noaa__storm_events")' in silver
+    assert "__silver_processed_at" in silver
+    assert "__silver_updated_at" in silver
+    assert "deduped as (" in silver
 
     sources_text = (models / "sources.yml").read_text(encoding="utf-8")
     assert "bronze_noaa" in sources_text

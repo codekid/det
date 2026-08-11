@@ -27,10 +27,16 @@ with base as (
     ){% endif %}
     {{ '{% endif %}' }}
 {%- endif %}
+),
+deduped as (
+    {{ '{{' }} det_dedupe_latest_run(
+        "base",
+        partition_by={{ silver.unique_key | tojson }},
+        order_by={{ silver.order_by | tojson }}
+    ) {{ '}}' }}
 )
-
-{{ '{{' }} det_dedupe_latest_run(
-    "base",
-    partition_by={{ silver.unique_key | tojson }},
-    order_by={{ silver.order_by | tojson }}
-) {{ '}}' }}
+select
+    deduped.*,
+    current_timestamp as __silver_processed_at,
+    current_timestamp as __silver_updated_at
+from deduped

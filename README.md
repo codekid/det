@@ -275,12 +275,18 @@ Expect:
 - Bronze JSONL under `data/lake/bronze/noaa/storm_events/…/data.jsonl`
 
 NOAA fatality CSVs use the same NCEI index with `filename_substr=fatalities-ftp`
-(`noaa.fatalities`). Local smoke:
+(`noaa.fatalities`). Location CSVs use `filename_substr=locations-ftp`
+(`noaa.locations`). Local smoke:
 
 ```bash
 uv run det run -p noaa.fatalities -s 2026-08-06 \
   --set source.overrides.local_csv_dir=fixtures/fatalities \
   --set source.overrides.filename_substr=fatalities \
+  --set ingestion.library=thin
+
+uv run det run -p noaa.locations -s 2026-08-06 \
+  --set source.overrides.local_csv_dir=fixtures/locations \
+  --set source.overrides.filename_substr=locations \
   --set ingestion.library=thin
 ```
 
@@ -513,9 +519,21 @@ Not in JSON Schema. Added after validation (no `__raw` — rebuild from the raw 
 | `__row_hash` | hash of canonical fields; default silver identity |
 | `__filename` | source file when applicable |
 | `__extract_run_datetime` | run-start, ISO 8601 UTC (row + path) |
+| `__bronze_loaded_at` | wall-clock UTC when this bronze batch was written (DET load/migrate) |
 | `__interval_start_datetime` | interval start, ISO 8601 UTC |
 | `__interval_end_datetime` | interval end (exclusive), ISO 8601 UTC |
 | `__data_interval_date` | `YYYY-MM-DD` from interval start (column only) |
+
+`__extract_run_datetime` is the shared extract/load run identity (and hive key).
+`__bronze_loaded_at` is when DET finished validating and writing that bronze batch
+(can differ when `det load` runs later than `det extract`).
+
+Silver models (scaffold) also stamp:
+
+| column | meaning |
+| --- | --- |
+| `__silver_processed_at` | this silver build timestamp |
+| `__silver_updated_at` | last silver write; matches processed today under full rebuild / delete+insert |
 
 ---
 
