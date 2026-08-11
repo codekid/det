@@ -10,4 +10,4 @@ select
 {% for col in columns -%}
     {{ col.expr }}{{ "," if not loop.last else "" }}
 {% endfor -%}
-from {{ '{{' }} det_bronze_from("{{ sql_table }}") {{ '}}' }}
+from {{ '{{' }} det_bronze_from("{{ sql_table }}", "{{ sql_schema }}") {{ '}}' }}

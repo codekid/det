@@ -107,6 +107,7 @@ class PipelineRunner:
                 "interval_start": start_iso,
                 "interval_end": end_iso,
                 "extract_run_datetime": extract_ts,
+                "wire_version": config.wire_version,
                 "artifacts": artifacts,
             },
         )

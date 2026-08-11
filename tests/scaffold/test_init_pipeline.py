@@ -40,9 +40,11 @@ def test_init_pipeline_writes_and_scaffolds(tmp_path: Path):
     text = (tmp_path / "dbt" / "models" / "silver" / "sources.yml").read_text(
         encoding="utf-8"
     )
-    assert "read_json_auto" in text
+    assert "read_json(" in text
     assert "bronze_example_api" in text
+    pipe_text = pipe.read_text(encoding="utf-8")
+    assert "wire_version: 1" in pipe_text
     stg = (
         tmp_path / "dbt" / "models" / "silver" / "stg_example_api__events.sql"
     ).read_text(encoding="utf-8")
-    assert 'det_bronze_from("events")' in stg
+    assert 'det_bronze_from("events", "bronze_example_api")' in stg

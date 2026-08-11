@@ -29,3 +29,32 @@ models:
   - name: event_id
     tests:
     - not_null
+- name: silver_example_api__events
+  description: Cleaned, deduped example_api__events (silver)
+  columns:
+  - name: __row_hash
+    tests:
+    - unique
+    - not_null
+  - name: id
+    tests:
+    - unique
+    - not_null
+  - name: occurred_at
+    tests:
+    - not_null
+  - name: event_severity
+    tests:
+    - accepted_values:
+        values:
+        - low
+        - medium
+        - high
+        - critical
+  - name: status
+    tests:
+    - accepted_values:
+        values:
+        - open
+        - closed
+        - archived

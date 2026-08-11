@@ -197,6 +197,11 @@ def migrate_bronze(
         "--validate-limit",
         help="With --dry-run, cap rows checked per raw partition",
     ),
+    wire_version: int | None = typer.Option(
+        None,
+        "--wire-version",
+        help="Only migrate raw partitions whose manifest wire_version matches",
+    ),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     set_: list[str] = typer.Option([], "--set"),
 ) -> None:
@@ -224,19 +229,25 @@ def migrate_bronze(
         overrides=set_,
         dry_run=dry_run,
         validate_limit=validate_limit,
+        wire_version=wire_version,
     )
     if isinstance(result, MigratePlan):
+        filt = (
+            f" wire_version={result.wire_version_filter}"
+            if result.wire_version_filter is not None
+            else ""
+        )
         typer.echo(
             f"DRY-RUN migrate {result.from_raw} -> {result.to_bronze} "
             f"mapper={result.mapper_name} partitions={result.partitions_planned} "
-            f"rows_checked={result.rows_checked} ok={result.ok}"
+            f"rows_checked={result.rows_checked} ok={result.ok}{filt}"
         )
         for part in result.partitions:
             status = "ok" if part.ok else "FAIL"
             trunc = " truncated" if part.truncated else ""
             typer.echo(
-                f"  [{status}] rows={part.rows}{trunc} raw={part.raw_path} "
-                f"-> {part.would_write_bronze_path}"
+                f"  [{status}] wire_v={part.wire_version} rows={part.rows}{trunc} "
+                f"raw={part.raw_path} -> {part.would_write_bronze_path}"
             )
             for err in part.errors[:5]:
                 typer.echo(f"    - {err}", err=True)

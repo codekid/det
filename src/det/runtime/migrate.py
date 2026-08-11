@@ -57,6 +57,7 @@ class PartitionPlan:
     ok: bool
     truncated: bool = False
     errors: list[str] = field(default_factory=list)
+    wire_version: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -75,6 +76,7 @@ class MigratePlan:
     partitions: list[PartitionPlan] = field(default_factory=list)
     partitions_planned: int = 0
     rows_checked: int = 0
+    wire_version_filter: int | None = None
 
     @property
     def ok(self) -> bool:
@@ -89,10 +91,21 @@ class MigratePlan:
             "mapper_name": self.mapper_name,
             "schema_path": self.schema_path,
             "extract_run_datetime": self.extract_run_datetime,
+            "wire_version_filter": self.wire_version_filter,
             "partitions_planned": self.partitions_planned,
             "rows_checked": self.rows_checked,
             "partitions": [p.to_dict() for p in self.partitions],
         }
+
+
+def manifest_wire_version(manifest: dict[str, Any]) -> int:
+    """Legacy manifests without the field are treated as wire_version 1."""
+    raw = manifest.get("wire_version", 1)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 1
+    return value if value >= 1 else 1
 
 
 def _raw_partitions_in_window(raw_dataset: Path, start: str, end: str) -> list[Path]:
@@ -151,6 +164,7 @@ class BronzeMigrator:
         overrides: list[str] | None = None,
         dry_run: bool = False,
         validate_limit: int | None = None,
+        wire_version: int | None = None,
     ) -> MigrateResult | MigratePlan:
         """
         Rebuild bronze from raw wire using the pipeline's source parser + naming,
@@ -162,6 +176,8 @@ class BronzeMigrator:
         """
         if not dry_run and validate_limit is not None:
             raise ValueError("validate_limit is only valid with dry_run=True")
+        if wire_version is not None and wire_version < 1:
+            raise ValueError("wire_version filter must be a positive integer (>= 1)")
 
         extract_ts = format_extract_run_datetime()
         config = (
@@ -202,6 +218,16 @@ class BronzeMigrator:
             config, self.project_root, dataset=raw_name
         )
         source_parts = _raw_partitions_in_window(raw_dataset, window_start, window_end)
+        if wire_version is not None:
+            filtered: list[Path] = []
+            for part in source_parts:
+                try:
+                    part_manifest = read_manifest(part)
+                except Exception:
+                    continue
+                if manifest_wire_version(part_manifest) == wire_version:
+                    filtered.append(part)
+            source_parts = filtered
 
         # Keep name == source.type; dataset overrides the target lake/SQL identity.
         to_config = PipelineConfig(
@@ -214,6 +240,7 @@ class BronzeMigrator:
             medallion=config.medallion,
             bronze=config.bronze,
             dataset=to_bronze_id,
+            wire_version=config.wire_version,
         )
 
         if dry_run:
@@ -233,6 +260,7 @@ class BronzeMigrator:
                 window_end=window_end,
                 extract_ts=extract_ts,
                 validate_limit=validate_limit,
+                wire_version_filter=wire_version,
             )
 
         backend = get_ingestion(ingestion_library)
@@ -312,6 +340,7 @@ class BronzeMigrator:
         window_end: str,
         extract_ts: str,
         validate_limit: int | None,
+        wire_version_filter: int | None = None,
     ) -> MigratePlan:
         plans: list[PartitionPlan] = []
         rows_checked = 0
@@ -337,6 +366,7 @@ class BronzeMigrator:
                 )
                 continue
 
+            part_wire = manifest_wire_version(manifest)
             start_iso = str(manifest.get("interval_start") or window_start)
             end_iso = str(manifest.get("interval_end") or window_end)
             try:
@@ -391,6 +421,7 @@ class BronzeMigrator:
                     ok=part_ok,
                     truncated=truncated,
                     errors=errors[:20],
+                    wire_version=part_wire,
                 )
             )
             logger.info(
@@ -398,6 +429,7 @@ class BronzeMigrator:
                 raw_dir=str(raw_dir),
                 rows=len(named_rows),
                 ok=part_ok,
+                wire_version=part_wire,
             )
 
         return MigratePlan(
@@ -410,4 +442,5 @@ class BronzeMigrator:
             partitions=plans,
             partitions_planned=len(plans),
             rows_checked=rows_checked,
+            wire_version_filter=wire_version_filter,
         )

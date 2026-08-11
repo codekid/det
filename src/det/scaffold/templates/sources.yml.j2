@@ -4,15 +4,9 @@ sources:
   - name: {{ source_name }}
     description: >
       DET bronze for provider feeds under this SQL schema / lake prefix.
-      Filesystem: nested JSONL. DuckDB: native tables via det_bronze_from
-      when DET_BRONZE_SOURCE=duckdb (set by det dbt --pipeline).
+      Tables set schema-aware read_json(... columns={...}) in meta.external_location.
+      DuckDB native tables use det_bronze_from when DET_BRONZE_SOURCE=duckdb
+      (set by det dbt --pipeline).
     schema: {{ source_name }}
-    meta:
-      external_location: >-
-        read_json_auto(
-          '{{ '{{' }} env_var("DET_LAKE_PATH", "../data/lake") {{ '}}' }}/bronze/{{ provider }}/{name}/**/data.jsonl',
-          union_by_name=true,
-          hive_partitioning=false
-        )
     tables:
 {{ tables_yaml }}

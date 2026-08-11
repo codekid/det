@@ -14,3 +14,41 @@ destination:
   path: ./data/lake
 medallion:
   bronze_prefix: bronze
+# Stamp on raw manifests. Bump only on true wire/parse breaks, together with
+# dataset: example_api.events_vN (keep raw+bronze lake ids paired).
+wire_version: 1
+dbt:
+  silver:
+    materialized: table
+    unique_key: [__row_hash]
+    order_by: ["__extract_run_datetime desc"]
+    # Prefer tests here (materialized/deduped) over stg views on large lakes.
+    # Column names are post-stg (after rename/coalesce).
+    not_null: [id, occurred_at]
+    unique: [id]
+    accepted_values:
+      event_severity: [low, medium, high, critical]
+      status: [open, closed, archived]
+  # Wire-faithful bronze → analytics adaptations in scaffolded stg.
+  # Re-run: det scaffold-dbt -p example_api.events --force
+  # Nested flatten is not supported here yet.
+  stg:
+    # Historical wire names → one stable column (preference order).
+    # Widens read_json columns so older JSONL keys stay visible.
+    coalesce:
+      severity: [severity, severity_level, level]
+    # Treat these literals as SQL NULL after coalesce/casts.
+    null_sentinels:
+      state: ["", "NA", "null"]
+    # String→string case map; unknown values pass through.
+    map:
+      status:
+        "1": open
+        "2": closed
+        "3": archived
+    # Rename after coalesce/map (silver tests use final names).
+    rename:
+      severity: event_severity
+    # Keep in bronze / read_json; omit from stg select.
+    # Also drop raw alias columns once coalesce has folded them into event_severity.
+    exclude: [debug_info, level, severity_level]
