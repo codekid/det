@@ -421,12 +421,12 @@ det scaffold-dbt -p noaa.storm_events --force
 det init-pipeline --name example_api.events --source-type example_api.events \
   --destination-type duckdb --connection ./data/analytics.duckdb
 
-# Contract rebuild from raw
+# Rebuild bronze from raw (same lake id; analytics renames live in dbt.stg)
 det migrate \
   -p example_api.events \
-  --to-bronze example_api.events_v2 \
-  --schema schemas/example_api/events/events_v2.schema.yaml \
-  --mapper example_api_v1_to_v2 \
+  --to-bronze example_api.events \
+  --schema schemas/example_api/events/events.schema.yaml \
+  --mapper identity \
   -s 2026-08-01 -e 2026-09-01
 
 det list-pipelines
@@ -497,11 +497,10 @@ pipelines today use flat schemas, so NOAA / example_api are unaffected.
 schemas/
   noaa/storm_events/storm_events.schema.yaml
   example_api/events/events.schema.yaml
-  example_api/events/events_v2.schema.yaml
 ```
 
-There is no `latest` pointer — the pipeline path is the contract. Breaking changes get a
-new schema file + `det migrate` mapper.
+There is no `latest` pointer — the pipeline path is the contract. Prefer `dbt.stg` for
+renames; use a migrate mapper only when the bronze lake contract itself must change.
 
 ### Meta columns (runtime-injected)
 
@@ -544,7 +543,7 @@ det dbt -p noaa.storm_events
 
 | Piece | Behavior |
 | --- | --- |
-| `sources.yml` | Filesystem bronze via `read_json_auto` + `DET_LAKE_PATH` |
+| `sources.yml` | Filesystem bronze via schema-aware `read_json` + `DET_LAKE_PATH` |
 | `det_bronze_from` | Switches stg to native DuckDB table when `DET_BRONZE_SOURCE=duckdb` |
 | `stg_*` | View; schema-driven select + trim/nullif on strings |
 | `silver_*` | Dedupe via `det_dedupe_latest_run` (identity + order from `dbt.silver`) |

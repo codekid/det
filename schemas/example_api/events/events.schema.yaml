@@ -1,3 +1,5 @@
+# Live bronze contract for pipeline example_api.events (default schema path).
+# Prefer dbt.stg for analytics renames across wire eras.
 $schema: https://json-schema.org/draft/2020-12/schema
 $title: example_api_events
 type: object
@@ -5,7 +7,13 @@ required: [id, occurred_at]
 properties:
   id: { type: string }
   occurred_at: { type: string }
+  # Current wire name; also accept historical aliases (see dbt.stg.coalesce).
   severity: { type: string }
   level: { type: string }
+  severity_level: { type: string }
   state: { type: ["string", "null"] }
+  # Wire status code; dbt.stg.map turns "1"/"2" into labels in stg.
+  status: { type: ["string", "null"] }
+  # Landed in bronze; dropped from stg via dbt.stg.exclude.
+  debug_info: { type: ["string", "null"] }
 additionalProperties: false

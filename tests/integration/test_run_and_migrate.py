@@ -174,8 +174,8 @@ def test_example_api_fixture_and_migrate(project_root: Path, tmp_path: Path):
 
     mig = BronzeMigrator(tmp_path).migrate(
         pipeline=pipe_path,
-        to_bronze="example_api.events_v2",
-        schema_path=project_root / "schemas/example_api/events/events_v2.schema.yaml",
+        to_bronze="example_api.events_level",
+        schema_path=project_root / "tests/fixtures/example_api/events_level.schema.yaml",
         mapper_name="example_api_v1_to_v2",
         interval_start="2026-08-06",
         lake_path=str(tmp_path / "lake"),
@@ -183,7 +183,7 @@ def test_example_api_fixture_and_migrate(project_root: Path, tmp_path: Path):
     )
     assert mig.rows == 1
     out = next(
-        (tmp_path / "lake" / "bronze" / "example_api" / "events_v2").rglob("data.jsonl")
+        (tmp_path / "lake" / "bronze" / "example_api" / "events_level").rglob("data.jsonl")
     )
     assert out.parent.name.startswith("__extract_run_datetime=")
     migrated = json.loads(out.read_text(encoding="utf-8").splitlines()[0])

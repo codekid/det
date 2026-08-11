@@ -98,12 +98,16 @@ def init_pipeline(
         "ingestion": {"library": "dlt"},
         "destination": dest,
         "medallion": {"bronze_prefix": "bronze", "raw_prefix": "raw"},
+        # Bump only on true wire breaks together with dataset: …_vN
+        "wire_version": 1,
         "dbt": {
             "silver": {
                 "materialized": "table",
                 "unique_key": ["__row_hash"],
                 "order_by": ["__extract_run_datetime desc"],
-            }
+            },
+            # Optional stg adaptations (coalesce/rename/…); see det-dbt skill
+            "stg": {},
         },
     }
     schema_doc = {**_MINIMAL_SCHEMA, "$title": f"{provider}.{source_name}"}

@@ -1,13 +1,15 @@
-{% macro det_bronze_from(dataset) %}
+{% macro det_bronze_from(dataset, source_name=none) %}
 {#
-  Filesystem bronze (default): dbt source named DET_BRONZE_SCHEMA (bronze_{provider})
-  with nested lake path bronze/{provider}/{name}/**/data.jsonl.
-  DuckDB bronze: native table DET_BRONZE_SCHEMA.dataset (e.g. bronze_noaa.storm_events).
-  `det dbt --pipeline` sets DET_BRONZE_SOURCE / DET_BRONZE_SCHEMA from the pipeline.
+  Filesystem bronze (default): dbt source ``source_name.dataset``
+  (e.g. bronze_noaa.storm_events). Pass source_name explicitly so multi-provider
+  projects parse correctly when ``det dbt -p`` sets DET_BRONZE_SCHEMA for one
+  pipeline. Falls back to DET_BRONZE_SCHEMA / "bronze" when omitted.
+  DuckDB bronze: native table source_name.dataset when DET_BRONZE_SOURCE=duckdb.
 #}
+{%- set src = source_name if source_name is not none else env_var("DET_BRONZE_SCHEMA", "bronze") -%}
 {%- if env_var("DET_BRONZE_SOURCE", "filesystem") == "duckdb" -%}
-{{ env_var("DET_BRONZE_SCHEMA", "bronze") }}.{{ dataset }}
+{{ src }}.{{ dataset }}
 {%- else -%}
-{{ source(env_var("DET_BRONZE_SCHEMA", "bronze"), dataset) }}
+{{ source(src, dataset) }}
 {%- endif -%}
 {% endmacro %}

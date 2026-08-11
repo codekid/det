@@ -279,6 +279,7 @@ def create_server():
         interval_end: str | None = None,
         from_raw: str | None = None,
         validate_limit: int = t.MAX_SAMPLE_LIMIT,
+        wire_version: int | None = None,
     ) -> dict[str, Any]:
         """Preview migrate (name/map/validate); never writes bronze."""
         return t.migrate_dry_run(
@@ -290,6 +291,7 @@ def create_server():
             interval_end=interval_end,
             from_raw=from_raw,
             validate_limit=validate_limit,
+            wire_version=wire_version,
         )
 
     @mcp.resource("det://pipelines/{name}")

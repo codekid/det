@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from copy import deepcopy
 from pathlib import Path
@@ -14,6 +15,8 @@ from det.runtime.ids import (
     validate_canonical_id,
 )
 from det.runtime.naming import BronzeConfig
+
+_STG_COL_ID = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 class SourceConfig(BaseModel):
@@ -61,8 +64,16 @@ class MedallionConfig(BaseModel):
     raw_prefix: str = "raw"
 
 
+def _require_dbt_col_id(name: str, *, where: str) -> str:
+    if not _STG_COL_ID.match(name):
+        raise ValueError(
+            f"{where}: column id must be snake_case identifier, got {name!r}"
+        )
+    return name
+
+
 class DbtSilverConfig(BaseModel):
-    """Knobs for `det scaffold-dbt` silver model generation."""
+    """Knobs for `det scaffold-dbt` silver model generation + column tests."""
 
     materialized: Literal["table", "incremental", "view"] = "table"
     unique_key: list[str] = Field(default_factory=lambda: ["__row_hash"])
@@ -72,8 +83,12 @@ class DbtSilverConfig(BaseModel):
     incremental_strategy: Literal["delete+insert", "append", "merge"] = "delete+insert"
     watermark: str = "__extract_run_datetime"
     lookback: str | None = None
+    # Prefer tests on silver (materialized/deduped) over stg views on large lakes.
+    not_null: list[str] = Field(default_factory=list)
+    unique: list[str] = Field(default_factory=list)
+    accepted_values: dict[str, list[str]] = Field(default_factory=dict)
 
-    @field_validator("unique_key", "order_by", mode="before")
+    @field_validator("unique_key", "order_by", "not_null", "unique", mode="before")
     @classmethod
     def _as_str_list(cls, v: Any) -> list[str]:
         if v is None:
@@ -98,9 +113,91 @@ class DbtSilverConfig(BaseModel):
             raise ValueError("dbt.silver.order_by must be non-empty")
         return v
 
+    @model_validator(mode="after")
+    def _validate_silver_tests(self) -> DbtSilverConfig:
+        for name in (*self.not_null, *self.unique):
+            _require_dbt_col_id(name, where="dbt.silver test column")
+        for name, values in self.accepted_values.items():
+            _require_dbt_col_id(name, where="dbt.silver.accepted_values key")
+            if not values:
+                raise ValueError(
+                    f"dbt.silver.accepted_values[{name!r}] must be a non-empty list"
+                )
+        return self
+
+
+class DbtStgConfig(BaseModel):
+    """
+    Knobs for `det scaffold-dbt` staging generation.
+
+    Adapt wire-faithful bronze in stg (coalesce renames, sentinels, maps).
+    Column tests belong under ``dbt.silver`` (cheaper on large lakes).
+    Does not rewrite bronze on load/migrate. Nested flatten is not supported here.
+    """
+
+    coalesce: dict[str, list[str]] = Field(default_factory=dict)
+    null_sentinels: dict[str, list[Any]] = Field(default_factory=dict)
+    rename: dict[str, str] = Field(default_factory=dict)
+    exclude: list[str] = Field(default_factory=list)
+    map: dict[str, dict[str, str]] = Field(default_factory=dict)
+
+    @field_validator("exclude", mode="before")
+    @classmethod
+    def _as_str_list(cls, v: Any) -> list[str]:
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v]
+        if isinstance(v, list):
+            return [str(x) for x in v]
+        raise TypeError("expected string or list of strings")
+
+    @model_validator(mode="after")
+    def _validate_stg(self) -> DbtStgConfig:
+        for canonical, sources in self.coalesce.items():
+            _require_dbt_col_id(canonical, where="dbt.stg.coalesce key")
+            if not sources:
+                raise ValueError(
+                    f"dbt.stg.coalesce[{canonical!r}] must be a non-empty list"
+                )
+            for src in sources:
+                _require_dbt_col_id(src, where=f"dbt.stg.coalesce[{canonical!r}]")
+        for name, sentinels in self.null_sentinels.items():
+            _require_dbt_col_id(name, where="dbt.stg.null_sentinels key")
+            if not sentinels:
+                raise ValueError(
+                    f"dbt.stg.null_sentinels[{name!r}] must be a non-empty list"
+                )
+        seen_targets: set[str] = set()
+        for src, dest in self.rename.items():
+            _require_dbt_col_id(src, where="dbt.stg.rename key")
+            _require_dbt_col_id(dest, where="dbt.stg.rename value")
+            if dest in seen_targets:
+                raise ValueError(
+                    f"dbt.stg.rename: duplicate target column {dest!r}"
+                )
+            seen_targets.add(dest)
+        for name in self.exclude:
+            _require_dbt_col_id(name, where="dbt.stg.exclude")
+            if name.startswith("__"):
+                raise ValueError(
+                    f"dbt.stg.exclude cannot drop meta column {name!r}"
+                )
+        for name, mapping in self.map.items():
+            _require_dbt_col_id(name, where="dbt.stg.map key")
+            if not mapping:
+                raise ValueError(f"dbt.stg.map[{name!r}] must be a non-empty mapping")
+            for k, v in mapping.items():
+                if not isinstance(k, str) or not isinstance(v, str):
+                    raise ValueError(
+                        f"dbt.stg.map[{name!r}] values must be string→string"
+                    )
+        return self
+
 
 class DbtConfig(BaseModel):
     silver: DbtSilverConfig = Field(default_factory=DbtSilverConfig)
+    stg: DbtStgConfig = Field(default_factory=DbtStgConfig)
 
 
 class PipelineConfig(BaseModel):
@@ -118,6 +215,9 @@ class PipelineConfig(BaseModel):
     dbt: DbtConfig = Field(default_factory=DbtConfig)
     # Optional override of the lake dataset id (defaults to name / source.type).
     dataset: str | None = None
+    # Wire era integer stamped on raw manifests. Bump only on true wire breaks
+    # together with a new lake ``dataset:`` (see det-migrate skill).
+    wire_version: int = 1
 
     @model_validator(mode="before")
     @classmethod
@@ -151,6 +251,8 @@ class PipelineConfig(BaseModel):
             )
         if self.dataset is not None:
             validate_canonical_id(self.dataset)
+        if self.wire_version < 1:
+            raise ValueError("wire_version must be a positive integer (>= 1)")
         return self
 
     @property

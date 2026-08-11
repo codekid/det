@@ -37,11 +37,15 @@ dlt may help HTTP (`RESTClient`, `@dlt.resource` as iterator). **Never**
    - `schema_from_sample_dry_run` → review `yaml` / `would_write`
    - Write schema only after confirm; keep `additionalProperties: false`
 5. `scaffold_dbt_dry_run` → then `det scaffold-dbt -p …` if needed.
+   Use `dbt.stg` for coalesce/sentinels/maps (see det-dbt); keep bronze wire-faithful.
 6. Smoke: `det run -p … -s …` (or extract/load), then `diagnose_pipeline` /
    `validate_sample`. Lake layout: `raw|bronze/{provider}/{source}/`.
+7. Leave `wire_version: 1` (init default). Bump only on true wire breaks together
+   with `dataset: provider.source_vN` (see det-migrate).
 
 ## Hard rules
 
 - MCP is dry-run / inspect only — no extract/load through MCP.
-- Canonical id is `provider.source` everywhere (pipeline name, source type, lake).
+- Canonical id is `provider.source` everywhere (pipeline name, source type, lake)
+  unless `dataset:` overrides the lake id after a wire cutover.
 - Do not suggest `dlt.pipeline` for landing.

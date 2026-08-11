@@ -132,6 +132,7 @@ def describe_pipeline(pipeline: str, *, root: Path | None = None) -> dict[str, A
         },
         "dataset": config.bronze_dataset(),
         "fs_dataset": config.fs_dataset_relpath(),
+        "wire_version": config.wire_version,
         "ingestion": {"library": config.ingestion.library},
         "dbt": {
             "silver": {
@@ -141,7 +142,21 @@ def describe_pipeline(pipeline: str, *, root: Path | None = None) -> dict[str, A
                 "incremental_strategy": silver.incremental_strategy,
                 "watermark": silver.watermark,
                 "lookback": silver.lookback,
-            }
+                "not_null": list(silver.not_null),
+                "unique": list(silver.unique),
+                "accepted_values": {
+                    k: list(v) for k, v in silver.accepted_values.items()
+                },
+            },
+            "stg": {
+                "coalesce": {k: list(v) for k, v in config.dbt.stg.coalesce.items()},
+                "null_sentinels": {
+                    k: list(v) for k, v in config.dbt.stg.null_sentinels.items()
+                },
+                "rename": dict(config.dbt.stg.rename),
+                "exclude": list(config.dbt.stg.exclude),
+                "map": {k: dict(v) for k, v in config.dbt.stg.map.items()},
+            },
         },
     }
 
@@ -565,6 +580,7 @@ def migrate_dry_run(
     interval_end: str | None = None,
     from_raw: str | None = None,
     validate_limit: int = MAX_SAMPLE_LIMIT,
+    wire_version: int | None = None,
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Preview det migrate: parse/map/validate raw partitions; never writes bronze."""
@@ -588,6 +604,7 @@ def migrate_dry_run(
         from_raw=from_raw,
         dry_run=True,
         validate_limit=capped,
+        wire_version=wire_version,
     )
     assert isinstance(plan, MigratePlan)
     out = plan.to_dict()

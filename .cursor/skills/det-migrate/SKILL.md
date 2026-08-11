@@ -12,9 +12,21 @@ CLI after the user confirms. Install: `uv pip install -e ".[mcp]"`.
 
 ## When to use
 
-- Bronze contract changed (new schema file / renamed fields)
+- Bronze contract changed (new schema file / shared reshape every consumer needs)
 - Need to rebuild bronze for an interval from existing `raw/` wire
 - Never migrate from a bronze payload column — raw is the source of truth
+- Frequent **semantic renames** → prefer `dbt.stg.coalesce` (det-dbt), not a migrate mapper
+
+## Wire version vs bronze dataset
+
+- **Default:** `raw/<dataset>/` and `bronze/<dataset>/` use the same lake id.
+- **Semantic renames:** keep dataset + `wire_version`; adapt in `dbt.stg` (or rare bronze mapper into the **same** `--to-bronze` as `--from-raw`).
+- **True wire break** (old extract/parser cannot read new responses): set
+  `dataset: provider.source_vN`, bump `wire_version`, point `schema:` at the
+  contract for that era. New extracts land under the new raw+bronze paths.
+  Historical raw stays under the old dataset.
+- Manifest always stamps `wire_version` (legacy missing field ⇒ `1`).
+- Optional filter: `det migrate … --wire-version N` / MCP `migrate_dry_run(..., wire_version=N)`.
 
 ## Workflow
 
@@ -35,14 +47,19 @@ CLI after the user confirms. Install: `uv pip install -e ".[mcp]"`.
 7. Apply only via CLI when approved (omit `--dry-run`):
 
 ```bash
+# Preferred: same lake id for raw and bronze
 det migrate -p <pipeline> \
-  --to-bronze <provider.source_vN> \
+  --to-bronze <provider.source> \
   --schema schemas/<provider>/<source>/<file>.schema.yaml \
   --mapper <mapper_name> \
   -s <interval_start> -e <interval_end>
+
+# Temporary dual-run escape hatch only — converge back to matching ids
+# det migrate … --to-bronze provider.source_vN …
 ```
 
-CLI preview: `det migrate … --dry-run` (optional `--validate-limit N`).
+CLI preview: `det migrate … --dry-run` (optional `--validate-limit N`,
+`--wire-version N`).
 
 Optional: `--from-raw`, `--lake-path`, `--ingestion thin`.
 
