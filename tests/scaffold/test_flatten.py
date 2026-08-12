@@ -456,7 +456,7 @@ destination:
         / "lake"
         / "bronze"
         / "example_api"
-        / "orders"
+        / "orders_v1"
         / "dt=2020-01-01"
     )
     bronze.mkdir(parents=True)

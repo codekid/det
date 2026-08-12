@@ -89,7 +89,7 @@ def test_run_noaa_fatalities_fixture_to_bronze(project_root: Path, tmp_path: Pat
     )
     assert result.rows == 2
     assert result.raw_dir is not None
-    assert "fatalities" in result.raw_dir.parts
+    assert "fatalities_v1" in result.raw_dir.parts
     assert (result.raw_dir / "meta" / "manifest.json").exists()
     row = json.loads(
         (result.partition_dir / "data.jsonl").read_text(encoding="utf-8").splitlines()[0]
@@ -131,7 +131,7 @@ def test_run_noaa_locations_fixture_to_bronze(project_root: Path, tmp_path: Path
     )
     assert result.rows == 2
     assert result.raw_dir is not None
-    assert "locations" in result.raw_dir.parts
+    assert "locations_v1" in result.raw_dir.parts
     assert (result.raw_dir / "meta" / "manifest.json").exists()
     row = json.loads(
         (result.partition_dir / "data.jsonl").read_text(encoding="utf-8").splitlines()[0]
@@ -175,7 +175,7 @@ def test_multi_day_window_lands_one_partition(project_root: Path, tmp_path: Path
         "__interval_start_datetime=20260801T000000Z",
         "__interval_end_datetime=20260804T000000Z",
     )
-    bronze = tmp_path / "lake" / "bronze" / "noaa" / "storm_events"
+    bronze = tmp_path / "lake" / "bronze" / "noaa" / "storm_events_v1"
     assert len(list(bronze.rglob("data.jsonl"))) == 1
     row = json.loads((result.partition_dir / "data.jsonl").read_text().splitlines()[0])
     assert row["__interval_start_datetime"] == "2026-08-01T00:00:00+00:00"
@@ -212,7 +212,7 @@ def test_example_api_fixture_and_migrate(project_root: Path, tmp_path: Path):
     assert run.raw_dir is not None
     assert (run.raw_dir / "meta" / "manifest.json").exists()
     assert (run.raw_dir / "data").is_dir()
-    assert "example_api" in run.raw_dir.parts and "events" in run.raw_dir.parts
+    assert "example_api" in run.raw_dir.parts and "events_v1" in run.raw_dir.parts
 
     mig = BronzeMigrator(tmp_path).migrate(
         pipeline=pipe_path,

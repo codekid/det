@@ -159,17 +159,17 @@ def test_det_backend_writes_duckdb_append(tmp_path: Path):
 
     con = duckdb.connect(str(db_path), read_only=True)
     try:
-        count = con.execute("select count(*) from bronze_noaa.storm_events").fetchone()[0]
+        count = con.execute("select count(*) from bronze_noaa.storm_events_v1").fetchone()[0]
         assert count == 2
         hashes = {
             r[0]
             for r in con.execute(
-                "select __row_hash from bronze_noaa.storm_events order by __row_hash"
+                "select __row_hash from bronze_noaa.storm_events_v1 order by __row_hash"
             ).fetchall()
         }
         assert hashes == {"abc", "def"}
         event_id = con.execute(
-            "select event_id from bronze_noaa.storm_events where __row_hash = 'abc'"
+            "select event_id from bronze_noaa.storm_events_v1 where __row_hash = 'abc'"
         ).fetchone()[0]
         assert event_id == 1
     finally:
@@ -197,4 +197,4 @@ def test_det_backend_postgres_delegates_to_writer(tmp_path: Path):
             destination=dest,
         )
     write.assert_called_once()
-    assert out == Path("postgres") / "bronze_noaa" / "storm_events"
+    assert out == Path("postgres") / "bronze_noaa" / "storm_events_v1"

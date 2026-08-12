@@ -39,9 +39,10 @@ dlt may help HTTP (`RESTClient`, `@dlt.resource` as iterator). **Never**
 5. `scaffold_dbt_dry_run` → then `det scaffold-dbt -p …` if needed.
    Use `dbt.stg` for coalesce/sentinels/maps (see det-dbt); keep bronze wire-faithful.
 6. Smoke: `det run -p … -s …` (or extract/load), then `diagnose_pipeline` /
-   `validate_sample`. Lake layout: `raw|bronze/{provider}/{source}/`.
-7. Leave `wire_version: 1` (init default). Bump only on true wire breaks together
-   with `dataset: provider.source_vN` (see det-migrate).
+   `validate_sample`. Lake layout: `raw|bronze/{provider}/{source}_v{N}/`
+   (lake id = `{name}_v{wire_version}`).
+7. Leave `wire_version: 1` (init default). Bump only on true wire breaks — lake
+   paths move to `_vN` automatically (see det-migrate).
 
 ## Where may we reshape?
 
@@ -56,6 +57,6 @@ State interval mode on the plugin docstring: `year_files` | `query_params` |
 ## Hard rules
 
 - MCP is dry-run / inspect only — no extract/load through MCP.
-- Canonical id is `provider.source` everywhere (pipeline name, source type, lake)
-  unless `dataset:` overrides the lake id after a wire cutover.
+- Pipeline `name` / `-p` stay `provider.source`; lake / SQL ids are
+  `{name}_v{wire_version}` (including `_v1`). Top-level `dataset:` is rejected.
 - Do not suggest `dlt.pipeline` for landing. Ingestion library is `det` (alias `dlt`).

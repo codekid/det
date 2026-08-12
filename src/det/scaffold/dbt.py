@@ -708,9 +708,7 @@ def _merge_sources_table(
         detail = "replace table"
         text = new_text
     else:
-        if not re.search(r"(?m)^\s*tables:\s*$", text):
-            text = text.rstrip() + "\n    tables:\n"
-        text = text.rstrip() + "\n" + table_yaml + "\n"
+        text = _append_table_under_source(text, source_name, table_yaml)
         detail = "add table"
 
     if dry_run:
@@ -720,6 +718,28 @@ def _merge_sources_table(
     sources_path.write_text(text, encoding="utf-8")
     actions.append(ScaffoldAction(path=sources_path, action="write", detail=detail))
     logger.info("scaffolded sources.yml", path=str(sources_path), detail=detail)
+
+
+def _append_table_under_source(text: str, source_name: str, table_yaml: str) -> str:
+    """Append a table YAML block under the matching top-level source entry."""
+    start = re.search(
+        rf"(?m)^(?P<indent>\s*)- name:\s*{re.escape(source_name)}\s*$",
+        text,
+    )
+    if start is None:
+        if not re.search(r"(?m)^\s*tables:\s*$", text):
+            text = text.rstrip() + "\n    tables:\n"
+        return text.rstrip() + "\n" + table_yaml + "\n"
+
+    indent = start.group("indent")
+    rest = text[start.end() :]
+    next_source = re.search(rf"(?m)^{re.escape(indent)}- name:\s*\S+\s*$", rest)
+    insert_at = start.end() + (next_source.start() if next_source else len(rest))
+    before = text[:insert_at].rstrip()
+    after = text[insert_at:]
+    if "tables:" not in before[start.start() :]:
+        before = before + "\n    tables:"
+    return before + "\n" + table_yaml + "\n" + after
 
 
 def _add_col_test(by_col: dict[str, list[Any]], name: str, test: Any) -> None:
@@ -823,9 +843,9 @@ def scaffold_dbt(
     warnings for large view-materialized relations.
     """
     root = project_root.resolve()
-    canonical = config.bronze_dataset()
-    model_slug = dbt_model_slug(canonical)
-    provider, _ = parse_canonical_id(canonical)
+    # Stable analytics names from pipeline ``name``; lake/SQL table stays versioned.
+    model_slug = dbt_model_slug(config.name)
+    provider, _ = parse_canonical_id(config.name)
     sql_schema, sql_table = sql_names_for_config(config)
     silver: DbtSilverConfig = config.dbt.silver
     stg_cfg: DbtStgConfig = config.dbt.stg
@@ -969,4 +989,4 @@ def scaffold_dbt(
 
         emit_view_size_warnings(config, project_root=root)
 
-    return ScaffoldResult(dataset=canonical, actions=actions)
+    return ScaffoldResult(dataset=config.bronze_dataset(), actions=actions)

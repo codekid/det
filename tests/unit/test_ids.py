@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import pytest
 
-from det.runtime.config import DestinationConfig, PipelineConfig, SourceConfig
+from det.runtime.config import (
+    DestinationConfig,
+    IngestionConfig,
+    MedallionConfig,
+    PipelineConfig,
+    SourceConfig,
+)
 from det.runtime.ids import (
     dbt_model_slug,
     default_schema_path,
     fs_dataset_parts,
     fs_dataset_relpath,
+    lake_dataset_id,
     parse_canonical_id,
     qualified_sql_table,
     sql_names_for_config,
@@ -27,6 +34,14 @@ def test_parse_and_fs_parts():
     assert dbt_model_slug("example_api.events") == "example_api__events"
 
 
+def test_lake_dataset_id_always_suffixes_wire_version():
+    assert lake_dataset_id("noaa.locations", 1) == "noaa.locations_v1"
+    assert lake_dataset_id("noaa.locations", 2) == "noaa.locations_v2"
+    assert parse_canonical_id("noaa.locations_v1") == ("noaa", "locations_v1")
+    with pytest.raises(ValueError, match="wire_version"):
+        lake_dataset_id("noaa.locations", 0)
+
+
 def test_sql_schema_is_medallion_provider():
     assert sql_schema_name("bronze", "noaa") == "bronze_noaa"
     assert qualified_sql_table("bronze", "noaa", "storm_events") == (
@@ -40,8 +55,10 @@ def test_sql_names_for_config():
         source=SourceConfig(type="noaa.storm_events"),
         schema_path="schemas/noaa/storm_events/storm_events.schema.yaml",
         destination=DestinationConfig(type="duckdb", connection="./x.duckdb", dataset="bronze"),
+        wire_version=1,
     )
-    assert sql_names_for_config(config) == ("bronze_noaa", "storm_events")
+    assert config.bronze_dataset() == "noaa.storm_events_v1"
+    assert sql_names_for_config(config) == ("bronze_noaa", "storm_events_v1")
 
 
 def test_rejects_flat_names():
@@ -66,3 +83,16 @@ def test_schema_defaults_when_omitted():
         }
     )
     assert config.schema_path == "schemas/noaa/storm_events/storm_events.schema.yaml"
+
+
+def test_pipeline_rejects_top_level_dataset():
+    with pytest.raises(ValueError, match="dataset:"):
+        PipelineConfig(
+            name="noaa.storm_events",
+            source=SourceConfig(type="noaa.storm_events"),
+            schema_path="schemas/noaa/storm_events/storm_events.schema.yaml",
+            dataset="noaa.storm_events_v2",
+            destination=DestinationConfig(type="filesystem", path="./data/lake"),
+            medallion=MedallionConfig(bronze_prefix="bronze", raw_prefix="raw"),
+            ingestion=IngestionConfig(library="det"),
+        )

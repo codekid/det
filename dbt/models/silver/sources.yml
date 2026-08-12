@@ -9,8 +9,8 @@ sources:
       (set by det dbt --pipeline).
     schema: bronze_example_api
     tables:
-      - name: events
-        description: DET bronze example_api.events
+      - name: events_v1
+        description: DET bronze example_api.events_v1
         meta:
           # Schema-aware columns avoid read_json_auto promoting mixed
           # partitions to JSON (values that look like "48" / "").
@@ -20,7 +20,7 @@ sources:
           formatter: template
           external_location: >-
             read_json(
-              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/example_api/events/**/data.jsonl',
+              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/example_api/events_v1/**/data.jsonl',
               columns={'id': 'VARCHAR', 'occurred_at': 'VARCHAR', 'severity': 'VARCHAR', 'level': 'VARCHAR', 'severity_level': 'VARCHAR', 'state': 'VARCHAR', 'status': 'VARCHAR', 'debug_info': 'VARCHAR', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
               union_by_name=true,
               hive_partitioning=false
@@ -35,8 +35,8 @@ sources:
         - name: occurred_at
           tests:
           - not_null
-      - name: orders
-        description: DET bronze example_api.orders
+      - name: orders_v1
+        description: DET bronze example_api.orders_v1
         meta:
           # Schema-aware columns avoid read_json_auto promoting mixed
           # partitions to JSON (values that look like "48" / "").
@@ -46,7 +46,7 @@ sources:
           formatter: template
           external_location: >-
             read_json(
-              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/example_api/orders/**/data.jsonl',
+              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/example_api/orders_v1/**/data.jsonl',
               columns={'id': 'VARCHAR', 'email': 'VARCHAR', 'currency': 'VARCHAR', 'status': 'VARCHAR', 'customer': 'JSON', 'shipping_address': 'JSON', 'discount_codes': 'JSON', 'line_items': 'JSON', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
               union_by_name=true,
               hive_partitioning=false
@@ -66,8 +66,8 @@ sources:
       (set by det dbt --pipeline).
     schema: bronze_noaa
     tables:
-      - name: storm_events
-        description: DET bronze noaa.storm_events
+      - name: storm_events_v1
+        description: DET bronze noaa.storm_events_v1
         meta:
           # Schema-aware columns avoid read_json_auto promoting mixed
           # partitions to JSON (values that look like "48" / "").
@@ -77,7 +77,7 @@ sources:
           formatter: template
           external_location: >-
             read_json(
-              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/storm_events/**/data.jsonl',
+              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/storm_events_v1/**/data.jsonl',
               columns={'begin_yearmonth': 'INTEGER', 'begin_day': 'INTEGER', 'begin_time': 'INTEGER', 'end_yearmonth': 'INTEGER', 'end_day': 'INTEGER', 'end_time': 'INTEGER', 'episode_id': 'INTEGER', 'event_id': 'INTEGER', 'state': 'VARCHAR', 'state_fips': 'INTEGER', 'year': 'INTEGER', 'month_name': 'VARCHAR', 'event_type': 'VARCHAR', 'cz_type': 'VARCHAR', 'cz_fips': 'INTEGER', 'cz_name': 'VARCHAR', 'wfo': 'VARCHAR', 'begin_date_time': 'VARCHAR', 'cz_timezone': 'VARCHAR', 'end_date_time': 'VARCHAR', 'injuries_direct': 'INTEGER', 'injuries_indirect': 'INTEGER', 'deaths_direct': 'INTEGER', 'deaths_indirect': 'INTEGER', 'damage_property': 'VARCHAR', 'damage_crops': 'VARCHAR', 'source': 'VARCHAR', 'magnitude': 'DOUBLE', 'magnitude_type': 'VARCHAR', 'flood_cause': 'VARCHAR', 'category': 'VARCHAR', 'tor_f_scale': 'VARCHAR', 'tor_length': 'DOUBLE', 'tor_width': 'INTEGER', 'tor_other_wfo': 'VARCHAR', 'tor_other_cz_state': 'VARCHAR', 'tor_other_cz_fips': 'VARCHAR', 'tor_other_cz_name': 'VARCHAR', 'begin_range': 'DOUBLE', 'begin_azimuth': 'VARCHAR', 'begin_location': 'VARCHAR', 'end_range': 'DOUBLE', 'end_azimuth': 'VARCHAR', 'end_location': 'VARCHAR', 'begin_lat': 'DOUBLE', 'begin_lon': 'DOUBLE', 'end_lat': 'DOUBLE', 'end_lon': 'DOUBLE', 'episode_narrative': 'VARCHAR', 'event_narrative': 'VARCHAR', 'data_source': 'VARCHAR', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
               union_by_name=true,
               hive_partitioning=false
@@ -95,8 +95,8 @@ sources:
         - name: event_id
           tests:
           - not_null
-      - name: fatalities
-        description: DET bronze noaa.fatalities
+      - name: fatalities_v1
+        description: DET bronze noaa.fatalities_v1
         meta:
           # Schema-aware columns avoid read_json_auto promoting mixed
           # partitions to JSON (values that look like "48" / "").
@@ -106,7 +106,7 @@ sources:
           formatter: template
           external_location: >-
             read_json(
-              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/fatalities/**/data.jsonl',
+              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/fatalities_v1/**/data.jsonl',
               columns={'fat_yearmonth': 'INTEGER', 'fat_day': 'INTEGER', 'fat_time': 'INTEGER', 'fatality_id': 'INTEGER', 'event_id': 'INTEGER', 'fatality_type': 'VARCHAR', 'fatality_date': 'VARCHAR', 'fatality_age': 'INTEGER', 'fatality_sex': 'VARCHAR', 'fatality_location': 'VARCHAR', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
               union_by_name=true,
               hive_partitioning=false
@@ -121,8 +121,8 @@ sources:
         - name: event_id
           tests:
           - not_null
-      - name: locations
-        description: DET bronze noaa.locations
+      - name: locations_v1
+        description: DET bronze noaa.locations_v1
         meta:
           # Schema-aware columns avoid read_json_auto promoting mixed
           # partitions to JSON (values that look like "48" / "").
@@ -132,7 +132,7 @@ sources:
           formatter: template
           external_location: >-
             read_json(
-              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/locations/**/data.jsonl',
+              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/locations_v1/**/data.jsonl',
               columns={'yearmonth': 'INTEGER', 'episode_id': 'INTEGER', 'event_id': 'INTEGER', 'location_index': 'INTEGER', 'range': 'DOUBLE', 'azimuth': 'VARCHAR', 'location': 'VARCHAR', 'latitude': 'DOUBLE', 'longitude': 'DOUBLE', 'lat2': 'INTEGER', 'lon2': 'INTEGER', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
               union_by_name=true,
               hive_partitioning=false
@@ -155,8 +155,8 @@ sources:
       (set by det dbt --pipeline).
     schema: bronze_openlibrary
     tables:
-      - name: subjects
-        description: DET bronze openlibrary.subjects
+      - name: subjects_v1
+        description: DET bronze openlibrary.subjects_v1
         meta:
           # Schema-aware columns avoid read_json_auto promoting mixed
           # partitions to JSON (values that look like "48" / "").
@@ -166,7 +166,7 @@ sources:
           formatter: template
           external_location: >-
             read_json(
-              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/openlibrary/subjects/**/data.jsonl',
+              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/openlibrary/subjects_v1/**/data.jsonl',
               columns={'key': 'VARCHAR', 'subject_key': 'VARCHAR', 'title': 'VARCHAR', 'edition_count': 'INTEGER', 'cover_id': 'INTEGER', 'cover_edition_key': 'VARCHAR', 'first_publish_year': 'INTEGER', 'has_fulltext': 'BOOLEAN', 'public_scan': 'BOOLEAN', 'printdisabled': 'BOOLEAN', 'ia': 'VARCHAR', 'lending_edition': 'VARCHAR', 'lending_identifier': 'VARCHAR', 'authors': 'JSON', 'subject': 'JSON', 'ia_collection': 'JSON', 'availability': 'JSON', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
               union_by_name=true,
               hive_partitioning=false

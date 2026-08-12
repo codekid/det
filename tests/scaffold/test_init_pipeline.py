@@ -47,4 +47,4 @@ def test_init_pipeline_writes_and_scaffolds(tmp_path: Path):
     stg = (
         tmp_path / "dbt" / "models" / "silver" / "stg_example_api__events.sql"
     ).read_text(encoding="utf-8")
-    assert 'det_bronze_from("events", "bronze_example_api")' in stg
+    assert 'det_bronze_from("events_v1", "bronze_example_api")' in stg

@@ -82,9 +82,9 @@ def test_list_and_describe_pipeline(tmp_path: Path):
     summary = describe_pipeline("example_api.events", root=tmp_path)
     assert summary["name"] == "example_api.events"
     assert summary["source"]["type"] == "example_api.events"
-    assert summary["fs_dataset"] == "example_api/events"
+    assert summary["fs_dataset"] == "example_api/events_v1"
     assert summary["destination"]["sql_schema"] == "bronze_example_api"
-    assert summary["destination"]["sql_table"] == "events"
+    assert summary["destination"]["sql_table"] == "events_v1"
     assert summary["destination"]["type"] == "filesystem"
     assert "dbt" in summary
 
@@ -98,8 +98,8 @@ def test_list_sources_after_plugins(tmp_path: Path):
 def test_raw_bronze_partitions_and_manifest(tmp_path: Path):
     _write_pipeline(tmp_path)
     start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
-    raw = tmp_path / "data" / "lake" / "raw" / "example_api" / "events"
-    bronze = tmp_path / "data" / "lake" / "bronze" / "example_api" / "events"
+    raw = tmp_path / "data" / "lake" / "raw" / "example_api" / "events_v1"
+    bronze = tmp_path / "data" / "lake" / "bronze" / "example_api" / "events_v1"
     r1 = _mk_run(raw, start=start, end=end, run="2026-08-06T10:00:00+00:00")
     _mk_run(raw, start=start, end=end, run="2026-08-06T11:00:00+00:00")
     _mk_run(bronze, start=start, end=end, run="2026-08-06T10:00:00+00:00")
@@ -118,7 +118,7 @@ def test_raw_bronze_partitions_and_manifest(tmp_path: Path):
 def test_prune_dry_run_smoke(tmp_path: Path):
     _write_pipeline(tmp_path)
     start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
-    bronze = tmp_path / "data" / "lake" / "bronze" / "example_api" / "events"
+    bronze = tmp_path / "data" / "lake" / "bronze" / "example_api" / "events_v1"
     runs = [
         "2026-08-06T10:00:00+00:00",
         "2026-08-06T11:00:00+00:00",
@@ -143,7 +143,7 @@ def test_scaffold_and_init_dry_run(tmp_path: Path):
 
     scaffold = scaffold_dbt_dry_run("example_api.events", root=tmp_path)
     assert scaffold["dry_run"] is True
-    assert scaffold["dataset"] == "example_api.events"
+    assert scaffold["dataset"] == "example_api.events_v1"
     assert scaffold["actions"]
     assert not (
         tmp_path / "dbt" / "models" / "silver" / "stg_example_api__events.sql"
@@ -179,5 +179,5 @@ def test_bronze_duckdb_hint(tmp_path: Path):
     assert listing["destination_type"] == "duckdb"
     assert listing["runs"] == []
     assert listing["schema"] == "bronze_example_api"
-    assert listing["table"] == "events"
+    assert listing["table"] == "events_v1"
     assert "note" in listing

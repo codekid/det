@@ -6,24 +6,29 @@ import json
 from pathlib import Path
 from typing import Any
 
-from det.destinations.models import bronze_dataset_dir, lake_root, raw_dataset_dir
 from det.mcp import airflow_inspect as af
 from det.mcp import generate as gen
 from det.mcp import inspect as insp
 from det.mcp.context import PathSandboxError, project_root, resolve_under_root
-from det.plugins import load_plugins
-from det.runtime.config import load_pipeline_config
-from det.runtime.dbt_runner import run_dbt
-from det.runtime.ids import sql_names_for_config
-from det.runtime.pipelines import list_pipeline_ids, resolve_pipeline_ref
-from det.runtime.prune import BronzePruner
-from det.runtime.registry import describe_mappers, list_mappers, list_sources
-from det.scaffold.dbt import scaffold_dbt
-from det.scaffold.init_pipeline import init_pipeline
+from det.mcp.reload import refresh_det_runtime
 
 DEFAULT_LIST_LIMIT = insp.DEFAULT_LIST_LIMIT
 DEFAULT_SAMPLE_LIMIT = insp.DEFAULT_SAMPLE_LIMIT
 MAX_SAMPLE_LIMIT = insp.MAX_SAMPLE_LIMIT
+
+
+def _prepare_tool() -> None:
+    """Evict stale det.* modules so long-lived MCP sees disk edits."""
+    import importlib
+
+    import det.mcp.generate as generate_mod
+    import det.mcp.inspect as inspect_mod
+
+    refresh_det_runtime()
+    # Re-bind inspect/generate so their imports of registry/plugins/runtime are fresh.
+    global insp, gen
+    insp = importlib.reload(inspect_mod)
+    gen = importlib.reload(generate_mod)
 
 
 def _root(root: Path | None = None) -> Path:
@@ -32,10 +37,15 @@ def _root(root: Path | None = None) -> Path:
 
 def _pipeline_path(pipeline: str, root: Path) -> Path:
     """Resolve a pipeline name (``noaa.storm_events``), path, or nested stem."""
+    from det.runtime.pipelines import resolve_pipeline_ref
+
     return resolve_pipeline_ref(pipeline, project_root=root).path
 
 
 def _load_pipeline(pipeline: str, root: Path):
+    from det.runtime.config import load_pipeline_config
+    from det.runtime.pipelines import resolve_pipeline_ref
+
     resolved = resolve_pipeline_ref(pipeline, project_root=root)
     return load_pipeline_config(resolved.path), resolved.path
 
@@ -90,17 +100,28 @@ def _walk_hive_runs(dataset_dir: Path, *, root: Path, limit: int) -> list[dict[s
 
 
 def list_pipelines(*, root: Path | None = None) -> dict[str, Any]:
+    _prepare_tool()
+    from det.runtime.pipelines import list_pipeline_ids
+
     base = _root(root)
     return {"project_root": str(base), "pipelines": list_pipeline_ids(base)}
 
 
 def list_sources_tool(*, root: Path | None = None) -> dict[str, Any]:
+    _prepare_tool()
+    from det.plugins import load_plugins
+    from det.runtime.registry import list_sources
+
     _ = _root(root)
     load_plugins()
     return {"sources": list_sources()}
 
 
 def list_mappers_tool(*, root: Path | None = None) -> dict[str, Any]:
+    _prepare_tool()
+    from det.plugins import load_plugins
+    from det.runtime.registry import describe_mappers, list_mappers
+
     _ = _root(root)
     load_plugins()
     return {
@@ -112,6 +133,9 @@ def list_mappers_tool(*, root: Path | None = None) -> dict[str, Any]:
 
 
 def describe_pipeline(pipeline: str, *, root: Path | None = None) -> dict[str, Any]:
+    _prepare_tool()
+    from det.runtime.ids import sql_names_for_config
+
     base = _root(root)
     config, path = _load_pipeline(pipeline, base)
     silver = config.dbt.silver
@@ -167,6 +191,9 @@ def list_raw_partitions(
     limit: int = DEFAULT_LIST_LIMIT,
     root: Path | None = None,
 ) -> dict[str, Any]:
+    _prepare_tool()
+    from det.destinations.models import raw_dataset_dir
+
     base = _root(root)
     config, _ = _load_pipeline(pipeline, base)
     dataset_dir = raw_dataset_dir(config, base)
@@ -187,6 +214,10 @@ def list_bronze_partitions(
     limit: int = DEFAULT_LIST_LIMIT,
     root: Path | None = None,
 ) -> dict[str, Any]:
+    _prepare_tool()
+    from det.destinations.models import bronze_dataset_dir
+    from det.runtime.ids import sql_names_for_config
+
     base = _root(root)
     config, _ = _load_pipeline(pipeline, base)
     dest = config.destination
@@ -227,6 +258,7 @@ def list_bronze_partitions(
 
 def read_manifest(run_path: str, *, root: Path | None = None) -> dict[str, Any]:
     """Read meta/manifest.json for a raw extract-run directory under the lake."""
+    _prepare_tool()
     base = _root(root)
     run_dir = resolve_under_root(run_path, root=base)
     if not run_dir.is_dir():
@@ -258,6 +290,9 @@ def prune_dry_run(
     keep: int = 1,
     root: Path | None = None,
 ) -> dict[str, Any]:
+    _prepare_tool()
+    from det.runtime.prune import BronzePruner
+
     base = _root(root)
     config, _ = _load_pipeline(pipeline, base)
     plan = BronzePruner(base).plan(
@@ -298,6 +333,9 @@ def dbt_dry_run(
     select: list[str] | None = None,
     root: Path | None = None,
 ) -> dict[str, Any]:
+    _prepare_tool()
+    from det.runtime.dbt_runner import run_dbt
+
     base = _root(root)
     pipeline_arg: Path | str | None = None
     if pipeline is not None:
@@ -325,6 +363,9 @@ def scaffold_dbt_dry_run(
     force: bool = False,
     root: Path | None = None,
 ) -> dict[str, Any]:
+    _prepare_tool()
+    from det.scaffold.dbt import scaffold_dbt
+
     base = _root(root)
     config, _ = _load_pipeline(pipeline, base)
     result = scaffold_dbt(config, project_root=base, force=force, dry_run=True)
@@ -352,6 +393,9 @@ def init_pipeline_dry_run(
     skip_dbt: bool = False,
     root: Path | None = None,
 ) -> dict[str, Any]:
+    _prepare_tool()
+    from det.scaffold.init_pipeline import init_pipeline
+
     base = _root(root)
     result = init_pipeline(
         name=name,
@@ -380,6 +424,9 @@ def init_pipeline_dry_run(
 
 
 def lake_path_for_pipeline(pipeline: str, *, root: Path | None = None) -> str:
+    _prepare_tool()
+    from det.destinations.models import lake_root
+
     base = _root(root)
     config, _ = _load_pipeline(pipeline, base)
     return _rel(lake_root(config.destination, base), base)
@@ -394,6 +441,7 @@ def diff_partitions(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Compare raw vs bronze extract-run coverage (hive and/or SQL meta)."""
+    _prepare_tool()
     return insp.diff_partitions(
         pipeline,
         interval_start=interval_start,
@@ -415,6 +463,7 @@ def sample_raw(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Sample raw wire/rows at a load stage (wire|rows|named|coerced)."""
+    _prepare_tool()
     return insp.sample_raw(
         pipeline,
         stage=stage,  # type: ignore[arg-type]
@@ -439,6 +488,7 @@ def validate_sample(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Coerce + JSON Schema check on a capped raw sample (errors as data)."""
+    _prepare_tool()
     return insp.validate_sample(
         pipeline,
         limit=limit,
@@ -462,6 +512,7 @@ def sample_bronze(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Sample landed bronze rows (filesystem JSONL or SQL LIMIT). Inspection only."""
+    _prepare_tool()
     return insp.sample_bronze(
         pipeline,
         limit=limit,
@@ -482,6 +533,7 @@ def diagnose_pipeline(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Composite coverage + validation diagnose with suggested CLI commands."""
+    _prepare_tool()
     return insp.diagnose_pipeline(
         pipeline,
         interval_start=interval_start,
@@ -504,6 +556,7 @@ def schema_from_sample_dry_run(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Infer bronze JSON Schema from sample rows (dry-run; never writes)."""
+    _prepare_tool()
     return gen.schema_from_sample_dry_run(
         pipeline,
         run_path=run_path,
@@ -525,6 +578,7 @@ def mapper_from_diff_dry_run(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Diff two schemas and draft a mapper stub (dry-run; never writes)."""
+    _prepare_tool()
     return gen.mapper_from_diff_dry_run(
         from_schema,
         to_schema,
@@ -584,6 +638,7 @@ def migrate_dry_run(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Preview det migrate: parse/map/validate raw partitions; never writes bronze."""
+    _prepare_tool()
     from det.mcp.inspect import clamp_sample_limit
     from det.runtime.migrate import BronzeMigrator, MigratePlan
     from det.runtime.pipelines import resolve_pipeline_ref

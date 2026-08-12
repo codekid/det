@@ -233,7 +233,7 @@ class BronzeMigrator:
                     filtered.append(part)
             source_parts = filtered
 
-        # Keep name == source.type; dataset overrides the target lake/SQL identity.
+        # Keep name == source.type; _lake_id overrides the target lake/SQL identity.
         to_config = PipelineConfig(
             name=config.name,
             source=SourceConfig(type=config.source.type, overrides=config.source.overrides),
@@ -243,9 +243,9 @@ class BronzeMigrator:
             destination=config.destination,
             medallion=config.medallion,
             bronze=config.bronze,
-            dataset=to_bronze_id,
             wire_version=config.wire_version,
         )
+        to_config._lake_id = to_bronze_id
 
         if dry_run:
             return self._migrate_dry_run(

@@ -66,4 +66,4 @@ __bronze_loaded_at,
 __interval_start_datetime,
 __interval_end_datetime,
 __data_interval_date
-from {{ det_bronze_from("storm_events", "bronze_noaa") }}
+from {{ det_bronze_from("storm_events_v1", "bronze_noaa") }}

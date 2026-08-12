@@ -73,7 +73,7 @@ dbt:
     result = scaffold_dbt(
         config, project_root=tmp_path, dbt_models_dir=models, warn=False, force=True
     )
-    assert result.dataset == "example_api.orders"
+    assert result.dataset == "example_api.orders_v1"
     stg = (models / "stg_example_api__orders.sql").read_text(encoding="utf-8")
     assert "shipping_address__geo__coords__lat" in stg
     assert "customer__default_address__geo__coords__lon" in stg

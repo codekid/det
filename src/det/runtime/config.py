@@ -7,11 +7,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from det.runtime.ids import (
     default_schema_path,
     fs_dataset_relpath,
+    lake_dataset_id,
     validate_canonical_id,
 )
 from det.runtime.naming import BronzeConfig
@@ -545,11 +546,15 @@ class PipelineConfig(BaseModel):
     medallion: MedallionConfig = Field(default_factory=MedallionConfig)
     bronze: BronzeConfig = Field(default_factory=BronzeConfig)
     dbt: DbtConfig = Field(default_factory=DbtConfig)
-    # Optional override of the lake dataset id (defaults to name / source.type).
+    # Rejected if set: lake ids are always ``{name}_v{wire_version}``. Use
+    # ``wire_version`` (and ``det migrate``) for cutovers.
     dataset: str | None = None
-    # Wire era integer stamped on raw manifests. Bump only on true wire breaks
-    # together with a new lake ``dataset:`` (see det-migrate skill).
+    # Wire-era stamp and lake id suffix. Lake paths/SQL use ``{name}_vN`` always
+    # (including ``_v1``). Bump when the extract payload shape changes
+    # incompatibly; rebuild older raw with ``det migrate --from-raw …_vN``.
     wire_version: int = 1
+    # Programmatic lake id override (e.g. ``det migrate --to-bronze``). Not YAML.
+    _lake_id: str | None = PrivateAttr(default=None)
 
     @model_validator(mode="before")
     @classmethod
@@ -582,17 +587,25 @@ class PipelineConfig(BaseModel):
                 f"{self.source.type!r}"
             )
         if self.dataset is not None:
-            validate_canonical_id(self.dataset)
+            raise ValueError(
+                "pipeline top-level 'dataset:' is no longer supported; lake ids are "
+                f"derived as {{name}}_v{{wire_version}} "
+                f"(e.g. {self.name}_v{self.wire_version}). "
+                "Bump wire_version for a cutover."
+            )
         if self.wire_version < 1:
             raise ValueError("wire_version must be a positive integer (>= 1)")
         return self
 
     @property
     def canonical_id(self) -> str:
-        return self.dataset or self.name
+        """Lake / SQL dataset id: ``{name}_v{wire_version}`` (or migrate override)."""
+        if self._lake_id is not None:
+            return validate_canonical_id(self._lake_id)
+        return lake_dataset_id(self.name, self.wire_version)
 
     def bronze_dataset(self) -> str:
-        """Canonical lake dataset id (``provider.source``). Prefer path helpers."""
+        """Lake dataset id (``provider.source_vN``). Prefer path helpers."""
         return self.canonical_id
 
     def fs_dataset_relpath(self) -> str:

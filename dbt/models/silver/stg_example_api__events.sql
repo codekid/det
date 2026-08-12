@@ -20,4 +20,4 @@ __bronze_loaded_at,
 __interval_start_datetime,
 __interval_end_datetime,
 __data_interval_date
-from {{ det_bronze_from("events", "bronze_example_api") }}
+from {{ det_bronze_from("events_v1", "bronze_example_api") }}

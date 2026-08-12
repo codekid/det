@@ -58,7 +58,7 @@ dbt:
     result = scaffold_dbt(
         config, project_root=tmp_path, dbt_models_dir=models, warn=False, force=True
     )
-    assert result.dataset == "openlibrary.subjects"
+    assert result.dataset == "openlibrary.subjects_v1"
     stg = (models / "stg_openlibrary__subjects.sql").read_text(encoding="utf-8")
     assert "subject_key" in stg
     assert "availability__status" in stg

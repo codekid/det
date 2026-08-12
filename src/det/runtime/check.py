@@ -138,7 +138,7 @@ def check_pipeline_config(
 
     dbt_root = root / "dbt"
     if dbt_root.is_dir():
-        slug = dbt_model_slug(config.bronze_dataset())
+        slug = dbt_model_slug(config.name)
         silver_dir = dbt_root / "models" / "silver"
         missing: list[str] = []
         for name in (f"stg_{slug}.sql", f"silver_{slug}.sql"):

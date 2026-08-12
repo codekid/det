@@ -89,7 +89,7 @@ def _write_example_raw(
     run: str,
     events: list[dict],
 ) -> Path:
-    raw_base = root / "data" / "lake" / "raw" / "example_api" / "events"
+    raw_base = root / "data" / "lake" / "raw" / "example_api" / "events_v1"
     run_dir = _mk_hive_run(raw_base, start=start, end=end, run=run)
     page = run_dir / "data" / "pages" / "0001.json"
     page.parent.mkdir(parents=True, exist_ok=True)
@@ -128,8 +128,8 @@ def test_clamp_sample_limit():
 def test_diff_partitions_filesystem(tmp_path: Path):
     _write_pipeline(tmp_path)
     start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
-    raw = tmp_path / "data" / "lake" / "raw" / "example_api" / "events"
-    bronze = tmp_path / "data" / "lake" / "bronze" / "example_api" / "events"
+    raw = tmp_path / "data" / "lake" / "raw" / "example_api" / "events_v1"
+    bronze = tmp_path / "data" / "lake" / "bronze" / "example_api" / "events_v1"
     _mk_hive_run(raw, start=start, end=end, run="2026-08-06T10:00:00+00:00")
     _mk_hive_run(raw, start=start, end=end, run="2026-08-06T11:00:00+00:00")
     _mk_hive_run(bronze, start=start, end=end, run="2026-08-06T10:00:00+00:00")
@@ -155,7 +155,7 @@ def test_diff_partitions_duckdb(tmp_path: Path):
         },
     )
     start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
-    raw = tmp_path / "data" / "lake" / "raw" / "example_api" / "events"
+    raw = tmp_path / "data" / "lake" / "raw" / "example_api" / "events_v1"
     _mk_hive_run(raw, start=start, end=end, run="2026-08-06T10:00:00+00:00")
     _mk_hive_run(raw, start=start, end=end, run="2026-08-06T11:00:00+00:00")
     write_duckdb_table(
@@ -169,7 +169,7 @@ def test_diff_partitions_duckdb(tmp_path: Path):
         ],
         connection_path=db,
         schema="bronze_example_api",
-        table="events",
+        table="events_v1",
     )
     diff = diff_partitions("example_api.events", root=tmp_path)
     assert diff["destination_type"] == "duckdb"
@@ -244,7 +244,7 @@ def test_sample_raw_and_validate(tmp_path: Path):
 def test_sample_bronze_filesystem(tmp_path: Path):
     _write_pipeline(tmp_path)
     start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
-    bronze = tmp_path / "data" / "lake" / "bronze" / "example_api" / "events"
+    bronze = tmp_path / "data" / "lake" / "bronze" / "example_api" / "events_v1"
     run_dir = _mk_hive_run(bronze, start=start, end=end, run="2026-08-06T10:00:00+00:00")
     (run_dir / "data.jsonl").write_text(
         json.dumps({"id": 1, "__extract_run_datetime": "2026-08-06T10:00:00+00:00"})
@@ -290,7 +290,7 @@ def test_sample_bronze_duckdb(tmp_path: Path):
         ],
         connection_path=db,
         schema="bronze_example_api",
-        table="events",
+        table="events_v1",
     )
     sample = sample_bronze("example_api.events", limit=1, root=tmp_path)
     assert sample["destination_type"] == "duckdb"

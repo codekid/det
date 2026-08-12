@@ -183,7 +183,7 @@ def migrate_bronze(
     from_raw: str | None = typer.Option(
         None,
         "--from-raw",
-        help="Raw dataset canonical id (defaults to pipeline dataset/name)",
+        help="Raw dataset lake id (defaults to pipeline {name}_v{wire_version})",
     ),
     lake_path: str | None = typer.Option(None, "--lake-path"),
     ingestion: str = typer.Option("thin", "--ingestion"),

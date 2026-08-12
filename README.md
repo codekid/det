@@ -374,7 +374,11 @@ dbt:
     lookback: null             # e.g. "3 days"
 ```
 
-Canonical id is `provider.source` (e.g. `noaa.storm_events`). Lake path is `raw|bronze/{provider}/{source}/`. For DuckDB/Postgres, `destination.dataset` is the **medallion prefix** (default `bronze`) → SQL `bronze_noaa.storm_events`.
+Canonical id for `-p` / registry is `provider.source` (e.g. `noaa.storm_events`).
+Lake / SQL dataset id is always `{name}_v{wire_version}` (including `_v1`), e.g.
+`raw|bronze/noaa/storm_events_v1/` and DuckDB/Postgres `bronze_noaa.storm_events_v1`.
+`destination.dataset` is the **medallion prefix** only (default `bronze`).
+Top-level pipeline `dataset:` is rejected — bump `wire_version` for cutovers.
 
 ```mermaid
 flowchart LR
@@ -432,7 +436,7 @@ det init-pipeline --name example_api.events --source-type example_api.events \
 # Rebuild bronze from raw (same lake id; analytics renames live in dbt.stg)
 det migrate \
   -p example_api.events \
-  --to-bronze example_api.events \
+  --to-bronze example_api.events_v1 \
   --schema schemas/example_api/events/events.schema.yaml \
   --mapper identity \
   -s 2026-08-01 -e 2026-09-01
@@ -450,28 +454,28 @@ det list-mappers
 
 | type | Bronze write | Required knobs |
 | --- | --- | --- |
-| `filesystem` | Hive JSONL under `path/bronze/<provider>/<source>/` | `path` |
-| `duckdb` | Append-only `{medallion}_{provider}.{source}` (e.g. `bronze_noaa.storm_events`) | `path`, `connection`, optional `dataset` (**medallion prefix**, default `bronze`) |
+| `filesystem` | Hive JSONL under `path/bronze/<provider>/<source>_vN/` | `path` |
+| `duckdb` | Append-only `{medallion}_{provider}.{source}_vN` (e.g. `bronze_noaa.storm_events_v1`) | `path`, `connection`, optional `dataset` (**medallion prefix**, default `bronze`) |
 | `postgres` | Same SQL naming as DuckDB | `path`, `connection`, optional `dataset`; install `.[postgres]` |
 
-**Breaking change:** `destination.dataset` is no longer the SQL schema name. It is the medallion prefix only; the SQL schema is `{dataset}_{provider}`.
+**Breaking change:** `destination.dataset` is no longer the SQL schema name. It is the medallion prefix only; the SQL schema is `{dataset}_{provider}`. Lake table/path leaf is `{source}_v{wire_version}`.
 
 ```bash
 det run -p noaa.storm_events -s 2026-08-06 \
   --set destination.type=duckdb \
   --set destination.connection=./data/analytics.duckdb \
   --set destination.dataset=bronze
-# → bronze_noaa.storm_events
+# → bronze_noaa.storm_events_v1
 ```
 
 Use the **same** DuckDB file as `dbt/profiles.yml` when stg should read native tables.
-`det dbt -p …` then sets `DET_BRONZE_SOURCE=duckdb`, `DET_BRONZE_SCHEMA=bronze_noaa`, and stg uses `det_bronze_from("storm_events")`.
+`det dbt -p …` then sets `DET_BRONZE_SOURCE=duckdb`, `DET_BRONZE_SCHEMA=bronze_noaa`, and stg uses `det_bronze_from("storm_events_v1")`.
 
 ```mermaid
 flowchart LR
   subgraph bronzeSide [Bronze]
     lakeJSONL[JSONL lake]
-    duckTable[DuckDB bronze_noaa.storm_events]
+    duckTable[DuckDB bronze_noaa.storm_events_v1]
   end
   subgraph dbtSide [dbt]
     macro[det_bronze_from]
@@ -828,7 +832,8 @@ Plugins under `src/det/sources/` implement `defaults()`, `extract_to_raw(...)`, 
 - Enrichment only in `records_from_raw` when needed (e.g. Open Library injects
   `subject_key`). Do **not** silently allowlist/strip API fields in the source.
 - Analytics adapts (rename/coalesce/exclude) belong in `dbt.stg`. True wire breaks
-  use a migrate mapper + `wire_version` / lake `dataset:` cutover.
+  bump `wire_version` (lake id becomes `{name}_vN`); use a migrate mapper +
+  `det migrate --from-raw …_vN` for history.
 
 **Interval modes** (state on the plugin docstring): `year_files` | `query_params` |
 `partition_only`.

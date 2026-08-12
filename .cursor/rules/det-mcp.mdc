@@ -45,10 +45,13 @@ Paths are sandboxed under `DET_PROJECT_ROOT` (default cwd / project root).
 | Draft migrate mapper | MCP `mapper_from_diff_dry_run` then register + `det migrate` |
 | Airflow health / DAG runs | MCP `airflow_health` / `list_airflow_dags` / `list_airflow_dag_runs` |
 | Preview backfill conf | MCP `preview_backfill_conf` then Compose/CLI trigger if approved |
-| Preview migrate | MCP `migrate_dry_run` then CLI `det migrate` (no `--dry-run`) |
-| Preview prune | MCP `prune_dry_run` then CLI `--apply` if approved |
-| Preview dbt/scaffold | MCP `*_dry_run` then CLI without `--dry-run` |
-| Mutating extract/load / DagRun trigger | CLI / Airflow UI only |
+| Preview migrate | MCP `migrate_dry_run` then **ask user**; only then CLI `det migrate` (no `--dry-run`) |
+| Preview prune | MCP `prune_dry_run` then **ask user**; only then CLI `--apply` |
+| Preview dbt/scaffold | MCP `*_dry_run` then **ask user**; only then CLI without `--dry-run` |
+| Mutating extract/load / DagRun trigger | CLI / Airflow UI only — after explicit user approval |
+
+**Agent rule:** never chain a dry-run preview into a writing CLI command in the same
+turn. Show the plan/result and wait for the user to approve the apply.
 
 ## dlt boundaries
 

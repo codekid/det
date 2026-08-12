@@ -46,6 +46,20 @@ def validate_canonical_id(canonical_id: str) -> str:
     return cid
 
 
+def lake_dataset_id(name: str, wire_version: int) -> str:
+    """
+    Lake / SQL dataset id derived from pipeline name + wire era.
+
+    Always suffixes ``_vN`` (including ``_v1``) so a true wire break cannot forget
+    a separate ``dataset:`` cutover. Example: ``noaa.locations`` + ``1`` →
+    ``noaa.locations_v1``.
+    """
+    if wire_version < 1:
+        raise ValueError(f"wire_version must be >= 1, got {wire_version}")
+    base = validate_canonical_id(name)
+    return f"{base}_v{int(wire_version)}"
+
+
 def fs_dataset_parts(canonical_id: str) -> tuple[str, ...]:
     """Filesystem segments under raw/ or bronze/ (e.g. ``("noaa", "storm_events")``)."""
     cid = validate_canonical_id(canonical_id)
@@ -87,8 +101,11 @@ def default_schema_path(canonical_id: str) -> str:
 
 def dbt_model_slug(canonical_id: str) -> str:
     """
-    dbt model stem with source/entity separator: ``noaa.storm_events`` →
+    Stable dbt model stem from pipeline name: ``noaa.storm_events`` →
     ``noaa__storm_events`` (models are ``stg_noaa__storm_events``, etc.).
+
+    Pass ``config.name`` (unversioned), not the lake id — bronze ``_vN`` paths
+    are wired via ``sources.yml`` / ``det_bronze_from``, not model names.
     """
     provider, source_name = parse_canonical_id(canonical_id)
     return f"{provider}__{source_name}"

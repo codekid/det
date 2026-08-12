@@ -189,7 +189,7 @@ def test_extract_stamps_wire_version_and_migrate_filters(
     pipe_path = _example_pipeline(project_root, tmp_path)
     PipelineRunner(tmp_path).run(pipe_path, interval_start="2026-08-06")
 
-    raw_root = tmp_path / "lake" / "raw" / "example_api" / "events"
+    raw_root = tmp_path / "lake" / "raw" / "example_api" / "events_v1"
     parts = sorted(raw_root.rglob("manifest.json"))
     assert len(parts) == 1
     manifest = json.loads(parts[0].read_text(encoding="utf-8"))
@@ -210,7 +210,7 @@ def test_extract_stamps_wire_version_and_migrate_filters(
 
     plan_all = BronzeMigrator(tmp_path).migrate(
         pipeline=pipe_path,
-        to_bronze="example_api.events",
+        to_bronze="example_api.events_v1",
         schema_path=project_root / "schemas/example_api/events/events.schema.yaml",
         mapper_name="identity",
         interval_start="2026-08-06",
@@ -223,7 +223,7 @@ def test_extract_stamps_wire_version_and_migrate_filters(
 
     plan_v1 = BronzeMigrator(tmp_path).migrate(
         pipeline=pipe_path,
-        to_bronze="example_api.events",
+        to_bronze="example_api.events_v1",
         schema_path=project_root / "schemas/example_api/events/events.schema.yaml",
         mapper_name="identity",
         interval_start="2026-08-06",
@@ -243,7 +243,7 @@ def test_legacy_manifest_missing_wire_version_defaults_to_1(
     pipe_path = _example_pipeline(project_root, tmp_path)
     PipelineRunner(tmp_path).run(pipe_path, interval_start="2026-08-06")
     man_path = next(
-        (tmp_path / "lake" / "raw" / "example_api" / "events").rglob("manifest.json")
+        (tmp_path / "lake" / "raw" / "example_api" / "events_v1").rglob("manifest.json")
     )
     payload = json.loads(man_path.read_text(encoding="utf-8"))
     del payload["wire_version"]
@@ -251,7 +251,7 @@ def test_legacy_manifest_missing_wire_version_defaults_to_1(
 
     plan = BronzeMigrator(tmp_path).migrate(
         pipeline=pipe_path,
-        to_bronze="example_api.events",
+        to_bronze="example_api.events_v1",
         schema_path=project_root / "schemas/example_api/events/events.schema.yaml",
         mapper_name="identity",
         interval_start="2026-08-06",

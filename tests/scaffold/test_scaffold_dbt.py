@@ -103,7 +103,7 @@ def test_scaffold_creates_and_skips_without_force(tmp_path: Path):
     assert any(a.action == "write" for a in first.actions)
 
     stg = (models / "stg_noaa__storm_events.sql").read_text(encoding="utf-8")
-    assert 'det_bronze_from("storm_events", "bronze_noaa")' in stg
+    assert 'det_bronze_from("storm_events_v1", "bronze_noaa")' in stg
     assert "{{ det_as_string('state') }}" in stg
     assert "{{ det_as_integer('event_id') }}" in stg
     assert "{{ det_as_double('magnitude') }}" in stg
@@ -127,7 +127,7 @@ def test_scaffold_creates_and_skips_without_force(tmp_path: Path):
     assert "read_json(" in sources_text
     assert "'event_id': 'INTEGER'" in sources_text
     assert "formatter: template" in sources_text
-    assert "storm_events" in sources_text
+    assert "storm_events_v1" in sources_text
     # Jinja must survive YAML round-trip for dbt.
     assert 'env_var("DET_LAKE_PATH"' in sources_text or "env_var('DET_LAKE_PATH'" in sources_text
 

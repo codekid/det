@@ -76,8 +76,8 @@ def _mk_run(
 
 def test_filesystem_prune_dry_run_and_apply_keeps_newest(tmp_path: Path):
     config = _fs_config(tmp_path)
-    bronze = tmp_path / "lake" / "bronze" / "noaa" / "storm_events"
-    raw = tmp_path / "lake" / "raw" / "noaa" / "storm_events"
+    bronze = tmp_path / "lake" / "bronze" / "noaa" / "storm_events_v1"
+    raw = tmp_path / "lake" / "raw" / "noaa" / "storm_events_v1"
     start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
     runs = [
         "2026-08-06T10:00:00+00:00",
@@ -138,7 +138,7 @@ def test_duckdb_prune_deletes_old_runs(tmp_path: Path):
             ],
             connection_path=db_path,
             schema="bronze_noaa",
-            table="storm_events",
+            table="storm_events_v1",
         )
 
     pruner = BronzePruner(tmp_path)
@@ -155,7 +155,7 @@ def test_duckdb_prune_deletes_old_runs(tmp_path: Path):
     con = duckdb.connect(str(db_path), read_only=True)
     try:
         rows = con.execute(
-            "select __extract_run_datetime, event_id from bronze_noaa.storm_events"
+            "select __extract_run_datetime, event_id from bronze_noaa.storm_events_v1"
         ).fetchall()
         assert len(rows) == 1
         assert rows[0][0] == "2026-08-06T12:00:00+00:00"

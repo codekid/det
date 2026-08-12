@@ -98,7 +98,7 @@ def init_pipeline(
         "ingestion": {"library": "det"},
         "destination": dest,
         "medallion": {"bronze_prefix": "bronze", "raw_prefix": "raw"},
-        # Bump only on true wire breaks together with dataset: …_vN
+        # Bump only on true wire breaks (lake id becomes {name}_vN automatically)
         "wire_version": 1,
         "dbt": {
             "silver": {

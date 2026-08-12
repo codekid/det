@@ -103,7 +103,7 @@ def default_select_for_pipeline(config: PipelineConfig) -> list[str]:
     """
     from det.scaffold.flatten import iter_relation_paths
 
-    slug = dbt_model_slug(config.bronze_dataset())
+    slug = dbt_model_slug(config.name)
     selects = [f"stg_{slug}+"]
     for name_parts, _chain, _rel in iter_relation_paths(config.dbt.stg.relations):
         selects.append(f"stg_{slug}__{'__'.join(name_parts)}+")

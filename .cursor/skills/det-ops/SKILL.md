@@ -9,7 +9,9 @@ description: >-
 # DET ops workflows
 
 Prefer the **det** MCP server (read-only + dry-run). Mutating steps use the `det` CLI
-after the user confirms. Install: `uv pip install -e ".[mcp]"`.
+**only after the user explicitly confirms.** Never chain dry-run → apply/write in the
+same turn (migrate, prune `--apply`, non-dry-run scaffold/init, extract/load/run).
+Install: `uv pip install -e ".[mcp]"`.
 
 ## Debug missing raw / bronze gaps
 

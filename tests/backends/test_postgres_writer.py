@@ -58,8 +58,8 @@ def test_det_backend_writes_postgres_via_helper(tmp_path: Path):
         )
     write.assert_called_once()
     assert write.call_args.kwargs["schema"] == "bronze_noaa"
-    assert write.call_args.kwargs["table"] == "storm_events"
-    assert out == Path("postgres") / "bronze_noaa" / "storm_events"
+    assert write.call_args.kwargs["table"] == "storm_events_v1"
+    assert out == Path("postgres") / "bronze_noaa" / "storm_events_v1"
 
 
 def test_write_postgres_table_import_error_message():
