@@ -11,14 +11,21 @@ from det.runtime.ids import (
     sql_schema_name,
     validate_canonical_id,
 )
+from det.runtime.lake import LakeRef, open_lake, pick_lake_spec
 from det.runtime.meta import to_partition_value
 
 
-def lake_root(destination: DestinationConfig, project_root: Path) -> Path:
-    path = Path(destination.path)
-    if not path.is_absolute():
-        path = (project_root / path).resolve()
-    return path
+def lake_root(
+    destination: DestinationConfig,
+    project_root: Path,
+    *,
+    cli_lake_path: str | None = None,
+) -> LakeRef:
+    spec = pick_lake_spec(
+        cli_lake_path=cli_lake_path,
+        destination_path=destination.path,
+    )
+    return open_lake(spec, project_root)
 
 
 def duckdb_connection_path(destination: DestinationConfig, project_root: Path) -> Path:
@@ -70,10 +77,16 @@ def _dataset_dir(
     *,
     prefix: str,
     dataset: str | None = None,
-) -> Path:
-    root = lake_root(config.destination, project_root)
+    cli_lake_path: str | None = None,
+) -> LakeRef:
+    root = lake_root(
+        config.destination, project_root, cli_lake_path=cli_lake_path
+    )
     canonical = validate_canonical_id(dataset) if dataset else config.canonical_id
-    return root.joinpath(prefix, *fs_dataset_parts(canonical))
+    out = root / prefix
+    for part in fs_dataset_parts(canonical):
+        out = out / part
+    return out
 
 
 def bronze_dataset_dir(
@@ -81,12 +94,14 @@ def bronze_dataset_dir(
     project_root: Path,
     *,
     dataset: str | None = None,
-) -> Path:
+    cli_lake_path: str | None = None,
+) -> LakeRef:
     return _dataset_dir(
         config,
         project_root,
         prefix=config.medallion.bronze_prefix,
         dataset=dataset,
+        cli_lake_path=cli_lake_path,
     )
 
 
@@ -95,22 +110,24 @@ def raw_dataset_dir(
     project_root: Path,
     *,
     dataset: str | None = None,
-) -> Path:
+    cli_lake_path: str | None = None,
+) -> LakeRef:
     return _dataset_dir(
         config,
         project_root,
         prefix=config.medallion.raw_prefix,
         dataset=dataset,
+        cli_lake_path=cli_lake_path,
     )
 
 
 def hive_partition_dir(
-    bronze_dataset: Path,
+    bronze_dataset: LakeRef,
     *,
     interval_start_datetime: str,
     interval_end_datetime: str,
     extract_run_datetime: str,
-) -> Path:
+) -> LakeRef:
     """
     Hive-style partition path for one landed run:
 

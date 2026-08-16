@@ -19,13 +19,16 @@ from det.runtime.config import (
     resolve_path,
 )
 from det.runtime.ids import validate_canonical_id
+from det.runtime.lake import LakeRef
+from det.runtime.lake import relpath as lake_relpath
+from det.runtime.load_rows import CountingIter, chain_first, iter_bronze_rows
 from det.runtime.manifest import (
+    is_committed_raw_dir,
     read_manifest,
     sha256_file,
     stamp_validation_success,
 )
 from det.runtime.meta import (
-    attach_meta,
     format_extract_run_datetime,
     resolve_interval,
     to_partition_value,
@@ -112,12 +115,14 @@ def manifest_wire_version(manifest: dict[str, Any]) -> int:
     return value if value >= 1 else 1
 
 
-def _raw_partitions_in_window(raw_dataset: Path, start: str, end: str) -> list[Path]:
+def _raw_partitions_in_window(
+    raw_dataset: Path | LakeRef, start: str, end: str
+) -> list[Path | LakeRef]:
     """
     Leaf raw dirs (…/__extract_run_datetime=…) whose interval start is in [start, end).
     """
     start_key, end_key = to_partition_value(start), to_partition_value(end)
-    parts: list[Path] = []
+    parts: list[Path | LakeRef] = []
     if not raw_dataset.exists():
         return parts
     for start_dir in sorted(raw_dataset.iterdir()):
@@ -134,16 +139,17 @@ def _raw_partitions_in_window(raw_dataset: Path, start: str, end: str) -> list[P
             ):
                 continue
             for run_dir in sorted(end_dir.iterdir()):
-                if run_dir.is_dir() and run_dir.name.startswith("__extract_run_datetime="):
+                if (
+                    run_dir.is_dir()
+                    and run_dir.name.startswith("__extract_run_datetime=")
+                    and is_committed_raw_dir(run_dir)
+                ):
                     parts.append(run_dir)
     return parts
 
 
-def _rel(path: Path, root: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(root.resolve()))
-    except ValueError:
-        return str(path.resolve())
+def _rel(path: Path | LakeRef, root: Path) -> str:
+    return lake_relpath(path, root)
 
 
 class BronzeMigrator:
@@ -223,7 +229,7 @@ class BronzeMigrator:
         )
         source_parts = _raw_partitions_in_window(raw_dataset, window_start, window_end)
         if wire_version is not None:
-            filtered: list[Path] = []
+            filtered: list[Path | LakeRef] = []
             for part in source_parts:
                 try:
                     part_manifest = read_manifest(part)
@@ -239,7 +245,10 @@ class BronzeMigrator:
             source=SourceConfig(type=config.source.type, overrides=config.source.overrides),
             schema_path=str(schema_path),
             validation=ValidationConfig(),
-            ingestion=IngestionConfig(library=ingestion_library),  # type: ignore[arg-type]
+            ingestion=IngestionConfig(
+                library=ingestion_library,  # type: ignore[arg-type]
+                chunk_rows=config.ingestion.chunk_rows,
+            ),
             destination=config.destination,
             medallion=config.medallion,
             bronze=config.bronze,
@@ -273,37 +282,28 @@ class BronzeMigrator:
 
         for raw_dir in source_parts:
             manifest = read_manifest(raw_dir)
-            named_rows: list[tuple[dict[str, Any], str | None]] = []
-            for source_row in source.records_from_raw(
-                config=effective, raw_dir=raw_dir, manifest=manifest
-            ):
-                named = apply_naming(source_row.data, config.bronze.naming)
-                mapped = mapper(named)
-                try:
-                    typed = coerce_record(mapped, schema)
-                except CoerceError as exc:
-                    raise SchemaValidationError(str(exc), errors=[str(exc)]) from exc
-                named_rows.append((typed, source_row.filename))
-            if not named_rows:
-                continue
-            validate_records([row for row, _ in named_rows], schema)
-
-            # Preserve the source interval from the manifest when present.
             start_iso = str(manifest.get("interval_start") or window_start)
             end_iso = str(manifest.get("interval_end") or window_end)
             start_iso, end_iso = resolve_interval(start_iso, end_iso)
             bronze_loaded_at = format_extract_run_datetime()
-            enriched = [
-                attach_meta(
-                    row,
-                    filename=filename,
-                    extract_run_datetime=extract_ts,
-                    interval_start_datetime=start_iso,
-                    interval_end_datetime=end_iso,
-                    bronze_loaded_at=bronze_loaded_at,
-                )
-                for row, filename in named_rows
-            ]
+            stream = iter_bronze_rows(
+                source.records_from_raw(
+                    config=effective, raw_dir=raw_dir, manifest=manifest
+                ),
+                schema=schema,
+                naming=config.bronze.naming,
+                extract_run_datetime=extract_ts,
+                interval_start_datetime=start_iso,
+                interval_end_datetime=end_iso,
+                bronze_loaded_at=bronze_loaded_at,
+                mapper=mapper,
+                log_every=to_config.ingestion.chunk_rows,
+            )
+            first = next(stream, None)
+            if first is None:
+                continue
+
+            counted = CountingIter(chain_first(first, stream))
             out_part = hive_partition_dir(
                 bronze_dataset_dir(to_config, self.project_root, dataset=to_bronze_id),
                 interval_start_datetime=start_iso,
@@ -311,23 +311,24 @@ class BronzeMigrator:
                 extract_run_datetime=extract_ts,
             )
             backend.write(
-                enriched,
+                counted,
                 config=to_config,
                 project_root=self.project_root,
                 partition_dir=out_part,
                 destination=to_config.destination,
+                chunk_rows=to_config.ingestion.chunk_rows,
             )
             stamp_validation_success(
                 raw_dir,
                 schema_path=schema_rel,
                 schema_sha256=sha256_file(schema_resolved),
-                row_count=len(enriched),
+                row_count=counted.n,
                 wire_version=to_config.wire_version,
                 validated_at=format_extract_run_datetime(),
             )
-            total_rows += len(enriched)
+            total_rows += counted.n
             written += 1
-            logger.info("migrated raw partition", raw_dir=str(raw_dir), rows=len(enriched))
+            logger.info("migrated raw partition", raw_dir=str(raw_dir), rows=counted.n)
 
         return MigrateResult(
             from_raw=raw_name,

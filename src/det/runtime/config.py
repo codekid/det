@@ -38,15 +38,20 @@ class IngestionConfig(BaseModel):
     # ``det`` is the multi-destination bronze writer. ``dlt`` is a deprecated alias
     # for the same backend (dlt never lands bronze). ``thin`` is filesystem-only.
     library: Literal["det", "dlt", "thin"] = "det"
+    # SQL INSERT batch size and JSONL flush cadence. Coerce/validate stay per-row.
+    chunk_rows: int = Field(default=10_000, ge=1)
 
 
 class DestinationConfig(BaseModel):
-    type: Literal["filesystem", "duckdb", "postgres"] = "filesystem"
-    path: str = "./data/lake"
+    type: Literal["filesystem", "duckdb", "postgres", "iceberg"] = "filesystem"
+    # Rare per-pipeline lake override. Omit in YAML; DET resolves
+    # --lake-path > path > DET_LAKE_PATH > ./data/lake.
+    path: str | None = None
     # Medallion prefix for SQL destinations (default bronze) → schema bronze_{provider}.
     # Not the lake dataset path and not the final SQL schema name.
     dataset: str | None = None
-    # duckdb: database file path (required). postgres: DSN when implemented.
+    # duckdb: database file path (required). postgres: DSN. iceberg: unused
+    # (Hadoop catalog is the lake root).
     connection: str | None = None
 
     @model_validator(mode="after")
@@ -528,9 +533,31 @@ class DbtStgConfig(BaseModel):
         return self
 
 
+class DbtDocsConfig(BaseModel):
+    """
+    Consumer-facing column docs for scaffolded silver YAML.
+
+    Keys are **post-stg** column names (after rename/coalesce). Wire-field docs
+    live on the JSON Schema; ``dbt.stg`` stays transforms-only.
+    """
+
+    columns: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_docs(self) -> DbtDocsConfig:
+        for name, text in self.columns.items():
+            _require_dbt_col_id(name, where="dbt.docs.columns key")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError(
+                    f"dbt.docs.columns[{name!r}] must be a non-empty string"
+                )
+        return self
+
+
 class DbtConfig(BaseModel):
     silver: DbtSilverConfig = Field(default_factory=DbtSilverConfig)
     stg: DbtStgConfig = Field(default_factory=DbtStgConfig)
+    docs: DbtDocsConfig = Field(default_factory=DbtDocsConfig)
 
 
 class PipelineConfig(BaseModel):
@@ -563,6 +590,8 @@ class PipelineConfig(BaseModel):
             return data
         name = data.get("name")
         schema = data.get("schema")
+        if schema is None or schema == "":
+            schema = data.get("schema_path")
         if (schema is None or schema == "") and isinstance(name, str) and name.strip():
             data = {**data, "schema": default_schema_path(name)}
         return data

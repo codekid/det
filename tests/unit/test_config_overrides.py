@@ -34,7 +34,25 @@ def test_load_pipeline_config(project_root):
     assert cfg.name == "noaa.storm_events"
     assert cfg.source.type == "noaa.storm_events"
     assert cfg.ingestion.library == "det"
+    assert cfg.ingestion.chunk_rows == 10_000
     assert cfg.destination.type == "filesystem"
+
+
+def test_ingestion_chunk_rows_rejects_zero():
+    from pydantic import ValidationError
+
+    from det.runtime.config import IngestionConfig
+
+    with pytest.raises(ValidationError):
+        IngestionConfig(chunk_rows=0)
+
+
+def test_cli_set_ingestion_chunk_rows(project_root):
+    cfg = load_pipeline_config(
+        project_root / "configs/pipelines/noaa/storm_events.yaml",
+        overrides=["ingestion.chunk_rows=2"],
+    )
+    assert cfg.ingestion.chunk_rows == 2
 
 
 def test_cli_set_overrides_apply_to_loaded_config(project_root):

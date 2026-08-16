@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from det.destinations.models import (
     bronze_dataset_dir,
@@ -12,29 +11,25 @@ from det.destinations.models import (
 )
 from det.logging import get_logger
 from det.plugins import load_plugins
-from det.runtime.coerce import CoerceError, coerce_record
 from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
+from det.runtime.lake import LakeRef
+from det.runtime.load_rows import CountingIter, iter_bronze_rows
 from det.runtime.manifest import (
+    is_committed_raw_dir,
     read_manifest,
     sha256_file,
     stamp_validation_success,
     write_manifest,
 )
 from det.runtime.meta import (
-    attach_meta,
     data_interval_date,
     format_extract_run_datetime,
     resolve_interval,
     to_partition_value,
 )
-from det.runtime.naming import apply_naming
 from det.runtime.registry import get_ingestion, get_source
 from det.sources.base import Interval, merge_source_config
-from det.validation.jsonschema_validator import (
-    SchemaValidationError,
-    load_json_schema,
-    validate_records,
-)
+from det.validation.jsonschema_validator import load_json_schema
 
 logger = get_logger(__name__)
 
@@ -42,7 +37,7 @@ logger = get_logger(__name__)
 @dataclass
 class ExtractResult:
     pipeline: str
-    raw_dir: Path
+    raw_dir: LakeRef
     extract_run_datetime: str
     artifacts: int
     interval_start: str
@@ -52,10 +47,10 @@ class ExtractResult:
 @dataclass
 class RunResult:
     pipeline: str
-    partition_dir: Path
+    partition_dir: Path | LakeRef
     rows: int
     data_interval_date: str
-    raw_dir: Path | None = None
+    raw_dir: LakeRef | None = None
     extract_run_datetime: str | None = None
 
 
@@ -86,10 +81,18 @@ class PipelineRunner:
             interval_end_datetime=end_iso,
             extract_run_datetime=extract_ts,
         )
+        if is_committed_raw_dir(raw_dir):
+            raise FileExistsError(
+                f"Committed raw extract already exists at {raw_dir}; "
+                "re-extract with a new __extract_run_datetime "
+                "(do not copy data to publish)"
+            )
         if raw_dir.exists():
-            import shutil
+            # Incomplete prefix (crash before manifest). Delete junk in place —
+            # not a publish copy. On object storage this is list+delete of the
+            # failed prefix only.
+            raw_dir.rmtree()
 
-            shutil.rmtree(raw_dir)
         data_dir = raw_dir / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -101,21 +104,29 @@ class PipelineRunner:
             interval_end=end_iso,
             raw_dir=str(raw_dir),
         )
-        artifacts = source.extract_to_raw(
-            config=effective, interval=interval, data_dir=data_dir
-        )
-        logger.info("writing raw manifest", artifacts=len(artifacts), raw_dir=str(raw_dir))
-        write_manifest(
-            raw_dir,
-            {
-                "source": source.name,
-                "interval_start": start_iso,
-                "interval_end": end_iso,
-                "extract_run_datetime": extract_ts,
-                "wire_version": config.wire_version,
-                "artifacts": artifacts,
-            },
-        )
+        try:
+            artifacts = source.extract_to_raw(
+                config=effective, interval=interval, data_dir=data_dir
+            )
+            logger.info(
+                "writing raw manifest", artifacts=len(artifacts), raw_dir=str(raw_dir)
+            )
+            # Data already at final keys (one write). Manifest is the commit.
+            write_manifest(
+                raw_dir,
+                {
+                    "source": source.name,
+                    "interval_start": start_iso,
+                    "interval_end": end_iso,
+                    "extract_run_datetime": extract_ts,
+                    "wire_version": config.wire_version,
+                    "artifacts": artifacts,
+                },
+            )
+        except Exception:
+            if not is_committed_raw_dir(raw_dir):
+                raw_dir.rmtree(ignore_errors=True)
+            raise
         logger.info(
             "extract complete",
             pipeline=config.name,
@@ -163,35 +174,21 @@ class PipelineRunner:
         manifest = read_manifest(raw_dir)
         extract_ts = str(manifest.get("extract_run_datetime") or extract_run_datetime)
 
-        logger.info("parsing + naming + coercing rows from raw")
-        named_rows: list[tuple[dict[str, Any], str | None]] = []
-        for source_row in source.records_from_raw(
-            config=effective, raw_dir=raw_dir, manifest=manifest
-        ):
-            named = apply_naming(source_row.data, config.bronze.naming)
-            try:
-                typed = coerce_record(named, schema)
-            except CoerceError as exc:
-                raise SchemaValidationError(str(exc), errors=[str(exc)]) from exc
-            named_rows.append((typed, source_row.filename))
-            if len(named_rows) == 1 or len(named_rows) % 50_000 == 0:
-                logger.info("naming/coerce progress", rows=len(named_rows))
-
-        logger.info("validating rows against schema", rows=len(named_rows))
-        validate_records([row for row, _ in named_rows], schema)
-        logger.info("attaching meta columns", rows=len(named_rows))
         bronze_loaded_at = format_extract_run_datetime()
-        enriched = [
-            attach_meta(
-                row,
-                filename=filename,
+        counted = CountingIter(
+            iter_bronze_rows(
+                source.records_from_raw(
+                    config=effective, raw_dir=raw_dir, manifest=manifest
+                ),
+                schema=schema,
+                naming=config.bronze.naming,
                 extract_run_datetime=extract_ts,
                 interval_start_datetime=start_iso,
                 interval_end_datetime=end_iso,
                 bronze_loaded_at=bronze_loaded_at,
+                log_every=config.ingestion.chunk_rows,
             )
-            for row, filename in named_rows
-        ]
+        )
 
         partition = hive_partition_dir(
             bronze_dataset_dir(config, self.project_root),
@@ -203,34 +200,35 @@ class PipelineRunner:
         logger.info(
             "writing bronze partition",
             backend=config.ingestion.library,
-            rows=len(enriched),
+            chunk_rows=config.ingestion.chunk_rows,
             partition=str(partition),
         )
         written = backend.write(
-            enriched,
+            counted,
             config=config,
             project_root=self.project_root,
             partition_dir=partition,
             destination=config.destination,
+            chunk_rows=config.ingestion.chunk_rows,
         )
         stamp_validation_success(
             raw_dir,
             schema_path=config.schema_path,
             schema_sha256=sha256_file(resolve_path(self.project_root, config.schema_path)),
-            row_count=len(enriched),
+            row_count=counted.n,
             wire_version=config.wire_version,
             validated_at=format_extract_run_datetime(),
         )
         logger.info(
             "load complete",
             pipeline=config.name,
-            rows=len(enriched),
+            rows=counted.n,
             partition=str(written),
         )
         return RunResult(
             pipeline=config.name,
             partition_dir=written,
-            rows=len(enriched),
+            rows=counted.n,
             data_interval_date=data_interval_date(start_iso),
             raw_dir=raw_dir,
             extract_run_datetime=extract_ts,
@@ -278,24 +276,34 @@ class PipelineRunner:
         interval_start: str,
         interval_end: str,
         extract_run_datetime: str | None,
-    ) -> Path:
+    ) -> LakeRef:
         base = (
             raw_dataset_dir(config, self.project_root)
             / f"__interval_start_datetime={to_partition_value(interval_start)}"
             / f"__interval_end_datetime={to_partition_value(interval_end)}"
         )
         if extract_run_datetime:
-            return base / f"__extract_run_datetime={to_partition_value(extract_run_datetime)}"
+            target = (
+                base / f"__extract_run_datetime={to_partition_value(extract_run_datetime)}"
+            )
+            if not is_committed_raw_dir(target):
+                raise FileNotFoundError(
+                    f"No committed raw extract at {target} "
+                    "(incomplete extract has no meta/manifest.json)"
+                )
+            return target
         if not base.exists():
             raise FileNotFoundError(f"No raw partitions under {base}")
         runs = sorted(
             (
                 p
                 for p in base.iterdir()
-                if p.is_dir() and p.name.startswith("__extract_run_datetime=")
+                if p.is_dir()
+                and p.name.startswith("__extract_run_datetime=")
+                and is_committed_raw_dir(p)
             ),
             key=lambda p: p.name,
         )
         if not runs:
-            raise FileNotFoundError(f"No extract runs under {base}")
+            raise FileNotFoundError(f"No committed extract runs under {base}")
         return runs[-1]

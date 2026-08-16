@@ -8,7 +8,6 @@ ingestion:
   library: det
 destination:
   type: filesystem
-  path: ./data/lake
 medallion:
   bronze_prefix: bronze
   raw_prefix: raw
