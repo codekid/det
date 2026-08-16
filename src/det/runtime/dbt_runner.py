@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from det.destinations.models import lake_root
 from det.logging import get_logger
 from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
 from det.runtime.ids import dbt_model_slug, sql_names_for_config
+from det.runtime.lake import open_lake, pick_lake_spec
 
 logger = get_logger(__name__)
 
@@ -146,7 +146,7 @@ def run_dbt(
     profiles_dir: Path | str | None = None,
     select: Sequence[str] | None = None,
     full_refresh: bool = False,
-    lake_path: Path | None = None,
+    lake_path: str | Path | None = None,
     pipeline: PipelineConfig | Path | str | None = None,
     pipeline_overrides: Sequence[str] | None = None,
     extra_args: Sequence[str] | None = None,
@@ -155,8 +155,8 @@ def run_dbt(
     """
     Invoke the dbt CLI for local/testing use.
 
-    Sets DET_LAKE_PATH when unset (from --lake-path, pipeline destination.path,
-    or <project_root>/data/lake). Requires the optional `[dbt]` extra.
+    Sets DET_LAKE_PATH from --lake-path, destination.path, existing env, or
+    ``./data/lake``. Requires the optional `[dbt]` extra.
     """
     root = project_root.resolve()
     dbt_dir = resolve_dbt_project_dir(root, project_dir)
@@ -183,20 +183,22 @@ def run_dbt(
     )
 
     env = os.environ.copy()
-    if "DET_LAKE_PATH" not in env:
-        if lake_path is not None:
-            lake = lake_path.resolve()
-        elif config is not None:
-            lake = lake_root(config.destination, root)
-        else:
-            lake = (root / "data" / "lake").resolve()
-        env["DET_LAKE_PATH"] = str(lake)
+    spec = pick_lake_spec(
+        cli_lake_path=str(lake_path).strip() if lake_path is not None else None,
+        destination_path=config.destination.path if config is not None else None,
+        env=env,
+    )
+    lake = open_lake(spec, root)
+    env["DET_LAKE_PATH"] = str(lake)
 
     # Native DuckDB bronze vs JSONL lake — DET_BRONZE_SCHEMA is bronze_{provider}.
     if config is not None:
         sql_schema, _ = sql_names_for_config(config)
         if config.destination.type == "duckdb":
             env["DET_BRONZE_SOURCE"] = "duckdb"
+            env["DET_BRONZE_SCHEMA"] = sql_schema
+        elif config.destination.type == "iceberg":
+            env["DET_BRONZE_SOURCE"] = "iceberg"
             env["DET_BRONZE_SCHEMA"] = sql_schema
         else:
             env.setdefault("DET_BRONZE_SOURCE", "filesystem")

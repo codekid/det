@@ -19,9 +19,13 @@ from det.plugins import load_plugins
 from det.runtime.coerce import CoerceError, coerce_record
 from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
 from det.runtime.ids import sql_names_for_config
+from det.runtime.lake import LakeRef, is_lake_uri, open_lake
+from det.runtime.lake import relpath as lake_relpath
+from det.runtime.manifest import is_committed_raw_dir
 from det.runtime.manifest import read_manifest as read_raw_manifest
 from det.runtime.meta import (
     from_partition_value,
+    identity_iso,
     resolve_interval,
     to_interval_datetime,
 )
@@ -62,11 +66,8 @@ def _load_pipeline(pipeline: str, root: Path) -> tuple[PipelineConfig, Path]:
     return load_pipeline_config(resolved.path), resolved.path
 
 
-def _rel(path: Path, root: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(root))
-    except ValueError:
-        return str(path.resolve())
+def _rel(path: Path | LakeRef, root: Path) -> str:
+    return lake_relpath(path, root)
 
 
 def _quote_ident(name: str) -> str:
@@ -105,13 +106,14 @@ def _run_key(run: dict[str, Any]) -> tuple[str, str, str]:
 
 
 def walk_hive_runs(
-    dataset_dir: Path,
+    dataset_dir: Path | LakeRef,
     *,
     root: Path,
     limit: int,
     interval_start: str | None = None,
     interval_end: str | None = None,
     normalize_iso: bool = True,
+    require_committed: bool = False,
 ) -> list[dict[str, Any]]:
     """Walk hive interval/extract-run dirs; optionally filter and normalize to ISO."""
     out: list[dict[str, Any]] = []
@@ -143,6 +145,8 @@ def walk_hive_runs(
                     continue
                 run_raw = _parse_hive_key(run_dir.name, "__extract_run_datetime=")
                 if run_raw is None:
+                    continue
+                if require_committed and not is_committed_raw_dir(run_dir):
                     continue
                 run_val = from_partition_value(run_raw) if normalize_iso else run_raw
                 out.append(
@@ -194,9 +198,9 @@ def _list_bronze_sql_runs(
                 rows = con.execute(
                     f"""
                     select distinct
-                        cast(__interval_start_datetime as varchar),
-                        cast(__interval_end_datetime as varchar),
-                        cast(__extract_run_datetime as varchar)
+                        __interval_start_datetime,
+                        __interval_end_datetime,
+                        __extract_run_datetime
                     from {qualified}
                     order by 1, 2, 3
                     limit ?
@@ -207,12 +211,12 @@ def _list_bronze_sql_runs(
                 rows = con.execute(
                     f"""
                     select distinct
-                        cast(__interval_start_datetime as varchar),
-                        cast(__interval_end_datetime as varchar),
-                        cast(__extract_run_datetime as varchar)
+                        __interval_start_datetime,
+                        __interval_end_datetime,
+                        __extract_run_datetime
                     from {qualified}
-                    where cast(__interval_start_datetime as varchar) >= ?
-                      and cast(__interval_start_datetime as varchar) < ?
+                    where __interval_start_datetime >= ?
+                      and __interval_start_datetime < ?
                     order by 1, 2, 3
                     limit ?
                     """,
@@ -222,9 +226,9 @@ def _list_bronze_sql_runs(
             con.close()
         return [
             _run_dict(
-                interval_start=str(r[0]),
-                interval_end=str(r[1]),
-                extract_run_datetime=str(r[2]),
+                interval_start=identity_iso(r[0]),
+                interval_end=identity_iso(r[1]),
+                extract_run_datetime=identity_iso(r[2]),
             )
             for r in rows
         ], None
@@ -255,9 +259,9 @@ def _list_bronze_sql_runs(
                     cur.execute(
                         f"""
                         select distinct
-                            cast(__interval_start_datetime as text),
-                            cast(__interval_end_datetime as text),
-                            cast(__extract_run_datetime as text)
+                            __interval_start_datetime,
+                            __interval_end_datetime,
+                            __extract_run_datetime
                         from {qualified}
                         order by 1, 2, 3
                         limit %s
@@ -268,12 +272,12 @@ def _list_bronze_sql_runs(
                     cur.execute(
                         f"""
                         select distinct
-                            cast(__interval_start_datetime as text),
-                            cast(__interval_end_datetime as text),
-                            cast(__extract_run_datetime as text)
+                            __interval_start_datetime,
+                            __interval_end_datetime,
+                            __extract_run_datetime
                         from {qualified}
-                        where cast(__interval_start_datetime as text) >= %s
-                          and cast(__interval_start_datetime as text) < %s
+                        where __interval_start_datetime >= %s
+                          and __interval_start_datetime < %s
                         order by 1, 2, 3
                         limit %s
                         """,
@@ -282,14 +286,56 @@ def _list_bronze_sql_runs(
                 rows = cur.fetchall()
         return [
             _run_dict(
-                interval_start=str(r[0]),
-                interval_end=str(r[1]),
-                extract_run_datetime=str(r[2]),
+                interval_start=identity_iso(r[0]),
+                interval_end=identity_iso(r[1]),
+                extract_run_datetime=identity_iso(r[2]),
             )
             for r in rows
         ], None
 
     return [], f"unsupported destination.type={dest.type!r}"
+
+
+def _list_bronze_iceberg_runs(
+    config: PipelineConfig,
+    *,
+    root: Path,
+    limit: int,
+    interval_start: str | None = None,
+    interval_end: str | None = None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    from det.destinations.models import lake_root
+    from det.ingestion.iceberg_writer import list_iceberg_extract_runs, load_iceberg_table
+
+    schema, table = sql_names_for_config(config)
+    window: tuple[str, str] | None = None
+    if interval_start is not None:
+        window = resolve_interval(interval_start, interval_end)
+    try:
+        ice = load_iceberg_table(
+            lake=lake_root(config.destination, root),
+            namespace=schema,
+            table=table,
+            table_location=bronze_dataset_dir(config, root),
+        )
+    except ImportError as exc:
+        return [], str(exc)
+    if ice is None:
+        return [], f"Iceberg table not found: {schema}.{table}"
+    rows = list_iceberg_extract_runs(
+        ice,
+        window_start=window[0] if window else None,
+        window_end=window[1] if window else None,
+        limit=limit,
+    )
+    return [
+        _run_dict(
+            interval_start=start,
+            interval_end=end,
+            extract_run_datetime=run,
+        )
+        for start, end, run in rows
+    ], None
 
 
 def list_bronze_runs(
@@ -311,6 +357,14 @@ def list_bronze_runs(
             normalize_iso=True,
         )
         return runs, None
+    if dest.type == "iceberg":
+        return _list_bronze_iceberg_runs(
+            config,
+            root=root,
+            limit=limit,
+            interval_start=interval_start,
+            interval_end=interval_end,
+        )
     return _list_bronze_sql_runs(
         config,
         root=root,
@@ -342,6 +396,7 @@ def diff_partitions(
         interval_start=interval_start,
         interval_end=interval_end,
         normalize_iso=True,
+        require_committed=True,
     )
     bronze_runs, bronze_note = list_bronze_runs(
         config,
@@ -391,20 +446,32 @@ def diff_partitions(
     return out
 
 
-def _assert_under_raw(run_dir: Path, *, root: Path) -> None:
-    parts = run_dir.resolve().parts
+def _assert_under_raw(run_dir: Path | LakeRef, *, root: Path) -> None:
+    parts = _posix_parts(run_dir)
     if "raw" not in parts:
         raise PathSandboxError(
             f"run path must be under a lake raw/ tree: {_rel(run_dir, root)}"
         )
 
 
-def _assert_under_bronze(run_dir: Path, *, root: Path) -> None:
-    parts = run_dir.resolve().parts
+def _assert_under_bronze(run_dir: Path | LakeRef, *, root: Path) -> None:
+    parts = _posix_parts(run_dir)
     if "bronze" not in parts:
         raise PathSandboxError(
             f"run path must be under a lake bronze/ tree: {_rel(run_dir, root)}"
         )
+
+
+def _posix_parts(path: Path | LakeRef) -> tuple[str, ...]:
+    if isinstance(path, LakeRef):
+        return tuple(str(path).replace("\\", "/").split("/"))
+    return path.resolve().parts
+
+
+def _resolve_lake_run_path(run_path: str, *, root: Path) -> Path | LakeRef:
+    if is_lake_uri(run_path):
+        return open_lake(run_path, root)
+    return resolve_under_root(run_path, root=root)
 
 
 def resolve_raw_run(
@@ -418,10 +485,15 @@ def resolve_raw_run(
 ) -> dict[str, Any]:
     """Resolve a raw extract-run directory; prefer run_path, else latest match."""
     if run_path is not None:
-        run_dir = resolve_under_root(run_path, root=root)
+        run_dir = _resolve_lake_run_path(run_path, root=root)
         if not run_dir.is_dir():
             raise FileNotFoundError(f"run path is not a directory: {run_dir}")
         _assert_under_raw(run_dir, root=root)
+        if not is_committed_raw_dir(run_dir):
+            raise FileNotFoundError(
+                f"run path is not a committed extract (no meta/manifest.json): "
+                f"{_rel(run_dir, root)}"
+            )
         # Derive keys from hive path when possible.
         start = end = run = None
         try:
@@ -450,6 +522,7 @@ def resolve_raw_run(
         interval_start=interval_start,
         interval_end=interval_end,
         normalize_iso=True,
+        require_committed=True,
     )
     if extract_run_datetime is not None:
         want = to_interval_or_partition(extract_run_datetime)
@@ -475,11 +548,11 @@ def to_interval_or_partition(value: str) -> str:
     return to_interval_datetime(compact)
 
 
-def _raw_run_dir(run: dict[str, Any], root: Path) -> Path:
+def _raw_run_dir(run: dict[str, Any], root: Path) -> Path | LakeRef:
     path = run.get("path")
     if not path:
         raise FileNotFoundError("resolved run has no path")
-    return resolve_under_root(str(path), root=root)
+    return _resolve_lake_run_path(str(path), root=root)
 
 
 def _iter_load_rows(
@@ -550,9 +623,11 @@ def _iter_load_rows(
     return rows, errors, truncated
 
 
-def _sample_wire(run_dir: Path, *, root: Path, limit: int) -> tuple[list[dict[str, Any]], bool]:
+def _sample_wire(
+    run_dir: Path | LakeRef, *, root: Path, limit: int
+) -> tuple[list[dict[str, Any]], bool]:
     data_dir = run_dir / "data"
-    artifacts: list[Path] = []
+    artifacts: list[Path | LakeRef] = []
     if data_dir.is_dir():
         artifacts = sorted(p for p in data_dir.rglob("*") if p.is_file())
     peeks: list[dict[str, Any]] = []
@@ -757,7 +832,7 @@ def _resolve_bronze_fs_run(
     extract_run_datetime: str | None = None,
 ) -> dict[str, Any]:
     if run_path is not None:
-        run_dir = resolve_under_root(run_path, root=root)
+        run_dir = _resolve_lake_run_path(run_path, root=root)
         if not run_dir.is_dir():
             raise FileNotFoundError(f"run path is not a directory: {run_dir}")
         _assert_under_bronze(run_dir, root=root)
@@ -797,7 +872,7 @@ def _sample_bronze_filesystem(
         interval_end=interval_end,
         extract_run_datetime=extract_run_datetime,
     )
-    run_dir = resolve_under_root(str(run["path"]), root=root)
+    run_dir = _resolve_lake_run_path(str(run["path"]), root=root)
     jsonl = run_dir / "data.jsonl"
     rows: list[dict[str, Any]] = []
     truncated = False
@@ -845,12 +920,12 @@ def _sql_sample_filters(
     params: list[Any] = []
     if interval_start is not None:
         window = resolve_interval(interval_start, interval_end)
-        clauses.append("cast(__interval_start_datetime as varchar) >= ?")
+        clauses.append("__interval_start_datetime >= ?")
         params.append(window[0])
-        clauses.append("cast(__interval_start_datetime as varchar) < ?")
+        clauses.append("__interval_start_datetime < ?")
         params.append(window[1])
     if extract_run_datetime is not None:
-        clauses.append("cast(__extract_run_datetime as varchar) = ?")
+        clauses.append("__extract_run_datetime = ?")
         params.append(to_interval_or_partition(extract_run_datetime))
     where = (" where " + " and ".join(clauses)) if clauses else ""
     return where, params
@@ -910,7 +985,7 @@ def _sample_bronze_duckdb(
             }
         sql = (
             f"select * from {qualified}{where} "
-            f"order by cast(__extract_run_datetime as varchar) "
+            f"order by __extract_run_datetime "
             f"limit ?"
         )
         result = con.execute(sql, [*params, limit + 1])
@@ -978,10 +1053,10 @@ def _sample_bronze_postgres(
         interval_end=interval_end,
         extract_run_datetime=extract_run_datetime,
     )
-    where = where_duck.replace("?", "%s").replace(" as varchar", " as text")
+    where = where_duck.replace("?", "%s")
     sql = (
         f"select * from {qualified}{where} "
-        f"order by cast(__extract_run_datetime as text) "
+        f"order by __extract_run_datetime "
         f"limit %s"
     )
     with psycopg.connect(dsn) as conn:
@@ -1010,6 +1085,63 @@ def _sample_bronze_postgres(
         {"index": i, "data": dict(zip(cols, row, strict=True))}
         for i, row in enumerate(fetched[:limit])
     ]
+    return {**base_out, "rows": rows, "errors": [], "truncated": truncated}
+
+
+def _sample_bronze_iceberg(
+    config: PipelineConfig,
+    *,
+    root: Path,
+    limit: int,
+    interval_start: str | None,
+    interval_end: str | None,
+    extract_run_datetime: str | None,
+) -> dict[str, Any]:
+    from det.destinations.models import lake_root
+    from det.ingestion.iceberg_writer import load_iceberg_table, scan_iceberg_rows
+
+    schema, table = sql_names_for_config(config)
+    location = bronze_dataset_dir(config, root)
+    note = "Bronze samples are for inspection only; rebuild via det migrate from raw."
+    base_out: dict[str, Any] = {
+        "pipeline": config.name,
+        "destination_type": "iceberg",
+        "limit": limit,
+        "schema": schema,
+        "table": table,
+        "location": _rel(location, root),
+        "note": note,
+    }
+    try:
+        ice = load_iceberg_table(
+            lake=lake_root(config.destination, root),
+            namespace=schema,
+            table=table,
+            table_location=location,
+        )
+    except ImportError as exc:
+        return {
+            **base_out,
+            "rows": [],
+            "errors": [{"message": str(exc)}],
+            "truncated": False,
+        }
+    if ice is None:
+        return {
+            **base_out,
+            "rows": [],
+            "errors": [{"message": f"Iceberg table not found: {schema}.{table}"}],
+            "truncated": False,
+        }
+    fetched = scan_iceberg_rows(
+        ice,
+        limit=limit + 1,
+        interval_start=interval_start,
+        interval_end=interval_end,
+        extract_run_datetime=extract_run_datetime,
+    )
+    truncated = len(fetched) > limit
+    rows = [{"index": i, "data": row} for i, row in enumerate(fetched[:limit])]
     return {**base_out, "rows": rows, "errors": [], "truncated": truncated}
 
 
@@ -1083,6 +1215,32 @@ def sample_bronze(
                 "note": "Bronze samples are for inspection only; rebuild via det migrate from raw.",
             }
         return _sample_bronze_postgres(
+            config,
+            root=base,
+            limit=capped,
+            interval_start=interval_start,
+            interval_end=interval_end,
+            extract_run_datetime=extract_run_datetime,
+        )
+    if dest.type == "iceberg":
+        if run_path is not None:
+            return {
+                "pipeline": config.name,
+                "destination_type": "iceberg",
+                "limit": capped,
+                "rows": [],
+                "errors": [
+                    {
+                        "message": (
+                            "run_path applies to filesystem bronze only; "
+                            "use interval_start / extract_run_datetime filters"
+                        )
+                    }
+                ],
+                "truncated": False,
+                "note": "Bronze samples are for inspection only; rebuild via det migrate from raw.",
+            }
+        return _sample_bronze_iceberg(
             config,
             root=base,
             limit=capped,

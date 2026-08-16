@@ -80,6 +80,8 @@ def dbt_env_for_pipeline() -> dict[str, str]:
         lake = str(lake_root(config.destination, root))
     if config.destination.type == "duckdb":
         bronze_source = "duckdb"
+    elif config.destination.type == "iceberg":
+        bronze_source = "iceberg"
     else:
         bronze_source = "filesystem"
     analytics_db = os.environ.get("DET_ANALYTICS_DUCKDB")

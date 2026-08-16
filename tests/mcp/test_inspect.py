@@ -78,6 +78,10 @@ def _mk_hive_run(base: Path, *, start: str, end: str, run: str) -> Path:
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "data").mkdir(exist_ok=True)
     (run_dir / "meta").mkdir(exist_ok=True)
+    (run_dir / "meta" / "manifest.json").write_text(
+        json.dumps({"extract_run_datetime": run}),
+        encoding="utf-8",
+    )
     return run_dir
 
 
@@ -170,6 +174,7 @@ def test_diff_partitions_duckdb(tmp_path: Path):
         connection_path=db,
         schema="bronze_example_api",
         table="events_v1",
+        json_schema={"type": "object", "properties": {"id": {"type": "integer"}}},
     )
     diff = diff_partitions("example_api.events", root=tmp_path)
     assert diff["destination_type"] == "duckdb"
@@ -291,11 +296,73 @@ def test_sample_bronze_duckdb(tmp_path: Path):
         connection_path=db,
         schema="bronze_example_api",
         table="events_v1",
+        json_schema={"type": "object", "properties": {"id": {"type": "integer"}}},
     )
     sample = sample_bronze("example_api.events", limit=1, root=tmp_path)
     assert sample["destination_type"] == "duckdb"
     assert len(sample["rows"]) == 1
     assert sample["truncated"] is True
+
+
+def test_sample_bronze_iceberg(tmp_path: Path):
+    pytest.importorskip("pyiceberg")
+    pytest.importorskip("pyarrow")
+    from det.destinations.models import bronze_dataset_dir, lake_root
+    from det.ingestion.iceberg_writer import write_iceberg_table
+    from det.mcp.inspect import list_bronze_runs
+    from det.runtime.config import load_pipeline_config
+
+    _write_pipeline(tmp_path, destination={"type": "iceberg", "path": "./data/lake"})
+    config = load_pipeline_config(
+        tmp_path / "configs" / "pipelines" / "example_api" / "events.yaml"
+    )
+    start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
+    write_iceberg_table(
+        [
+            {
+                "id": 1,
+                "event_name": "alpha",
+                "__row_hash": "a",
+                "__filename": "x.json",
+                "__extract_run_datetime": "2026-08-06T10:00:00+00:00",
+                "__bronze_loaded_at": "2026-08-06T10:00:01+00:00",
+                "__interval_start_datetime": start,
+                "__interval_end_datetime": end,
+                "__data_interval_date": "2026-08-06",
+            },
+            {
+                "id": 2,
+                "event_name": "beta",
+                "__row_hash": "b",
+                "__filename": "x.json",
+                "__extract_run_datetime": "2026-08-06T10:00:00+00:00",
+                "__bronze_loaded_at": "2026-08-06T10:00:01+00:00",
+                "__interval_start_datetime": start,
+                "__interval_end_datetime": end,
+                "__data_interval_date": "2026-08-06",
+            },
+        ],
+        lake=lake_root(config.destination, tmp_path),
+        table_location=bronze_dataset_dir(config, tmp_path),
+        namespace="bronze_example_api",
+        table="events_v1",
+        json_schema={
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "event_name": {"type": "string"},
+            },
+        },
+    )
+    sample = sample_bronze("example_api.events", limit=1, root=tmp_path)
+    assert sample["destination_type"] == "iceberg"
+    assert len(sample["rows"]) == 1
+    assert sample["truncated"] is True
+    assert sample["rows"][0]["data"]["id"] == 1
+    runs, note = list_bronze_runs(config, root=tmp_path, limit=10)
+    assert note is None
+    assert len(runs) == 1
+    assert runs[0]["extract_run_datetime"] == "2026-08-06T10:00:00+00:00"
 
 
 def test_diagnose_raw_ahead(tmp_path: Path):
