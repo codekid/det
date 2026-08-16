@@ -11,6 +11,7 @@ from dlt.sources.helpers.rest_client.auth import BearerTokenAuth
 from dlt.sources.helpers.rest_client.paginators import JSONLinkPaginator
 
 from det.logging import get_logger
+from det.runtime.lake import LakeRef
 from det.sources.base import Interval, SourceRow
 from det.sources.http_json import dig, nest_under_path, write_json_page
 
@@ -43,7 +44,7 @@ class ExampleApiSource:
         *,
         config: dict[str, Any],
         interval: Interval,
-        data_dir: Path,
+        data_dir: Path | LakeRef,
     ) -> list[dict[str, Any]]:
         pages_dir = data_dir / "pages"
         pages_dir.mkdir(parents=True, exist_ok=True)
@@ -100,7 +101,7 @@ class ExampleApiSource:
         self,
         *,
         config: dict[str, Any],
-        raw_dir: Path,
+        raw_dir: Path | LakeRef,
         manifest: dict[str, Any],
     ) -> Iterator[SourceRow]:
         record_path = config.get("record_path") or "data.events"

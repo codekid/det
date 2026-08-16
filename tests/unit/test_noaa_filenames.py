@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from bs4 import BeautifulSoup
 
 from det.sources.noaa.storm_events import NoaaStormEventsSource
@@ -47,3 +49,37 @@ def test_filenames_span_years_in_window():
         "StormEvents_details-ftp_v1.0_d2024_c20260728.csv.gz",
         "StormEvents_details-ftp_v1.0_d2025_c20260728.csv.gz",
     ]
+
+
+def test_get_soup_uses_http_get(monkeypatch):
+    class Resp:
+        status_code = 200
+        content = INDEX.encode()
+        text = INDEX
+
+    monkeypatch.setattr(
+        "det.sources.noaa.storm_events.http_get", lambda *args, **kwargs: Resp()
+    )
+    soup = NoaaStormEventsSource()._get_soup("https://ncei.example/")
+    assert soup.find("table") is not None
+
+
+def test_download_uses_http_get_file(monkeypatch, tmp_path: Path):
+    import gzip
+
+    captured: dict[str, object] = {}
+
+    def fake_file(url, dest, **kwargs):
+        captured["url"] = url
+        dest.write_bytes(gzip.compress(b"EVENT_ID\n1\n"))
+        return dest.stat().st_size
+
+    monkeypatch.setattr("det.sources.noaa.storm_events.http_get_file", fake_file)
+    art = NoaaStormEventsSource()._download(
+        "https://ncei.example/",
+        "StormEvents_details-ftp.csv.gz",
+        data_dir=tmp_path,
+    )
+    assert captured["url"] == "https://ncei.example/StormEvents_details-ftp.csv.gz"
+    assert art["content_encoding"] == "gzip"
+    assert art["format_check"] == "ok"

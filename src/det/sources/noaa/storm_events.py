@@ -9,12 +9,13 @@ from pathlib import Path
 from typing import IO, Any
 
 import pendulum
-import requests
 from bs4 import BeautifulSoup
 
 from det.logging import get_logger
+from det.runtime.lake import LakeRef
 from det.runtime.manifest import sha256_file
 from det.sources.base import Interval, SourceRow
+from det.sources.http import http_get, http_get_file
 
 logger = get_logger(__name__)
 
@@ -41,13 +42,19 @@ def _is_repeated_header_row(row: dict[str, Any], fieldnames: list[str] | None) -
     return True
 
 
-def _open_text(path: Path, *, content_encoding: str) -> IO[str]:
+def _open_text(path: Path | LakeRef, *, content_encoding: str) -> IO[str]:
     if content_encoding == "gzip":
-        return gzip.open(path, mode="rt", encoding="utf-8", errors="replace", newline="")
+        return gzip.open(
+            path.open("rb"),
+            mode="rt",
+            encoding="utf-8",
+            errors="replace",
+            newline="",
+        )
     return path.open(encoding="utf-8", errors="replace", newline="")
 
 
-def _format_check_csv(path: Path, *, content_encoding: str) -> None:
+def _format_check_csv(path: Path | LakeRef, *, content_encoding: str) -> None:
     logger.info("Format-checking CSV", path=path.name, content_encoding=content_encoding)
     with _open_text(path, content_encoding=content_encoding) as f:
         reader = csv.DictReader(f)
@@ -60,8 +67,8 @@ def _format_check_csv(path: Path, *, content_encoding: str) -> None:
 
 def _artifact(
     *,
-    data_dir: Path,
-    dest: Path,
+    data_dir: Path | LakeRef,
+    dest: Path | LakeRef,
     origin: str,
     content_encoding: str,
 ) -> dict[str, Any]:
@@ -104,7 +111,7 @@ class NoaaStormEventsSource:
         *,
         config: dict[str, Any],
         interval: Interval,
-        data_dir: Path,
+        data_dir: Path | LakeRef,
     ) -> list[dict[str, Any]]:
         data_dir.mkdir(parents=True, exist_ok=True)
         local_dir = config.get("local_csv_dir")
@@ -144,7 +151,7 @@ class NoaaStormEventsSource:
         self,
         *,
         config: dict[str, Any],
-        raw_dir: Path,
+        raw_dir: Path | LakeRef,
         manifest: dict[str, Any],
     ) -> Iterator[SourceRow]:
         del config  # NOAA data layout is fully described by the manifest
@@ -160,7 +167,7 @@ class NoaaStormEventsSource:
             )
 
     def _extract_local(
-        self, directory: Path, *, config: dict[str, Any], data_dir: Path
+        self, directory: Path, *, config: dict[str, Any], data_dir: Path | LakeRef
     ) -> list[dict[str, Any]]:
         substr = config.get("filename_substr", DEFAULT_FILENAME_SUBSTR)
         artifacts: list[dict[str, Any]] = []
@@ -168,7 +175,9 @@ class NoaaStormEventsSource:
             if substr and substr not in src.name:
                 continue
             dest = data_dir / src.name
-            shutil.copy2(src, dest)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with src.open("rb") as inf, dest.open("wb") as out:
+                shutil.copyfileobj(inf, out)
             artifacts.append(
                 _artifact(
                     data_dir=data_dir,
@@ -181,37 +190,21 @@ class NoaaStormEventsSource:
             raise ValueError(f"No local CSV matched substr={substr!r} in {directory}")
         return artifacts
 
-    def _download(self, base_url: str, gz_filename: str, *, data_dir: Path) -> dict[str, Any]:
+    def _download(
+        self, base_url: str, gz_filename: str, *, data_dir: Path | LakeRef
+    ) -> dict[str, Any]:
         full_url = base_url + gz_filename
         dest = data_dir / gz_filename
         logger.info("Downloading NOAA file", url=full_url)
-        downloaded = 0
-        last_logged = 0
-        chunk_size = 1024 * 256
-        log_every = 1024 * 1024  # 1 MiB
-        with requests.get(
-            full_url, stream=True, headers=HTTP_HEADERS, timeout=(15, 600)
-        ) as r:
-            r.raise_for_status()
-            total = r.headers.get("Content-Length")
-            if total:
-                logger.info("NOAA download size", bytes=int(total), file=gz_filename)
-            with dest.open("wb") as out:
-                for chunk in r.iter_content(chunk_size=chunk_size):
-                    if not chunk:
-                        continue
-                    out.write(chunk)
-                    downloaded += len(chunk)
-                    if downloaded - last_logged >= log_every:
-                        logger.info(
-                            "NOAA download progress",
-                            file=gz_filename,
-                            bytes=downloaded,
-                            total_bytes=int(total) if total else None,
-                        )
-                        last_logged = downloaded
-        logger.info("NOAA download finished", file=gz_filename, bytes=downloaded)
         encoding = "gzip" if gz_filename.endswith(".gz") else "identity"
+        downloaded = http_get_file(
+            full_url,
+            dest,
+            timeout=(15, 600),
+            headers=HTTP_HEADERS,
+            encoding=encoding if encoding == "gzip" else None,
+        )
+        logger.info("NOAA download finished", file=gz_filename, bytes=downloaded)
         return _artifact(
             data_dir=data_dir,
             dest=dest,
@@ -220,7 +213,7 @@ class NoaaStormEventsSource:
         )
 
     def _iter_csv(
-        self, path: Path, *, content_encoding: str, filename: str
+        self, path: Path | LakeRef, *, content_encoding: str, filename: str
     ) -> Iterator[SourceRow]:
         logger.info("Reading CSV rows", path=path.name, content_encoding=content_encoding)
         emitted = 0
@@ -248,13 +241,12 @@ class NoaaStormEventsSource:
             timeout_connect=HTTP_TIMEOUT[0],
             timeout_read=HTTP_TIMEOUT[1],
         )
-        response = requests.get(page_url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT)
+        response = http_get(page_url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT)
         logger.info(
             "Storm events index HTTP response",
             status=response.status_code,
             bytes=len(response.content),
         )
-        response.raise_for_status()
         return BeautifulSoup(response.text, "html.parser")
 
     def _filenames_in_interval(

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from det.runtime.lake import LakeRef
 from det.runtime.manifest import sha256_file
 
 
@@ -29,8 +30,8 @@ def nest_under_path(rows: list[dict[str, Any]], *, record_path: str) -> dict[str
 
 def write_json_page(
     *,
-    pages_dir: Path,
-    data_dir: Path,
+    pages_dir: Path | LakeRef,
+    data_dir: Path | LakeRef,
     page_num: int,
     body: Any,
     origin: str,
