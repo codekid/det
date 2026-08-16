@@ -1,19 +1,45 @@
 $schema: https://json-schema.org/draft/2020-12/schema
 $title: fatalities
 description: >
-  Bronze contract for NOAA Storm Events fatality CSVs: snake_case names and
-  typed values. DET coerces source strings to these types before validation.
+  NOAA Storm Events fatalities (StormEvents_fatalities CSV). Bronze contract:
+  snake_case names and typed values. DET coerces source strings to these types
+  before validation. Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.
 type: object
 required: [fatality_id, event_id]
 properties:
-  fat_yearmonth: { type: ["integer", "null"] }
-  fat_day: { type: ["integer", "null"] }
-  fat_time: { type: ["integer", "null"] }
-  fatality_id: { type: "integer" }
-  event_id: { type: "integer" }
-  fatality_type: { type: ["string", "null"] }
-  fatality_date: { type: ["string", "null"] }
-  fatality_age: { type: ["integer", "null"] }
-  fatality_sex: { type: ["string", "null"] }
-  fatality_location: { type: ["string", "null"] }
+  fat_yearmonth:
+    type: ["integer", "null"]
+    description: Year and month of the fatality (YYYYMM).
+  fat_day:
+    type: ["integer", "null"]
+    description: Day of the month of the fatality (DD).
+  fat_time:
+    type: ["integer", "null"]
+    description: Time of day of the fatality (hhmm).
+  fatality_id:
+    type: "integer"
+    description: NWS-assigned id for the individual fatality.
+  event_id:
+    type: "integer"
+    description: >
+      NWS-assigned id for each individual storm event within an episode; primary key
+      linking details, locations, and fatalities.
+  fatality_type:
+    type: ["string", "null"]
+    description: >
+      D = direct fatality; I = indirect fatality (NWS Directive 10-1605 Section 2.6).
+  fatality_date:
+    type: ["string", "null"]
+    description: Fatality datetime (MM/DD/YYYY hh:mm; time is usually 00:00).
+  fatality_age:
+    type: ["integer", "null"]
+    description: Age in years of the fatality (null if unknown).
+  fatality_sex:
+    type: ["string", "null"]
+    description: Gender of the fatality (M/F; null if unknown).
+  fatality_location:
+    type: ["string", "null"]
+    description: >
+      Direct fatality location code or label (e.g. UT under tree, VE vehicle,
+      OU outside/open areas, MH mobile/trailer home).
 additionalProperties: false

@@ -2,18 +2,37 @@
 # Prefer dbt.stg for analytics renames across wire eras.
 $schema: https://json-schema.org/draft/2020-12/schema
 $title: example_api_events
+description: >
+  Bronze contract for example_api events. Wire-faithful typed landing;
+  analytics renames/coalesce live in dbt.stg.
 type: object
 required: [id, occurred_at]
 properties:
-  id: { type: string }
-  occurred_at: { type: string }
+  id:
+    type: string
+    description: Upstream event id (stable primary key).
+  occurred_at:
+    type: string
+    description: Event timestamp as sent by the API (ISO-8601 string).
   # Current wire name; also accept historical aliases (see dbt.stg.coalesce).
-  severity: { type: string }
-  level: { type: string }
-  severity_level: { type: string }
-  state: { type: ["string", "null"] }
+  severity:
+    type: string
+    description: Legacy severity label (pre-v2 wire name).
+  level:
+    type: string
+    description: Current wire severity field.
+  severity_level:
+    type: string
+    description: Alternate historical severity field.
+  state:
+    type: ["string", "null"]
+    description: Two-letter state code when provided.
   # Wire status code; dbt.stg.map turns "1"/"2" into labels in stg.
-  status: { type: ["string", "null"] }
+  status:
+    type: ["string", "null"]
+    description: Upstream status code or label.
   # Landed in bronze; dropped from stg via dbt.stg.exclude.
-  debug_info: { type: ["string", "null"] }
+  debug_info:
+    type: ["string", "null"]
+    description: Internal debug payload; not for analytics.
 additionalProperties: false
