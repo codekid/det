@@ -35,7 +35,9 @@ def test_load_pipeline_config(project_root):
     assert cfg.source.type == "noaa.storm_events"
     assert cfg.ingestion.library == "det"
     assert cfg.ingestion.chunk_rows == 10_000
-    assert cfg.destination.type == "filesystem"
+    assert cfg.destination.type == "iceberg"
+    assert cfg.slo is not None
+    assert cfg.slo.cadence == "daily"
 
 
 def test_ingestion_chunk_rows_rejects_zero():

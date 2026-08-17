@@ -106,7 +106,7 @@ def create_server():
     def init_pipeline_dry_run(
         name: str,
         source_type: str,
-        destination_type: str = "filesystem",
+        destination_type: str = "iceberg",
         connection: str | None = None,
         lake_path: str | None = None,
         skip_dbt: bool = False,

@@ -14,6 +14,7 @@ from det.logging import bound_run_context, get_logger, sanitize_lake_uri, update
 from det.plugins import load_plugins
 from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
 from det.runtime.lake import LakeRef
+from det.runtime.layout import LAKE_LAYOUT
 from det.runtime.lease import pipeline_lease, refresh_lease
 from det.runtime.load_rows import CountingIter, iter_bronze_rows
 from det.runtime.manifest import (
@@ -151,6 +152,7 @@ class PipelineRunner:
                                 "interval_end": end_iso,
                                 "extract_run_datetime": extract_ts,
                                 "wire_version": config.wire_version,
+                                "lake_layout": LAKE_LAYOUT,
                                 "artifacts": artifacts,
                             },
                         )

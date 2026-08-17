@@ -31,7 +31,10 @@ CLI after the user confirms. Install: `uv pip install -e ".[mcp]"`.
 - **True wire break:** bump `wire_version` (new extracts land under `_vN`);
   rebuild historical raw with explicit
   `--from-raw provider.source_v1 --to-bronze provider.source_v2`.
-- Manifest always stamps `wire_version` (legacy missing field ⇒ `1`).
+- Manifest always stamps `wire_version` (legacy missing field ⇒ `1`) and
+  `lake_layout` (current hive/SQL contract; missing ⇒ `1`). Layout 1 is what
+  the code writes today. Bump `wire_version` for payload breaks only — do not
+  use it to rename hive keys.
 - Optional filter: `det migrate … --wire-version N` / MCP
   `migrate_dry_run(..., wire_version=N)` — edge case for mixed trees only.
 

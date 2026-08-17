@@ -52,7 +52,7 @@ optional Airflow DAGs, and a Cursor MCP server for inspect + dry-run ops.
 
 Also:
 
-- **Destinations** — filesystem JSONL (default), DuckDB append, or Postgres append
+- **Destinations** — Iceberg Parquet (default lake bronze), filesystem JSONL (opt-in), DuckDB, or Postgres
 - **Hive partitions** — interval start/end + extract run under `raw/` and `bronze/`
 - **dlt boundaries** — extract helpers only; DET owns validation, meta, and writers
 - **Local Airflow** — `make airflow-up` (Compose UI); extract and dbt DAGs are decoupled
@@ -157,6 +157,12 @@ flowchart TD
 
 ## Lake layout
 
+This is **layout 1** — the current hive, SQL names, and sibling prefixes. It is
+not `wire_version` (dataset era `{name}_vN`) and not `receipt_version` (JSON
+under `runs/`). New extracts stamp `lake_layout: 1` on `meta/manifest.json` and
+on receipt JSON. Missing field ⇒ 1. Wipe `data/lake` (and `data/det_ops.duckdb`
+for a clean ops DB) and re-extract; there is no layout migrator.
+
 Raw always lands under the DET lake root (default `./data/lake`, override with
 `DET_LAKE_PATH` or `--lake-path`). Bronze landing depends on `destination.type`.
 There is no `destination.type: s3` — object storage is the same hive under
@@ -188,16 +194,17 @@ flowchart TB
 Filesystem layout:
 
 ```text
-data/lake/raw/noaa/storm_events/
+data/lake/raw/noaa/storm_events_v1/
   __interval_start_datetime=20260801T000000Z/
     __interval_end_datetime=20260802T000000Z/
       __extract_run_datetime=20260806T232208Z/
         data/                 # source payload bytes
-        meta/manifest.json    # extract metadata; after successful load also
+        meta/manifest.json    # extract metadata; lake_layout + wire_version;
+                              # after successful load also
                               # validation: { ok, schema_path, schema_sha256, … }
                               # (receipt only — missing validation never gates load)
 
-data/lake/bronze/noaa/storm_events/          # filesystem destination only
+data/lake/bronze/noaa/storm_events_v1/       # iceberg (default) or filesystem JSONL
   __interval_start_datetime=…/
     __interval_end_datetime=…/
       __extract_run_datetime=…/
@@ -264,8 +271,16 @@ det runs -s 2026-08-01 -e 2026-08-16   # attempt-date window, half-open, default
 ```
 
 MCP: `list_runs` / `summarize_runs` (read-only). Manifest remains the authority for
-landed partitions; receipts are observability. No SLO thresholds or alerting in this
-slice. `det prune` never touches `runs/` (bronze-only).
+landed partitions; receipts are observability. `det prune` never touches `runs/`
+(bronze-only).
+
+Two questions:
+
+- **This run** — receipts / `det runs`: did this extract or load break?
+- **The fleet** — ops dbt SLOs: have opted-in pipelines been running often and well
+  enough? Policy is `slo:` on pipeline YAML (opt-in). Extract/load do not read SLOs.
+  `det check` errors `slo_seed_stale` when `dbt/seeds/ops_slo_expected.csv` drifts.
+  Walk-through: DAG **`det_ops_receipts`** (`dbt build --select tag:ops --target ops`).
 
 ### Ops projection (Iceberg + dbt)
 
@@ -287,7 +302,10 @@ collides with schema `ops`.
 Silver/gold builds always `--exclude tag:ops` so ops never writes `analytics.duckdb`.
 
 Airflow DAG **`det_ops_receipts`** (standalone): materialize → `dbt build --select tag:ops --target ops`.
-Not chained onto extract or `det_dbt_silver_gold`.
+Not chained onto extract or `det_dbt_silver_gold`. That build seeds `ops_slo_expected`,
+runs `det__ops_run_daily`, and the recency / error-rate / p95 / fail-closed tests.
+`slo:` is opt-in (`cadence` plus sparse `extract` / `load` overlays; `false` skips a
+command). v1: `noaa.storm_events` only.
 
 ---
 
@@ -298,9 +316,9 @@ Requires Python 3.12+ and [uv](https://github.com/astral-sh/uv).
 ```bash
 cd det
 uv venv
-make install          # editable install + macOS .pth unhide (dev, dbt, mcp, postgres)
-# Optional extras:
-# uv pip install -e ".[iceberg]"    # Iceberg+Parquet bronze writer
+make install          # editable install + macOS .pth unhide (dev, dbt, mcp, postgres, iceberg)
+# Optional extras if not using make install:
+# uv pip install -e ".[iceberg]"    # Iceberg+Parquet bronze writer (already in make install)
 ```
 
 | Extra | Adds |
@@ -342,7 +360,8 @@ make run-local
 #   -s 2026-08-06 \
 #   --set source.overrides.local_csv_dir=fixtures/storm_events \
 #   --set source.overrides.filename_substr=details \
-#   --set ingestion.library=thin
+#   --set ingestion.library=thin \
+#   --set destination.type=filesystem
 ```
 
 Expect:
@@ -358,12 +377,14 @@ NOAA fatality CSVs use the same NCEI index with `filename_substr=fatalities-ftp`
 uv run det run -p noaa.fatalities -s 2026-08-06 \
   --set source.overrides.local_csv_dir=fixtures/fatalities \
   --set source.overrides.filename_substr=fatalities \
-  --set ingestion.library=thin
+  --set ingestion.library=thin \
+  --set destination.type=filesystem
 
 uv run det run -p noaa.locations -s 2026-08-06 \
   --set source.overrides.local_csv_dir=fixtures/locations \
   --set source.overrides.filename_substr=locations \
-  --set ingestion.library=thin
+  --set ingestion.library=thin \
+  --set destination.type=filesystem
 ```
 
 ### 3. Build silver + gold
@@ -433,7 +454,7 @@ validation:
 ingestion:
   library: det                 # det (default) | dlt (alias) | thin (filesystem only)
 destination:
-  type: filesystem             # filesystem | iceberg | duckdb | postgres
+  type: iceberg                # iceberg (default lake) | filesystem (JSONL) | duckdb | postgres
   # connection: ./data/analytics.duckdb   # duckdb file path (required for duckdb)
   # connection_env: DET_POSTGRES_DSN      # postgres: env var name, never the DSN
   # dataset: bronze                       # medallion prefix → SQL bronze_{provider}
@@ -546,19 +567,20 @@ The lake root is DET runtime, not a per-pipeline field. Default is project-relat
 `DET_LAKE_PATH` (first hit wins in that order). Same hive keys on local disk,
 `s3://bucket/prefix`, or `gs://bucket/prefix` (install `.[s3]` / `.[gcs]`).
 
-Only bronze landing changes with `destination.type`. `type: iceberg` writes an Iceberg
-table of Parquet files on the same lake root (Hadoop-style catalog: warehouse is the
-lake, table at `<lake>/bronze/<provider>/<source>_vN/`). Install `.[iceberg]`.
-BigQuery can **register** that table later as a reader (BigLake / Iceberg managed
-table); DET does not add `destination.type: bigquery` or dual-load a clone.
-`type: filesystem` on object storage is supported for DET I/O; dbt
-`read_json('…/**/data.jsonl')` globs are local-only — Iceberg bronze uses
-`iceberg_scan` instead.
+Only bronze landing changes with `destination.type`. **`iceberg` is the default lake
+bronze**: Iceberg table of Parquet files on the same lake root (Hadoop-style catalog:
+warehouse is the lake, table at `<lake>/bronze/<provider>/<source>_vN/`). Install
+`.[iceberg]` (`make install` includes it). BigQuery can **register** that table later
+as a reader (BigLake / Iceberg managed table); DET does not add
+`destination.type: bigquery` or dual-load a clone.
+`type: filesystem` is explicit hive JSONL (thin, fixtures, `make run-local`). On object
+storage it is supported for DET I/O; dbt `read_json('…/**/data.jsonl')` globs are
+local-only — Iceberg bronze uses `iceberg_scan` instead.
 
 | type | Bronze write | Required knobs |
 | --- | --- | --- |
-| `filesystem` | Hive JSONL under `<lake>/bronze/<provider>/<source>_vN/` | — |
-| `iceberg` | Iceberg table at the same lake path (Parquet + metadata; not JSONL hive folders) | — ; install `.[iceberg]` (`pyiceberg`, `pyarrow`) |
+| `iceberg` | **Default lake bronze.** Iceberg table at `<lake>/bronze/<provider>/<source>_vN/` (Parquet + metadata; not JSONL hive folders) | — ; install `.[iceberg]` (`pyiceberg`, `pyarrow`) |
+| `filesystem` | Opt-in hive JSONL under the same path | — |
 | `duckdb` | `{medallion}_{provider}.{source}_vN` (e.g. `bronze_noaa.storm_events_v1`) | `connection`, optional `dataset` (**medallion prefix**, default `bronze`) |
 | `postgres` | Same SQL naming as DuckDB | `connection_env` (see [Secrets](#secrets)), optional `dataset`; install `.[postgres]` |
 
@@ -881,7 +903,7 @@ Extract, silver/gold, and ops are **decoupled** schedules.
 | `det_extract_bronze` | extract → load → optional prune |
 | `det_backfill_extract_bronze` | trigger `det_extract_bronze` once per day for `[interval_start, interval_end)` |
 | `det_dbt_silver_gold` | one Airflow task: `dbt build` on analytics DuckDB with `--exclude tag:ops` |
-| `det_ops_receipts` | materialize `runs/` → Iceberg `ops.run_receipts`, then `dbt build --select tag:ops --target ops` on `DET_OPS_DUCKDB` |
+| `det_ops_receipts` | materialize `runs/` → Iceberg `ops.run_receipts`, then `dbt build --select tag:ops --target ops` (seed + daily mart + SLO tests) on `DET_OPS_DUCKDB` |
 
 File-backed DuckDB only allows a single writer, so each dbt DAG is **one process**
 (same as local `det dbt`), not parallel per-model Cosmos tasks. Silver/gold always

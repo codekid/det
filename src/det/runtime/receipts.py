@@ -23,6 +23,7 @@ from pydantic import ValidationError as PydanticValidationError
 from det.logging import get_logger, scrub_secrets
 from det.runtime.coerce import CoerceError
 from det.runtime.lake import LakeRef
+from det.runtime.layout import LAKE_LAYOUT
 from det.runtime.lease import LeaseHeldError, default_lock_owner
 from det.runtime.meta import to_interval_datetime, to_partition_value
 from det.runtime.secrets import SecretError, SecretNotSetError
@@ -156,6 +157,7 @@ def _payload(
     )
     body: dict[str, Any] = {
         "receipt_version": RECEIPT_VERSION,
+        "lake_layout": LAKE_LAYOUT,
         "attempt_id": draft.attempt_id,
         "pipeline": draft.pipeline,
         "command": draft.command,

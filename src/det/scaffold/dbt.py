@@ -552,6 +552,39 @@ def _write_or_skip(
     logger.info("scaffolded file", path=str(path), detail=actions[-1].detail)
 
 
+def _write_slo_seed(
+    project_root: Path,
+    *,
+    dry_run: bool,
+    actions: list[ScaffoldAction],
+) -> None:
+    """Always regenerate the ops SLO seed from all pipelines (derived; ignores --force)."""
+    from det.runtime.slo import SLO_SEED_RELPATH, render_slo_seed_for_project
+
+    path = (project_root / SLO_SEED_RELPATH).resolve()
+    content = render_slo_seed_for_project(project_root)
+    exists = path.exists()
+    if dry_run:
+        actions.append(
+            ScaffoldAction(
+                path=path,
+                action="would_write",
+                detail="overwrite" if exists else "create",
+            )
+        )
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    actions.append(
+        ScaffoldAction(
+            path=path,
+            action="write",
+            detail="overwrite" if exists else "create",
+        )
+    )
+    logger.info("scaffolded file", path=str(path), detail=actions[-1].detail)
+
+
 def _table_entry_yaml(
     table: str,
     required: list[str],
@@ -781,8 +814,8 @@ def _merge_sources_table(
         indent = start_m.group("indent")
         indent_len = len(indent)
         pattern = re.compile(
-            rf"(?ms)^{re.escape(indent)}- name:\s*{re.escape(table)}\s*\n"
-            rf"(?:(?!^\s{{0,{indent_len}}}- name:).*\n)*"
+            rf"(?m)^{re.escape(indent)}- name:\s*{re.escape(table)}\s*\n"
+            rf"(?:(?!^\s{{0,{indent_len}}}- name:)[^\n]*\n)*"
         )
         new_text, n = pattern.subn(table_yaml + "\n", text, count=1)
         if n == 0:
@@ -960,8 +993,9 @@ def scaffold_dbt(
     Emit/merge dbt bronze source + stg + silver for a pipeline dataset.
 
     Create-if-missing by default; `--force` overwrites generated SQL and refreshes
-    YAML entries for the dataset. When ``warn`` is true, emit advisory view-size
-    warnings for large view-materialized relations.
+    YAML entries for the dataset. Always regenerates ``dbt/seeds/ops_slo_expected.csv``
+    from **all** pipelines (derived; ignores ``force``). When ``warn`` is true, emit
+    advisory view-size warnings for large view-materialized relations.
     """
     root = project_root.resolve()
     # Stable analytics names from pipeline ``name``; lake/SQL table stays versioned.
@@ -1119,6 +1153,8 @@ def scaffold_dbt(
             column_descriptions=silver_descs,
             docs=docs_cfg,
         )
+
+    _write_slo_seed(root, dry_run=dry_run, actions=actions)
 
     if warn:
         from det.scaffold.view_warn import emit_view_size_warnings

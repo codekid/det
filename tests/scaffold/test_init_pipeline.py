@@ -42,11 +42,12 @@ def test_init_pipeline_writes_and_scaffolds(tmp_path: Path):
     text = (tmp_path / "dbt" / "models" / "silver" / "sources.yml").read_text(
         encoding="utf-8"
     )
-    assert "read_json(" in text
+    assert "iceberg_scan(" in text
     assert "bronze_example_api" in text
     pipe_text = pipe.read_text(encoding="utf-8")
     assert "wire_version: 1" in pipe_text
     dest_block = pipe_text.split("destination:", 1)[1].split("medallion:", 1)[0]
+    assert "type: iceberg" in dest_block
     assert "path:" not in dest_block
     stg = (
         tmp_path / "dbt" / "models" / "silver" / "stg_example_api__events.sql"
@@ -85,6 +86,24 @@ def test_init_pipeline_refuses_a_passwordful_dsn(tmp_path: Path):
     assert not (
         tmp_path / "configs" / "pipelines" / "example_api" / "events.yaml"
     ).exists()
+
+
+def test_init_pipeline_filesystem_scaffolds_read_json(tmp_path: Path):
+    (tmp_path / "dbt" / "models" / "silver").mkdir(parents=True)
+    result = init_pipeline(
+        name="example_api.events",
+        source_type="example_api.events",
+        project_root=tmp_path,
+        destination_type="filesystem",
+    )
+    pipe_text = result.pipeline_path.read_text(encoding="utf-8")
+    dest_block = pipe_text.split("destination:", 1)[1].split("medallion:", 1)[0]
+    assert "type: filesystem" in dest_block
+    text = (tmp_path / "dbt" / "models" / "silver" / "sources.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "read_json(" in text
+    assert "**/data.jsonl" in text
 
 
 def test_init_pipeline_iceberg_omits_path_and_scaffolds_scan(tmp_path: Path):

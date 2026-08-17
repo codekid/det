@@ -50,7 +50,7 @@ Unreachable local URL → `make airflow-up`. For a future remote Airflow, point
 | `det_extract_bronze` | extract → load → optional prune (`@daily`) |
 | `det_backfill_extract_bronze` | trigger extract once per day for `[start, end)` |
 | `det_dbt_silver_gold` | single-process `dbt build` on analytics DuckDB with `--exclude tag:ops` |
-| `det_ops_receipts` | materialize `runs/` → Iceberg, then `dbt build --select tag:ops --target ops` on `DET_OPS_DUCKDB` |
+| `det_ops_receipts` | materialize `runs/` → Iceberg, then `dbt build --select tag:ops --target ops` (SLO seed/tests) on `DET_OPS_DUCKDB` |
 
 Extract, silver/gold, and ops are **decoupled**. Nightly analytics dbt is not limited to
 `DET_PIPELINE_CONFIG`. File-backed DuckDB cannot safely fan out per-model writers, so
@@ -64,7 +64,7 @@ each dbt DAG is one task.
 | `DET_PIPELINE_CONFIG` | Canonical id for extract/load DAGs (not dbt select) |
 | `DET_PIPELINE_OVERRIDES` | Comma-separated `dotted.key=value` (same as `det --set`); leave empty for live NOAA |
 | `DET_DBT_SELECT` | Optional dbt `--select`; unset = entire analytics project (still excludes `tag:ops`) |
-| `DET_BRONZE_SOURCE` / `DET_BRONZE_SCHEMA` | dbt bronze reader |
+| `DET_BRONZE_SOURCE` / `DET_BRONZE_SCHEMA` | dbt bronze reader (Compose default `iceberg`; DAG derives from pipeline type). Thin fixture runs need `destination.type=filesystem`. |
 | `DET_ANALYTICS_DUCKDB` | Prefer **absolute** path in Compose |
 | `DET_OPS_DUCKDB` | Prefer **absolute** path for ops dbt target (Compose default `/opt/det/data/det_ops.duckdb`). File stem must not be `ops` (catalog/schema clash). |
 | `DET_LOG_FORMAT` | Compose sets `json` so task logs are greppable (`pipeline`, `extract_run_datetime`) |

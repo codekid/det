@@ -2,8 +2,9 @@
 name: det-ops
 description: >-
   DET agent workflows: debug missing raw partitions, failed or slow extract/load
-  runs, schema validation / contract drift, preview bronze prune, and
-  scaffold/init from pipeline configs using MCP dry-run tools (or det CLI).
+  runs, schema validation / contract drift, preview bronze prune, fleet SLOs
+  (pipeline slo: → ops dbt tests), and scaffold/init from pipeline configs using
+  MCP dry-run tools (or det CLI).
 ---
 
 # DET ops workflows
@@ -30,6 +31,9 @@ Install: `uv pip install -e ".[mcp]"`.
    - `list_runs` / `summarize_runs` — extract/load attempts (failures included)
 5. If raw is empty: check extract interval (`-s`/`-e`), source plugin, and lake
    (`DET_LAKE_PATH` / default `./data/lake` — not a per-pipeline `destination.path`).
+   Lake **layout 1** is the current hive (`raw|bronze/{provider}/{source}_vN/…`),
+   SQL names, and siblings (`locks/`, `runs/`, `ops/`). `wire_version` is only a
+   payload/dataset-era bump. Manifests and receipts stamp `lake_layout`.
    Airflow/CI logs are JSON (`DET_LOG_FORMAT=json`); grep `pipeline` /
    `extract_run_datetime`. Laptop TTY stays console (`--log-format` / `DET_LOG_FORMAT`).
    `LeaseHeldError` / grep lake lease: another extract/load holds `(pipeline, interval)`.
@@ -59,6 +63,24 @@ is still the authority for what landed.
 6. Warehouse projection: `det runs-materialize` (or DAG `det_ops_receipts`) writes
    Iceberg `{lake}/ops/run_receipts`; dbt `tag:ops` / `--target ops` reads it into
    `DET_OPS_DUCKDB`. JSON under `runs/` remains the attempt log.
+
+## This run vs the fleet
+
+Receipts / `det runs` answer **this run** (did extract or load break?). Ops dbt
+answers **the fleet** (have opted-in pipelines been running often and well enough?).
+A paused extract DAG cannot self-check; `det_ops_receipts` is the walk-through.
+
+1. Policy is `slo:` on pipeline YAML — **opt-in**. No `slo:` → not in
+   `ops_slo_expected`. Shared defaults on `slo:`; sparse `extract` / `load`
+   overlays; `extract: false` / `load: false` skips a command. Cadence hours live
+   in Python (not `interval_*` / `dbt.silver.lookback`).
+2. `det scaffold-dbt` always regenerates `dbt/seeds/ops_slo_expected.csv` from all
+   pipelines. `det check` errors `slo_seed_stale` on drift. MCP
+   `scaffold_dbt_dry_run` includes the seed action.
+3. Alert path: DAG `det_ops_receipts` → `dbt build --select tag:ops --target ops`
+   (seed + `det__ops_run_daily` + recency / error-rate / p95 / fail-closed).
+   Fail-closed codes: `schema_invalid`, `integrity_error`, `secret_not_set`
+   (`lease_held` excluded). Extract/load never read SLOs.
 
 ## Schema invalid / contract drift
 
@@ -102,7 +124,7 @@ value, do not paste it into YAML.
 
 ## Preview prune
 
-1. `describe_pipeline` — confirm destination type (filesystem / iceberg / duckdb / postgres).
+1. `describe_pipeline` — confirm destination type (iceberg default lake / filesystem JSONL / duckdb / postgres).
 2. `prune_dry_run` with `interval_start`, optional `interval_end`, and `keep`.
 3. Show `to_remove` to the user. Prune never touches `raw/`.
    Iceberg bronze (`type: iceberg`) is a Hadoop-style catalog on `DET_LAKE_PATH`

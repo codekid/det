@@ -66,6 +66,7 @@ def test_normalize_receipt_maps_v1_fields():
             "error_code": "http_error",
             "error_class": "HttpError",
             "error_message": "boom",
+            "lake_layout": 1,
             "unknown_extra": "ignored",
         }
     )
@@ -74,6 +75,7 @@ def test_normalize_receipt_maps_v1_fields():
     assert row["attempt_date"] == date(2026, 8, 16)
     assert row["error_code"] == "http_error"
     assert "unknown_extra" not in row
+    assert "lake_layout" not in row
 
 
 def test_normalize_receipt_rejects_incomplete():

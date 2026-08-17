@@ -48,7 +48,7 @@ Config holds names, the environment holds values.
 
 1. `list_sources` — ensure the id is free / match existing plugins.
 2. `init_pipeline_dry_run` with `name` == `source_type` == `provider.source`,
-   destination knobs (`filesystem` / `duckdb` / `postgres`). For postgres pass
+   destination knobs (`iceberg` default lake / `filesystem` JSONL / `duckdb` / `postgres`). For postgres pass
    `connection` as the **env var name** (e.g. `DET_POSTGRES_DSN`); a DSN with a
    password is refused.
 3. After user confirms, CLI: `det init-pipeline --name … --source-type …` (omit

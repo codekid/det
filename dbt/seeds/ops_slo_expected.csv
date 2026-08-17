@@ -1,0 +1,3 @@
+pipeline,command,cadence,recency_hours,score_hours,max_error_rate,p95_ms
+noaa.storm_events,extract,daily,26,24,0,600000
+noaa.storm_events,load,daily,26,24,0,900000
