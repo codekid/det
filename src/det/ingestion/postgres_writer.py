@@ -8,6 +8,7 @@ from det.ingestion.chunks import iter_chunks
 from det.ingestion.sql_ddl import ensure_bronze_table
 from det.ingestion.sql_replace import delete_extract_run_sql, require_bronze_run_identity
 from det.logging import get_logger
+from det.runtime.lease import advisory_lock_keys
 from det.runtime.sql_types import bronze_sql_columns, quote_ident
 
 logger = get_logger(__name__)
@@ -37,6 +38,7 @@ def write_postgres_table(
     table: str,
     json_schema: dict[str, Any],
     chunk_rows: int = 10_000,
+    pipeline: str | None = None,
 ) -> str:
     """
     Replace-by-extract-run DET bronze write into Postgres.
@@ -77,6 +79,11 @@ def write_postgres_table(
                     return list(cur.fetchall())
 
                 execute(f"CREATE SCHEMA IF NOT EXISTS {schema_sql}", None)
+                if pipeline:
+                    k1, k2 = advisory_lock_keys(
+                        pipeline, first_identity[0], first_identity[1]
+                    )
+                    execute("SELECT pg_advisory_lock(%s, %s)", (k1, k2))
                 ensure_bronze_table(
                     sql_schema=schema,
                     table=table,

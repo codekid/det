@@ -411,13 +411,20 @@ flowchart LR
 
 Logs: laptop TTY stays human console. Non-TTY (Airflow, CI, pipes) is JSON with bound `pipeline`, `interval_start` / `interval_end`, `extract_run_datetime`, `destination` (type only), and `command` on extract/load/migrate/prune/dbt lines. Override with `--log-format json|console` or `DET_LOG_FORMAT` (CLI wins). Grep `pipeline` / `extract_run_datetime`. Compose sets `DET_LOG_FORMAT=json`.
 
+Extract/load/run take a lake lease on `(pipeline, interval)` under `{lake}/locks/…` so two writers cannot share a window (CLI vs Airflow included). Different days can run in parallel. Override TTL with `--lock-ttl-sec` or `DET_LOCK_TTL_SEC` (default 7200). `LeaseHeldError` means a live lease; kill the worker, then `det lock-release -p … -s … --force` (or the manual `det_clear_lock` DAG). Do not clear a lock while the job is still running. `DET_LOCK=0` disables the lease (tests only; unsafe). Prune leases the command’s resolved `[start, end)` only — a month prune can still overlap a one-day load.
+
 ```bash
 # Extract / load / run
 det run -p noaa.storm_events -s 2026-08-06
+det run -p noaa.storm_events -s 2026-08-06 --lock-ttl-sec 21600
 det extract -p noaa.storm_events -s 2026-08-06
 det load -p noaa.storm_events -s 2026-08-06
 det load -p noaa.storm_events -s 2026-07-01 -e 2026-08-08 \
   --extract-run-datetime 2026-08-08T18:21:12+00:00
+
+det lock-show -p noaa.storm_events -s 2026-08-06
+det lock-release -p noaa.storm_events -s 2026-08-06 --force
+
 
 # Overrides (dotted.key=yaml-value)
 det run -p noaa.storm_events -s 2026-08-06 \
@@ -767,7 +774,8 @@ cd airflow && docker compose exec airflow-scheduler \
 Useful env vars (see `airflow/.env.example`): `DET_PROJECT_ROOT`,
 `DET_PIPELINE_CONFIG`, `DET_PIPELINE_OVERRIDES`, `DET_DBT_PROJECT`,
 `DET_DBT_SELECT`, `DET_LAKE_PATH`, `DET_LOG_FORMAT`, `DET_ANALYTICS_DUCKDB`, `DET_BRONZE_SOURCE`,
-`DET_BRONZE_SCHEMA`, `DET_PRUNE`, `DET_PRUNE_APPLY`, `DET_PRUNE_KEEP`.
+`DET_BRONZE_SCHEMA`, `DET_PRUNE`, `DET_PRUNE_APPLY`, `DET_PRUNE_KEEP`,
+`DET_LOCK_TTL_SEC`, `DET_LOCK_OWNER`. `DET_LOCK=0` is unsafe (disables the lake lease).
 
 ---
 

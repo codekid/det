@@ -126,6 +126,7 @@ class DetBackend:
             table=table,
             json_schema=json_schema,
             chunk_rows=chunk_rows,
+            pipeline=config.name,
         )
         # Logical identity only — Path() would mangle DSN schemes (:// → :/).
         return Path("postgres") / schema / table

@@ -84,3 +84,10 @@ def test_daily_logical_dates_rejects_empty_range(project_root: Path):
     det_env = _load_det_env(project_root)
     with pytest.raises(ValueError, match="must be after"):
         det_env.daily_logical_dates_for_interval("2026-08-01", "2026-08-01")
+
+
+def test_lock_ttl_sec_from_conf(project_root: Path):
+    det_env = _load_det_env(project_root)
+    assert det_env.lock_ttl_sec_from_conf({}) is None
+    assert det_env.lock_ttl_sec_from_conf({"lock_ttl_sec": 21600}) == 21600
+    assert det_env.lock_ttl_sec_from_conf({"lock_ttl_sec": "90"}) == 90

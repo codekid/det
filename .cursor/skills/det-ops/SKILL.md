@@ -31,6 +31,10 @@ Install: `uv pip install -e ".[mcp]"`.
    (`DET_LAKE_PATH` / default `./data/lake` — not a per-pipeline `destination.path`).
    Airflow/CI logs are JSON (`DET_LOG_FORMAT=json`); grep `pipeline` /
    `extract_run_datetime`. Laptop TTY stays console (`--log-format` / `DET_LOG_FORMAT`).
+   `LeaseHeldError` / grep lake lease: another extract/load holds `(pipeline, interval)`.
+   Kill that worker, then `det lock-release -p … -s … --force` (or DAG `det_clear_lock`).
+   Do not force-clear while the job is still running. TTL: `--lock-ttl-sec` / `DET_LOCK_TTL_SEC`.
+   `DET_LOCK=0` disables the lake lease (unsafe; tests only). MCP must not delete locks.
    Bronze without raw usually means load/migrate was pointed at the wrong interval.
    Rebuild bronze from raw via `det migrate`, not from a bronze payload column.
 

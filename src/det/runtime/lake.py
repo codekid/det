@@ -258,6 +258,11 @@ class LakeRef:
         with self.open("wb") as fh:
             fh.write(data)
 
+    def create_exclusive(self, data: bytes) -> None:
+        """Create this key only if it does not exist. Raises FileExistsError if it does."""
+        self.parent.mkdir(parents=True, exist_ok=True)
+        self._backend.create_exclusive(self._key, data)
+
     def unlink(self, missing_ok: bool = False) -> None:
         self._backend.unlink(self._key, missing_ok=missing_ok)
 
@@ -349,6 +354,9 @@ class _Backend:
     def size(self, key: str) -> int:
         raise NotImplementedError
 
+    def create_exclusive(self, key: str, data: bytes) -> None:
+        raise NotImplementedError
+
     def rel_key(self, root: str, child: str) -> str | None:
         raise NotImplementedError
 
@@ -413,6 +421,15 @@ class _LocalBackend(_Backend):
 
     def size(self, key: str) -> int:
         return Path(key).stat().st_size
+
+    def create_exclusive(self, key: str, data: bytes) -> None:
+        Path(key).parent.mkdir(parents=True, exist_ok=True)
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+        fd = os.open(key, flags, 0o644)
+        try:
+            os.write(fd, data)
+        finally:
+            os.close(fd)
 
     def rel_key(self, root: str, child: str) -> str | None:
         try:
@@ -531,6 +548,22 @@ class _FsspecBackend(_Backend):
     def size(self, key: str) -> int:
         info = self.fs.info(key)
         return int(info.get("size") or 0)
+
+    def create_exclusive(self, key: str, data: bytes) -> None:
+        parent = self.parent(key)
+        if parent:
+            self.mkdir(parent, parents=True, exist_ok=True)
+        try:
+            with self.fs.open(key, "xb") as fh:
+                fh.write(data)
+            return
+        except FileExistsError:
+            raise
+        except (OSError, ValueError, TypeError):
+            if self.exists(key):
+                raise FileExistsError(key) from None
+            with self.fs.open(key, "wb") as fh:
+                fh.write(data)
 
     def rel_key(self, root: str, child: str) -> str | None:
         root_n = root.rstrip("/")
@@ -664,6 +697,14 @@ class _MemoryBackend(_Backend):
         if key not in self.store:
             raise FileNotFoundError(key)
         return len(self.store[key])
+
+    def create_exclusive(self, key: str, data: bytes) -> None:
+        key = key.strip("/")
+        parent = self.parent(key)
+        if parent:
+            self.mkdir(parent, parents=True, exist_ok=True)
+        if self.store.setdefault(key, data) is not data:
+            raise FileExistsError(key)
 
     def rel_key(self, root: str, child: str) -> str | None:
         root_n = root.strip("/")

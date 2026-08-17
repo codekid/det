@@ -19,7 +19,14 @@ import os
 from datetime import datetime
 
 from airflow.decorators import dag, task
-from det_env import env_flag, pipeline_overrides, pipeline_path, project_root
+from det_env import (
+    env_flag,
+    lock_ttl_sec_from_conf,
+    pipeline_overrides,
+    pipeline_path,
+    project_root,
+    set_lock_owner,
+)
 
 PROJECT_ROOT = project_root()
 
@@ -34,7 +41,15 @@ PROJECT_ROOT = project_root()
 def det_extract_bronze():
     @task
     def extract_raw(data_interval_start=None, data_interval_end=None) -> dict:
+        from airflow.operators.python import get_current_context
+
         from det.runtime.runner import PipelineRunner
+
+        context = get_current_context()
+        dag_run = context.get("dag_run")
+        run_id = getattr(dag_run, "run_id", "unknown")
+        set_lock_owner(dag_id="det_extract_bronze", run_id=str(run_id))
+        ttl = lock_ttl_sec_from_conf(getattr(dag_run, "conf", None) or {})
 
         if data_interval_start:
             start = data_interval_start.isoformat()
@@ -46,6 +61,7 @@ def det_extract_bronze():
             interval_start=start,
             interval_end=end,
             overrides=pipeline_overrides() or None,
+            lock_ttl_sec=ttl,
         )
         return {
             "pipeline": result.pipeline,
@@ -58,7 +74,15 @@ def det_extract_bronze():
 
     @task
     def load_bronze(extract_info: dict) -> dict:
+        from airflow.operators.python import get_current_context
+
         from det.runtime.runner import PipelineRunner
+
+        context = get_current_context()
+        dag_run = context.get("dag_run")
+        run_id = getattr(dag_run, "run_id", "unknown")
+        set_lock_owner(dag_id="det_extract_bronze", run_id=str(run_id))
+        ttl = lock_ttl_sec_from_conf(getattr(dag_run, "conf", None) or {})
 
         result = PipelineRunner(PROJECT_ROOT).load(
             pipeline_path(),
@@ -66,6 +90,7 @@ def det_extract_bronze():
             interval_end=extract_info["interval_end"],
             extract_run_datetime=extract_info["extract_run_datetime"],
             overrides=pipeline_overrides() or None,
+            lock_ttl_sec=ttl,
         )
         return {
             "pipeline": result.pipeline,
@@ -96,7 +121,12 @@ def det_extract_bronze():
             interval_end=load_info["interval_end"],
             keep=keep,
         )
-        removed = pruner.apply(config, plan) if apply else 0
+        removed = pruner.apply(
+            config,
+            plan,
+            interval_start=load_info["interval_start"],
+            interval_end=load_info["interval_end"],
+        ) if apply else 0
         return {
             "skipped": False,
             "apply": apply,

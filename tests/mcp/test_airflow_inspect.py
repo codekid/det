@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from det.mcp.airflow_inspect import (
+    DET_DAG_IDS,
     airflow_health,
     airflow_settings,
     describe_airflow_det_env,
@@ -144,6 +145,11 @@ def test_preview_backfill_conf():
     assert out["suggested_commands"]["generic"].startswith(
         "airflow dags trigger det_backfill_extract_bronze"
     )
+
+
+def test_det_dag_ids_include_clear_lock():
+    assert "det_clear_lock" in DET_DAG_IDS
+    assert "det_extract_bronze" in DET_DAG_IDS
 
 
 def test_create_server_registers_airflow_tools():
