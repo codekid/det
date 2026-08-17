@@ -29,6 +29,8 @@ Install: `uv pip install -e ".[mcp]"`.
    - `read_manifest` on a raw run path
 5. If raw is empty: check extract interval (`-s`/`-e`), source plugin, and lake
    (`DET_LAKE_PATH` / default `./data/lake` — not a per-pipeline `destination.path`).
+   Airflow/CI logs are JSON (`DET_LOG_FORMAT=json`); grep `pipeline` /
+   `extract_run_datetime`. Laptop TTY stays console (`--log-format` / `DET_LOG_FORMAT`).
    Bronze without raw usually means load/migrate was pointed at the wrong interval.
    Rebuild bronze from raw via `det migrate`, not from a bronze payload column.
 

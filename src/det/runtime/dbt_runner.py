@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from det.logging import get_logger
+from det.logging import bound_run_context, get_logger, sanitize_lake_uri
 from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
 from det.runtime.ids import dbt_model_slug, sql_names_for_config
 from det.runtime.lake import open_lake, pick_lake_spec
@@ -219,45 +219,52 @@ def run_dbt(
     )
     resolved_lake = env.get("DET_LAKE_PATH")
     bronze_source = env.get("DET_BRONZE_SOURCE")
+    lake_for_logs = sanitize_lake_uri(resolved_lake) if resolved_lake else None
 
-    if dry_run:
+    with bound_run_context(
+        command="dbt",
+        pipeline=config.name if config is not None else None,
+        destination=config.destination.type if config is not None else None,
+        lake=lake_for_logs,
+    ):
+        if dry_run:
+            logger.info(
+                "dbt dry-run",
+                argv=argv,
+                DET_LAKE_PATH=lake_for_logs,
+                DET_BRONZE_SOURCE=bronze_source,
+            )
+            return DbtRunResult(
+                command=argv,
+                returncode=0,
+                project_dir=dbt_dir,
+                select=tuple(resolved_select or ()),
+                lake_path=resolved_lake,
+                bronze_source=bronze_source,
+                output="",
+            )
+
+        if dbt_bin is None:
+            raise DbtNotInstalledError(
+                "dbt CLI not found next to the current Python or on PATH. "
+                'Install the optional extra: pip install -e ".[dbt]" '
+                '(or uv pip install -e ".[dbt]")'
+            )
+
         logger.info(
-            "dbt dry-run",
+            "running dbt",
             argv=argv,
-            DET_LAKE_PATH=resolved_lake,
+            DET_LAKE_PATH=lake_for_logs,
             DET_BRONZE_SOURCE=bronze_source,
+            cwd=str(dbt_dir),
         )
+        returncode, output = _run_dbt_subprocess(argv, cwd=str(dbt_dir), env=env)
         return DbtRunResult(
             command=argv,
-            returncode=0,
+            returncode=returncode,
             project_dir=dbt_dir,
             select=tuple(resolved_select or ()),
             lake_path=resolved_lake,
             bronze_source=bronze_source,
-            output="",
+            output=output,
         )
-
-    if dbt_bin is None:
-        raise DbtNotInstalledError(
-            "dbt CLI not found next to the current Python or on PATH. "
-            'Install the optional extra: pip install -e ".[dbt]" '
-            '(or uv pip install -e ".[dbt]")'
-        )
-
-    logger.info(
-        "running dbt",
-        argv=argv,
-        DET_LAKE_PATH=resolved_lake,
-        DET_BRONZE_SOURCE=bronze_source,
-        cwd=str(dbt_dir),
-    )
-    returncode, output = _run_dbt_subprocess(argv, cwd=str(dbt_dir), env=env)
-    return DbtRunResult(
-        command=argv,
-        returncode=returncode,
-        project_dir=dbt_dir,
-        select=tuple(resolved_select or ()),
-        lake_path=resolved_lake,
-        bronze_source=bronze_source,
-        output=output,
-    )

@@ -29,8 +29,16 @@ _PROJECT_ROOT_HELP = (
 @app.callback()
 def main(
     log_level: str = typer.Option("INFO", "--log-level", help="Logging level"),
+    log_format: str | None = typer.Option(
+        None,
+        "--log-format",
+        help="json | console (default: json when stderr is not a TTY)",
+    ),
 ) -> None:
-    configure_logging(log_level)
+    try:
+        configure_logging(log_level, log_format=log_format)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--log-format") from exc
     logger.info("det starting", log_level=log_level)
     print("det: loading plugins…", file=sys.stderr, flush=True)
     from det.plugins import load_plugins
