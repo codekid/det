@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -13,6 +14,22 @@ def project_root() -> Path:
 
 def pipeline_ref() -> str:
     return os.environ.get("DET_PIPELINE_CONFIG", "noaa.storm_events")
+
+
+def lock_ttl_sec_from_conf(conf: Mapping[str, object] | None) -> int | None:
+    if not conf:
+        return None
+    raw = conf.get("lock_ttl_sec")
+    if raw is None or str(raw).strip() == "":
+        return None
+    value = int(raw)
+    if value < 1:
+        raise ValueError("lock_ttl_sec must be >= 1")
+    return value
+
+
+def set_lock_owner(*, dag_id: str, run_id: str) -> None:
+    os.environ["DET_LOCK_OWNER"] = f"airflow:{dag_id}:{run_id}"
 
 
 def pipeline_path() -> Path:

@@ -102,19 +102,30 @@ def extract_raw(
     interval_end: str | None = typer.Option(None, "--interval-end", "-e"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     set_: list[str] = typer.Option([], "--set"),
+    lock_ttl_sec: int | None = typer.Option(
+        None,
+        "--lock-ttl-sec",
+        help="Lake lease TTL in seconds (default: DET_LOCK_TTL_SEC or 7200)",
+    ),
 ) -> None:
     """Source → raw data/ + format check + meta/manifest.json."""
+    from det.runtime.lease import LeaseHeldError
     from det.runtime.runner import PipelineRunner
 
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
-    result = PipelineRunner(root).extract(
-        resolved.path,
-        interval_start=start_iso,
-        interval_end=end_iso,
-        overrides=set_,
-    )
+    try:
+        result = PipelineRunner(root).extract(
+            resolved.path,
+            interval_start=start_iso,
+            interval_end=end_iso,
+            overrides=set_,
+            lock_ttl_sec=lock_ttl_sec,
+        )
+    except LeaseHeldError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
     typer.echo(
         f"OK extract pipeline={result.pipeline} artifacts={result.artifacts} "
         f"raw={result.raw_dir}"
@@ -133,20 +144,31 @@ def load_bronze(
     ),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     set_: list[str] = typer.Option([], "--set"),
+    lock_ttl_sec: int | None = typer.Option(
+        None,
+        "--lock-ttl-sec",
+        help="Lake lease TTL in seconds (default: DET_LOCK_TTL_SEC or 7200)",
+    ),
 ) -> None:
     """Raw data/ → snake_case naming → JSON Schema → bronze."""
+    from det.runtime.lease import LeaseHeldError
     from det.runtime.runner import PipelineRunner
 
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
-    result = PipelineRunner(root).load(
-        resolved.path,
-        interval_start=start_iso,
-        interval_end=end_iso,
-        overrides=set_,
-        extract_run_datetime=extract_run_datetime,
-    )
+    try:
+        result = PipelineRunner(root).load(
+            resolved.path,
+            interval_start=start_iso,
+            interval_end=end_iso,
+            overrides=set_,
+            extract_run_datetime=extract_run_datetime,
+            lock_ttl_sec=lock_ttl_sec,
+        )
+    except LeaseHeldError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
     typer.echo(
         f"OK load pipeline={result.pipeline} rows={result.rows} "
         f"partition={result.partition_dir}"
@@ -160,20 +182,31 @@ def run_pipeline(
     interval_end: str | None = typer.Option(None, "--interval-end", "-e"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     set_: list[str] = typer.Option([], "--set"),
+    lock_ttl_sec: int | None = typer.Option(
+        None,
+        "--lock-ttl-sec",
+        help="Lake lease TTL in seconds (default: DET_LOCK_TTL_SEC or 7200)",
+    ),
 ) -> None:
     """extract then load with one shared run-start stamp."""
+    from det.runtime.lease import LeaseHeldError
     from det.runtime.runner import PipelineRunner
 
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
     print("det: run starting…", file=sys.stderr, flush=True)
-    result = PipelineRunner(root).run(
-        resolved.path,
-        interval_start=start_iso,
-        interval_end=end_iso,
-        overrides=set_,
-    )
+    try:
+        result = PipelineRunner(root).run(
+            resolved.path,
+            interval_start=start_iso,
+            interval_end=end_iso,
+            overrides=set_,
+            lock_ttl_sec=lock_ttl_sec,
+        )
+    except LeaseHeldError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
     typer.echo(
         f"OK pipeline={result.pipeline} rows={result.rows} "
         f"partition={result.partition_dir}"
@@ -212,8 +245,14 @@ def migrate_bronze(
     ),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     set_: list[str] = typer.Option([], "--set"),
+    lock_ttl_sec: int | None = typer.Option(
+        None,
+        "--lock-ttl-sec",
+        help="Lake lease TTL in seconds (default: DET_LOCK_TTL_SEC or 7200)",
+    ),
 ) -> None:
     """Rebuild bronze from raw data/ for an interval."""
+    from det.runtime.lease import LeaseHeldError
     from det.runtime.migrate import BronzeMigrator, MigratePlan
 
     start, end = _resolve_interval(interval_start, interval_end)
@@ -224,21 +263,26 @@ def migrate_bronze(
             "--validate-limit requires --dry-run",
             param_hint="--validate-limit",
         )
-    result = BronzeMigrator(root).migrate(
-        pipeline=resolved.path,
-        to_bronze=to_bronze,
-        schema_path=schema if schema.is_absolute() else root / schema,
-        mapper_name=mapper,
-        interval_start=start,
-        interval_end=end,
-        from_raw=from_raw,
-        lake_path=lake_path,
-        ingestion_library=ingestion,
-        overrides=set_,
-        dry_run=dry_run,
-        validate_limit=validate_limit,
-        wire_version=wire_version,
-    )
+    try:
+        result = BronzeMigrator(root).migrate(
+            pipeline=resolved.path,
+            to_bronze=to_bronze,
+            schema_path=schema if schema.is_absolute() else root / schema,
+            mapper_name=mapper,
+            interval_start=start,
+            interval_end=end,
+            from_raw=from_raw,
+            lake_path=lake_path,
+            ingestion_library=ingestion,
+            overrides=set_,
+            dry_run=dry_run,
+            validate_limit=validate_limit,
+            wire_version=wire_version,
+            lock_ttl_sec=lock_ttl_sec,
+        )
+    except LeaseHeldError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
     if isinstance(result, MigratePlan):
         filt = (
             f" wire_version={result.wire_version_filter}"
@@ -488,9 +532,15 @@ def prune_bronze(
     apply: bool = typer.Option(False, "--apply", help="Perform bronze deletes"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     set_: list[str] = typer.Option([], "--set"),
+    lock_ttl_sec: int | None = typer.Option(
+        None,
+        "--lock-ttl-sec",
+        help="Lake lease TTL in seconds (default: DET_LOCK_TTL_SEC or 7200)",
+    ),
 ) -> None:
     """Delete old bronze extract runs. Never touches raw/. Requires --dry-run or --apply."""
     from det.runtime.config import load_pipeline_config
+    from det.runtime.lease import LeaseHeldError
     from det.runtime.prune import BronzePruner
 
     if dry_run == apply:
@@ -525,10 +575,100 @@ def prune_bronze(
             )
         return
 
-    removed = pruner.apply(config, plan)
+    try:
+        removed = pruner.apply(
+            config,
+            plan,
+            interval_start=start_iso,
+            interval_end=end_iso,
+            lock_ttl_sec=lock_ttl_sec,
+        )
+    except LeaseHeldError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
     typer.echo(
         f"OK prune pipeline={config.name} keep={keep} removed={removed}"
     )
+
+
+@app.command("lock-show")
+def lock_show(
+    pipeline: str = typer.Option(..., "--pipeline", "-p", help=_PIPELINE_HELP),
+    interval_start: str = typer.Option(..., "--interval-start", "-s"),
+    interval_end: str | None = typer.Option(None, "--interval-end", "-e"),
+    lake_path: str | None = typer.Option(None, "--lake-path"),
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+) -> None:
+    """Print the lake lease for a pipeline interval (or 'no lock')."""
+    from det.destinations.models import lake_root
+    from det.runtime.config import load_pipeline_config
+    from det.runtime.lease import lock_path, read_lock
+
+    root = _project_root(project_root)
+    resolved = _resolve_pipeline(pipeline, root)
+    start_iso, end_iso = _resolve_interval(interval_start, interval_end)
+    config = load_pipeline_config(resolved.path)
+    path = lock_path(
+        lake_root(config.destination, root, cli_lake_path=lake_path),
+        config.name,
+        start_iso,
+        end_iso,
+    )
+    payload = read_lock(path)
+    if payload is None:
+        typer.echo(f"no lock path={path}")
+        return
+    typer.echo(f"path={path}")
+    for key in (
+        "pipeline",
+        "interval_start",
+        "interval_end",
+        "owner",
+        "command",
+        "expires_at",
+        "ttl_sec",
+    ):
+        if key in payload:
+            typer.echo(f"{key}={payload[key]}")
+
+
+@app.command("lock-release")
+def lock_release(
+    pipeline: str = typer.Option(..., "--pipeline", "-p", help=_PIPELINE_HELP),
+    interval_start: str = typer.Option(..., "--interval-start", "-s"),
+    interval_end: str | None = typer.Option(None, "--interval-end", "-e"),
+    force: bool = typer.Option(False, "--force", help="Required to delete a live lease"),
+    lake_path: str | None = typer.Option(None, "--lake-path"),
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+) -> None:
+    """Force-delete a lake lease. Kill the worker first or you can dual-insert."""
+    from det.destinations.models import lake_root
+    from det.runtime.config import load_pipeline_config
+    from det.runtime.lease import force_release_lock, lock_path, read_lock
+
+    if not force:
+        raise typer.BadParameter("--force is required to delete a lock", param_hint="--force")
+
+    root = _project_root(project_root)
+    resolved = _resolve_pipeline(pipeline, root)
+    start_iso, end_iso = _resolve_interval(interval_start, interval_end)
+    config = load_pipeline_config(resolved.path)
+    path = lock_path(
+        lake_root(config.destination, root, cli_lake_path=lake_path),
+        config.name,
+        start_iso,
+        end_iso,
+    )
+    held = read_lock(path)
+    if held is None:
+        typer.echo(f"no lock path={path}")
+        return
+    typer.echo(
+        f"releasing owner={held.get('owner')} expires_at={held.get('expires_at')} path={path}",
+        err=True,
+    )
+    force_release_lock(path)
+    typer.echo(f"OK lock-release path={path}")
 
 
 @app.command("check")

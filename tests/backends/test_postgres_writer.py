@@ -182,8 +182,10 @@ def test_write_postgres_table_deletes_then_inserts(monkeypatch):
         schema="bronze_noaa",
         table="storm_events_v1",
         json_schema=_EVENT_SCHEMA,
+        pipeline="noaa.storm_events",
     )
     execute_sql = [sql for op, sql, _ in calls if op == "execute" and sql]
+    assert any("pg_advisory_lock" in sql.lower() for sql in execute_sql)
     assert any("delete from" in sql.lower() for sql in execute_sql)
     create = next(
         sql for sql in execute_sql if sql.lower().startswith("create table")

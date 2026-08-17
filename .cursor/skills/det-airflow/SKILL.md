@@ -66,6 +66,12 @@ File-backed DuckDB cannot safely fan out per-model writers, so dbt is one task.
 | `DET_ANALYTICS_DUCKDB` | Prefer **absolute** path in Compose |
 | `DET_LOG_FORMAT` | Compose sets `json` so task logs are greppable (`pipeline`, `extract_run_datetime`) |
 | `DET_PRUNE` / `DET_PRUNE_APPLY` / `DET_PRUNE_KEEP` | Optional prune after load |
+| `DET_LOCK_TTL_SEC` | Lake lease TTL seconds (default 7200). Per-run: DAG conf `lock_ttl_sec` or `det --lock-ttl-sec` |
+| `DET_LOCK=0` | Disables the lake lease (unsafe; tests only) |
+
+Do **not** set `max_active_runs=1` on `det_extract_bronze` to “fix” locking — that serializes backfill of many days. The lake lease is per `(pipeline, interval)`; cap backfill with a pool / mapped TI limit later.
+
+Wedged lock after a dead worker (TTL still in the future): confirm the DagRun/CLI is dead, then `det lock-release -p … -s … --force` or trigger manual DAG `det_clear_lock` with `force: true`. MCP must not delete locks.
 
 ## Backfill
 

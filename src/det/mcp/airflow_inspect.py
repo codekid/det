@@ -20,6 +20,7 @@ DET_DAG_IDS = (
     "det_extract_bronze",
     "det_backfill_extract_bronze",
     "det_dbt_silver_gold",
+    "det_clear_lock",
 )
 
 DEFAULT_BASE_URL = "http://localhost:8080"

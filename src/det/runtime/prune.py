@@ -11,6 +11,7 @@ from det.logging import bound_run_context, get_logger, sanitize_lake_uri
 from det.runtime.config import PipelineConfig
 from det.runtime.ids import sql_names_for_config
 from det.runtime.lake import LakeRef
+from det.runtime.lease import pipeline_lease
 from det.runtime.meta import from_partition_value, identity_iso, resolve_interval
 
 logger = get_logger(__name__)
@@ -92,9 +93,25 @@ class BronzePruner:
         self,
         config: PipelineConfig,
         plan: PrunePlan,
+        *,
+        interval_start: str | None = None,
+        interval_end: str | None = None,
+        lock_ttl_sec: int | None = None,
     ) -> int:
         if not plan.to_remove:
             return 0
+        dest = config.destination
+        if interval_start is not None:
+            start_iso, end_iso = resolve_interval(interval_start, interval_end)
+            with pipeline_lease(
+                lake_root(dest, self.project_root),
+                pipeline=config.name,
+                interval_start=start_iso,
+                interval_end=end_iso,
+                command="prune",
+                ttl_sec=lock_ttl_sec,
+            ):
+                return self._apply_body(config, plan)
         return self._apply_body(config, plan)
 
     def _apply_body(self, config: PipelineConfig, plan: PrunePlan) -> int:
