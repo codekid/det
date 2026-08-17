@@ -65,6 +65,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "integration: slower end-to-end tests",
+    "postgres: live Postgres (skipped unless DET_POSTGRES_DSN is set)",
 ]
 
 [tool.ruff]
