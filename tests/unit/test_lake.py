@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import gzip
 from pathlib import Path
 
 import pytest
+import requests
 import yaml
 
 from det.runtime.lake import (
@@ -16,6 +18,7 @@ from det.runtime.lake import (
 from det.runtime.manifest import is_committed_raw_dir, read_manifest, write_manifest
 from det.runtime.runner import PipelineRunner
 from det.sources.example_api.events import ExampleApiSource
+from det.sources.http import http_get_file
 
 
 @pytest.fixture(autouse=True)
@@ -151,6 +154,57 @@ def test_memory_listing_stays_under_dataset(tmp_path: Path):
     # Listing the dataset prefix must not surface sibling datasets.
     walked = [p.name for p in dataset.rglob("*")]
     assert walked == ["keep.txt"]
+
+
+def test_http_get_file_memory_upload_and_retry_deletes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    payload = gzip.compress(b"a,b\n1,2\n")
+
+    class FakeResponse:
+        def __init__(self, status: int, content: bytes = b"", headers=None):
+            self.status_code = status
+            self.headers = headers or {}
+            self._content = content
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                err = requests.HTTPError(f"HTTP {self.status_code}")
+                err.response = self
+                raise err
+
+        def iter_content(self, chunk_size: int = 1):
+            yield self._content
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    leftover = [
+        FakeResponse(503),
+        FakeResponse(200, payload, {"Content-Length": str(len(payload))}),
+    ]
+
+    def fake_get(self, url, **kwargs):
+        return leftover.pop(0)
+
+    monkeypatch.setattr(requests.Session, "get", fake_get)
+    monkeypatch.setattr("det.sources.http.time.sleep", lambda s: None)
+
+    dest = open_lake("memory://http", tmp_path) / "file.csv.gz"
+    n = http_get_file(
+        "https://example/file.csv.gz",
+        dest,
+        timeout=1,
+        max_attempts=3,
+        encoding="gzip",
+    )
+    assert n == len(payload)
+    assert dest.is_file()
+    assert dest.read_bytes() == payload
+    assert leftover == []
 
 
 def test_path_constructor_never_used_for_s3(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from det.runtime.lake import LakeRef
+
 
 @dataclass
 class Interval:
@@ -38,7 +40,7 @@ class SourcePlugin(Protocol):
         *,
         config: dict[str, Any],
         interval: Interval,
-        data_dir: Path,
+        data_dir: Path | LakeRef,
     ) -> list[dict[str, Any]]:
         """
         Fetch or copy source bytes into data_dir, run a format check, return artifact
@@ -50,7 +52,7 @@ class SourcePlugin(Protocol):
         self,
         *,
         config: dict[str, Any],
-        raw_dir: Path,
+        raw_dir: Path | LakeRef,
         manifest: dict[str, Any],
     ) -> Iterator[SourceRow]:
         """Parse data/ artifacts into source-native rows (no naming; runtime coerces)."""

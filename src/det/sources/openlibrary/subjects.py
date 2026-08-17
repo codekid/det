@@ -9,6 +9,7 @@ from dlt.sources.helpers.rest_client import RESTClient
 from dlt.sources.helpers.rest_client.paginators import OffsetPaginator
 
 from det.logging import get_logger
+from det.runtime.lake import LakeRef
 from det.sources.base import Interval, SourceRow
 from det.sources.http_json import dig, write_json_page
 
@@ -79,7 +80,7 @@ class OpenLibrarySubjectsSource:
         *,
         config: dict[str, Any],
         interval: Interval,
-        data_dir: Path,
+        data_dir: Path | LakeRef,
     ) -> list[dict[str, Any]]:
         pages_dir = data_dir / "pages"
         pages_dir.mkdir(parents=True, exist_ok=True)
@@ -170,7 +171,7 @@ class OpenLibrarySubjectsSource:
         self,
         *,
         config: dict[str, Any],
-        raw_dir: Path,
+        raw_dir: Path | LakeRef,
         manifest: dict[str, Any],
     ) -> Iterator[SourceRow]:
         record_path = str(config.get("record_path") or "works")
