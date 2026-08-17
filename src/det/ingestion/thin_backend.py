@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 from det.ingestion.jsonl import write_jsonl_partition
 from det.logging import get_logger
 from det.runtime.config import DestinationConfig, PipelineConfig
+from det.runtime.lake import LakeRef
 
 logger = get_logger(__name__)
 
@@ -23,22 +25,23 @@ class ThinBackend:
 
     def write(
         self,
-        records: list[dict[str, Any]],
+        records: Iterable[dict[str, Any]],
         *,
         config: PipelineConfig,
         project_root: Path,
-        partition_dir: Path,
+        partition_dir: Path | LakeRef,
         destination: DestinationConfig,
-    ) -> Path:
+        chunk_rows: int | None = None,
+    ) -> Path | LakeRef:
         if destination.type != "filesystem":
             raise ValueError(
                 f"thin backend only supports filesystem destination, got {destination.type}"
             )
-        out = write_jsonl_partition(records, partition_dir)
+        size = config.ingestion.chunk_rows if chunk_rows is None else chunk_rows
+        write_jsonl_partition(records, partition_dir, chunk_rows=size)
         logger.info(
             "thin backend wrote partition",
-            path=str(out),
-            rows=len(records),
+            path=str(partition_dir),
             pipeline=config.name,
         )
         return partition_dir

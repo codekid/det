@@ -7,9 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from det.destinations.models import bronze_dataset_dir
+from det.destinations.models import bronze_dataset_dir, lake_root
 from det.logging import get_logger
-from det.runtime.config import PipelineConfig, resolve_path
+from det.runtime.config import PipelineConfig
+from det.runtime.lake import LakeRef
 
 logger = get_logger(__name__)
 
@@ -19,13 +20,15 @@ class ViewSizeWarning:
     message: str
 
 
-def _bronze_jsonl_files(bronze_root: Path) -> list[Path]:
+def _bronze_jsonl_files(bronze_root: Path | LakeRef) -> list[Path | LakeRef]:
     if not bronze_root.is_dir():
         return []
-    return sorted(bronze_root.glob("**/data.jsonl"))
+    return sorted(p for p in bronze_root.rglob("data.jsonl") if p.is_file())
 
 
-def _estimate_parent_rows(files: list[Path], *, sample_lines: int = 50) -> int | None:
+def _estimate_parent_rows(
+    files: list[Path | LakeRef], *, sample_lines: int = 50
+) -> int | None:
     """Estimate parent row count from total bytes / mean bytes-per-line."""
     if not files:
         return None
@@ -57,7 +60,7 @@ def _estimate_parent_rows(files: list[Path], *, sample_lines: int = 50) -> int |
 
 
 def _iter_sample_rows(
-    files: list[Path],
+    files: list[Path | LakeRef],
     *,
     limit: int,
 ) -> list[dict[str, Any]]:
@@ -110,7 +113,7 @@ def collect_view_size_warnings(
     config: PipelineConfig,
     *,
     project_root: Path,
-    lake_path: Path | None = None,
+    lake_path: str | Path | None = None,
 ) -> list[ViewSizeWarning]:
     """
     Sample bronze and return warnings for large view-materialized relations.
@@ -189,7 +192,7 @@ def emit_view_size_warnings(
     config: PipelineConfig,
     *,
     project_root: Path,
-    lake_path: Path | None = None,
+    lake_path: str | Path | None = None,
 ) -> list[ViewSizeWarning]:
     """Collect warnings and log them (advisory; never fails)."""
     warnings = collect_view_size_warnings(
@@ -200,5 +203,5 @@ def emit_view_size_warnings(
     return warnings
 
 
-def resolve_lake_path(config: PipelineConfig, project_root: Path) -> Path:
-    return resolve_path(project_root, config.destination.path)
+def resolve_lake_path(config: PipelineConfig, project_root: Path) -> str:
+    return str(lake_root(config.destination, project_root))

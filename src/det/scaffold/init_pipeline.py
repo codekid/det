@@ -14,6 +14,7 @@ from det.runtime.ids import (
     parse_canonical_id,
     validate_canonical_id,
 )
+from det.runtime.lake import DEFAULT_LAKE_REL
 from det.runtime.registry import list_sources
 from det.scaffold.dbt import ScaffoldAction, ScaffoldResult, scaffold_dbt
 
@@ -51,7 +52,7 @@ def init_pipeline(
     dry_run: bool = False,
     skip_dbt: bool = False,
     destination_type: str = "filesystem",
-    lake_path: str = "./data/lake",
+    lake_path: str | None = None,
     connection: str | None = None,
 ) -> InitPipelineResult:
     """
@@ -81,7 +82,12 @@ def init_pipeline(
     schema_path = root / schema_rel
     actions: list[ScaffoldAction] = []
 
-    dest: dict = {"type": destination_type, "path": lake_path}
+    dest: dict = {"type": destination_type}
+    if lake_path and lake_path.strip() and lake_path.strip() not in {
+        DEFAULT_LAKE_REL,
+        "data/lake",
+    }:
+        dest["path"] = lake_path.strip()
     if destination_type in {"duckdb", "postgres"}:
         if not connection:
             raise ValueError(

@@ -9,6 +9,20 @@ import pendulum
 from pendulum import DateTime
 
 
+def identity_iso(value: object) -> str:
+    """Normalize a SQL or Python datetime/string to DET ISO-8601 UTC identity."""
+    if isinstance(value, DateTime):
+        return value.in_timezone("UTC").isoformat()
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return pendulum.instance(value, tz="UTC").isoformat()
+        return pendulum.instance(value).in_timezone("UTC").isoformat()
+    text = str(value)
+    if len(text) >= 15 and text[8:9] == "T" and "-" not in text[:8]:
+        return from_partition_value(text)
+    return to_interval_datetime(text)
+
+
 def to_interval_datetime(value: datetime | DateTime | str) -> str:
     """
     Normalize an interval bound to ISO 8601 in UTC, e.g. 2026-08-06T00:00:00+00:00.

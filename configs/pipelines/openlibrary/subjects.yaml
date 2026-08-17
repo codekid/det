@@ -16,7 +16,6 @@ ingestion:
   library: det
 destination:
   type: duckdb
-  path: ./data/lake
   connection: ./data/analytics.duckdb
   dataset: bronze
 medallion:
