@@ -1,4 +1,4 @@
-disaster_analytics:
+analytics:
   target: duckdb
   outputs:
     duckdb:
