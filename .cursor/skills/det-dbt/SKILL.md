@@ -27,6 +27,8 @@ Install: `uv pip install -e ".[mcp,dbt]"`.
   `{name}_vN`); see det-migrate. Re-scaffold with `--force` so sources point at
   the new bronze era (model names stay the same).
 - Nested **structs** flatten in `dbt.stg` (`a.b` → `a__b`); **arrays** only via explicit `relations:`.
+- **Docs:** JSON Schema `description` → bronze `sources.yml`; `dbt.docs.columns`
+  (post-stg names) → silver `_silver__models.yml`. `dbt.stg` is transforms-only.
 
 ## Workflow
 
@@ -38,7 +40,7 @@ Install: `uv pip install -e ".[mcp,dbt]"`.
 4. Run locally: `det dbt -p <pipeline>` or `make dbt` (sets `DET_LAKE_PATH`).
    Nested flatten/relations: configure `dbt.stg` then `det scaffold-dbt -p …`.
 
-## `dbt.stg` / `dbt.silver` (scaffold knobs)
+## `dbt.stg` / `dbt.silver` / `dbt.docs` (scaffold knobs)
 
 ```yaml
 dbt:
@@ -92,6 +94,11 @@ dbt:
       sample_rows: 5000
       parent_rows: 500000
       child_rows: 2000000
+  # Post-stg column docs for silver YAML (wire field docs live on the JSON Schema).
+  docs:
+    columns:
+      event_severity: Normalized severity for reporting (coalesced historical names).
+      state: State abbreviation; sentinels cleared in stg.
 ```
 
 ### Nested flatten + relations
@@ -123,14 +130,17 @@ Bronze recreate after renames: identity migrate (no growing Python normalize map
 
 | Var | Role |
 | --- | --- |
-| `DET_LAKE_PATH` | Filesystem lake root for schema-aware `read_json` |
-| `DET_BRONZE_SOURCE` | `filesystem` (default) or `duckdb` |
+| `DET_LAKE_PATH` | Lake root for schema-aware `read_json` or `iceberg_scan` (default `./data/lake`; `s3://`/`gs://` for DET I/O — dbt JSONL globs stay local) |
+| `DET_BRONZE_SOURCE` | `filesystem` (default), `iceberg`, or `duckdb` |
 | `DET_BRONZE_SCHEMA` | SQL schema when bronze is DuckDB/Postgres |
 | `DET_ANALYTICS_DUCKDB` | Absolute analytics DB path (prefer in Airflow/Compose) |
 
 Macro `det_bronze_from("table", "bronze_{provider}")` switches stg to a native
-DuckDB table when `DET_BRONZE_SOURCE=duckdb`. Pass the source name explicitly so
-multi-provider projects parse when `det dbt -p` sets `DET_BRONZE_SCHEMA`.
+DuckDB table when `DET_BRONZE_SOURCE=duckdb`. Iceberg bronze keeps `source()` and
+reads `iceberg_scan` from `sources.yml` when `DET_BRONZE_SOURCE=iceberg`. Pass the
+source name explicitly so multi-provider projects parse when `det dbt -p` sets
+`DET_BRONZE_SCHEMA`. BigQuery is a later **reader** of the Iceberg table (BigLake),
+not a DET destination.
 
 ## Hard rules
 

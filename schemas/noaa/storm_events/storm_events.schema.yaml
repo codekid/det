@@ -1,60 +1,182 @@
 $schema: https://json-schema.org/draft/2020-12/schema
 $title: storm_events
 description: >
-  Bronze contract: snake_case names and typed values. DET coerces source strings
-  to these types before validation.
+  NOAA Storm Events details (StormEvents_details CSV). Bronze contract: snake_case
+  names and typed values. DET coerces source strings to these types before validation.
+  Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.
 type: object
 required: [begin_day, begin_time, event_id]
 properties:
-  begin_yearmonth: { type: ["integer", "null"] }
-  begin_day: { type: "integer" }
-  begin_time: { type: "integer" }
-  end_yearmonth: { type: ["integer", "null"] }
-  end_day: { type: ["integer", "null"] }
-  end_time: { type: ["integer", "null"] }
-  episode_id: { type: ["integer", "null"] }
-  event_id: { type: "integer" }
-  state: { type: ["string", "null"] }
-  state_fips: { type: ["integer", "null"] }
-  year: { type: ["integer", "null"] }
-  month_name: { type: ["string", "null"] }
-  event_type: { type: ["string", "null"] }
-  cz_type: { type: ["string", "null"] }
-  cz_fips: { type: ["integer", "null"] }
-  cz_name: { type: ["string", "null"] }
-  wfo: { type: ["string", "null"] }
-  begin_date_time: { type: ["string", "null"] }
-  cz_timezone: { type: ["string", "null"] }
-  end_date_time: { type: ["string", "null"] }
-  injuries_direct: { type: ["integer", "null"] }
-  injuries_indirect: { type: ["integer", "null"] }
-  deaths_direct: { type: ["integer", "null"] }
-  deaths_indirect: { type: ["integer", "null"] }
-  damage_property: { type: ["string", "null"] }
-  damage_crops: { type: ["string", "null"] }
-  source: { type: ["string", "null"] }
-  magnitude: { type: ["number", "null"] }
-  magnitude_type: { type: ["string", "null"] }
-  flood_cause: { type: ["string", "null"] }
-  category: { type: ["string", "null"] }
-  tor_f_scale: { type: ["string", "null"] }
-  tor_length: { type: ["number", "null"] }
-  tor_width: { type: ["integer", "null"] }
-  tor_other_wfo: { type: ["string", "null"] }
-  tor_other_cz_state: { type: ["string", "null"] }
-  tor_other_cz_fips: { type: ["string", "null"] }
-  tor_other_cz_name: { type: ["string", "null"] }
-  begin_range: { type: ["number", "null"] }
-  begin_azimuth: { type: ["string", "null"] }
-  begin_location: { type: ["string", "null"] }
-  end_range: { type: ["number", "null"] }
-  end_azimuth: { type: ["string", "null"] }
-  end_location: { type: ["string", "null"] }
-  begin_lat: { type: ["number", "null"] }
-  begin_lon: { type: ["number", "null"] }
-  end_lat: { type: ["number", "null"] }
-  end_lon: { type: ["number", "null"] }
-  episode_narrative: { type: ["string", "null"] }
-  event_narrative: { type: ["string", "null"] }
-  data_source: { type: ["string", "null"] }
+  begin_yearmonth:
+    type: ["integer", "null"]
+    description: Year and month the event began (YYYYMM).
+  begin_day:
+    type: "integer"
+    description: Day of the month the event began (DD).
+  begin_time:
+    type: "integer"
+    description: Time of day the event began (hhmm, 24-hour).
+  end_yearmonth:
+    type: ["integer", "null"]
+    description: Year and month the event ended (YYYYMM).
+  end_day:
+    type: ["integer", "null"]
+    description: Day of the month the event ended (DD).
+  end_time:
+    type: ["integer", "null"]
+    description: Time of day the event ended (hhmm, 24-hour).
+  episode_id:
+    type: ["integer", "null"]
+    description: >
+      NWS-assigned id for the storm episode; an episode may contain multiple events.
+  event_id:
+    type: "integer"
+    description: >
+      NWS-assigned id for each individual storm event within an episode; primary key
+      linking details, locations, and fatalities.
+  state:
+    type: ["string", "null"]
+    description: State name where the event occurred (spelled out, ALL CAPS).
+  state_fips:
+    type: ["integer", "null"]
+    description: State FIPS code assigned by NIST.
+  year:
+    type: ["integer", "null"]
+    description: Four-digit year for the event in this record.
+  month_name:
+    type: ["string", "null"]
+    description: Month name for the event (spelled out, not abbreviated).
+  event_type:
+    type: ["string", "null"]
+    description: >
+      Meteorological event name permitted in Storm Data (NWS Directive 10-1605
+      Section 2.1.1); spelled out, not abbreviated.
+  cz_type:
+    type: ["string", "null"]
+    description: >
+      Whether the event happened in a County/Parish (C), NWS Public Forecast Zone (Z),
+      or Marine (M).
+  cz_fips:
+    type: ["integer", "null"]
+    description: County FIPS number (NIST) or NWS Forecast Zone number.
+  cz_name:
+    type: ["string", "null"]
+    description: County/Parish, Zone, or Marine name for cz_fips.
+  wfo:
+    type: ["string", "null"]
+    description: >
+      NWS Forecast Office County Warning Area (CWA) where the event occurred.
+  begin_date_time:
+    type: ["string", "null"]
+    description: Event begin datetime (MM/DD/YYYY hh:mm:ss, usually LST).
+  cz_timezone:
+    type: ["string", "null"]
+    description: >
+      Time zone for the County/Parish, Zone, or Marine name (e.g. EST-5, CST-6).
+  end_date_time:
+    type: ["string", "null"]
+    description: Event end datetime (MM/DD/YYYY hh:mm:ss, usually LST).
+  injuries_direct:
+    type: ["integer", "null"]
+    description: Number of injuries directly caused by the weather event.
+  injuries_indirect:
+    type: ["integer", "null"]
+    description: Number of injuries indirectly caused by the weather event.
+  deaths_direct:
+    type: ["integer", "null"]
+    description: Number of deaths directly caused by the weather event.
+  deaths_indirect:
+    type: ["integer", "null"]
+    description: Number of deaths indirectly caused by the weather event.
+  damage_property:
+    type: ["string", "null"]
+    description: >
+      Estimated property damage (e.g. 10.00K = $10,000; 10.00M = $10,000,000).
+  damage_crops:
+    type: ["string", "null"]
+    description: >
+      Estimated crop damage (e.g. 10.00K = $10,000; 10.00M = $10,000,000).
+  source:
+    type: ["string", "null"]
+    description: Source reporting the weather event (unrestricted free text).
+  magnitude:
+    type: ["number", "null"]
+    description: >
+      Measured extent for magnitude_type — wind speeds in knots or hail size in
+      inches (to the hundredth).
+  magnitude_type:
+    type: ["string", "null"]
+    description: >
+      EG = estimated gust; ES = estimated sustained; MS = measured sustained;
+      MG = measured gust (no magnitude for hail).
+  flood_cause:
+    type: ["string", "null"]
+    description: Reported or estimated cause of the flood.
+  category:
+    type: ["string", "null"]
+    description: Event category (rarely populated in NCEI bulk exports).
+  tor_f_scale:
+    type: ["string", "null"]
+    description: >
+      Enhanced Fujita scale for tornado damage (EF0–EF5); highest value recorded
+      for the event.
+  tor_length:
+    type: ["number", "null"]
+    description: Length of the tornado or segment on the ground (miles to the tenth).
+  tor_width:
+    type: ["integer", "null"]
+    description: Width of the tornado or segment on the ground (whole yards).
+  tor_other_wfo:
+    type: ["string", "null"]
+    description: >
+      Subsequent WFO when a tornado segment continues into another forecast office.
+  tor_other_cz_state:
+    type: ["string", "null"]
+    description: >
+      Two-letter state id for the continuing tornado segment in another county/zone.
+  tor_other_cz_fips:
+    type: ["string", "null"]
+    description: FIPS of the county entered by the continuing tornado segment.
+  tor_other_cz_name:
+    type: ["string", "null"]
+    description: County/zone name for the continuing tornado segment (ALL CAPS).
+  begin_range:
+    type: ["number", "null"]
+    description: Distance in miles (to the tenth) to begin_location.
+  begin_azimuth:
+    type: ["string", "null"]
+    description: 16-point compass direction from begin_location.
+  begin_location:
+    type: ["string", "null"]
+    description: City/town/village used as the begin range/azimuth reference.
+  end_range:
+    type: ["number", "null"]
+    description: Distance in miles (to the tenth) to end_location.
+  end_azimuth:
+    type: ["string", "null"]
+    description: 16-point compass direction from end_location.
+  end_location:
+    type: ["string", "null"]
+    description: City/town/village used as the end range/azimuth reference.
+  begin_lat:
+    type: ["number", "null"]
+    description: Latitude in decimal degrees of the begin point of the event/path.
+  begin_lon:
+    type: ["number", "null"]
+    description: Longitude in decimal degrees of the begin point of the event/path.
+  end_lat:
+    type: ["number", "null"]
+    description: Latitude in decimal degrees of the end point of the event/path.
+  end_lon:
+    type: ["number", "null"]
+    description: Longitude in decimal degrees of the end point of the event/path.
+  episode_narrative:
+    type: ["string", "null"]
+    description: NWS narrative of the general nature and overall activity of the episode.
+  event_narrative:
+    type: ["string", "null"]
+    description: NWS narrative with descriptive details of the individual event.
+  data_source:
+    type: ["string", "null"]
+    description: Source system indicator on the bulk CSV row (e.g. CSV / PDC).
 additionalProperties: false

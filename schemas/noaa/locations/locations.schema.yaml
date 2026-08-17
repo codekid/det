@@ -1,20 +1,50 @@
 $schema: https://json-schema.org/draft/2020-12/schema
 $title: locations
 description: >
-  Bronze contract for NOAA Storm Events location CSVs: snake_case names and
-  typed values. DET coerces source strings to these types before validation.
+  NOAA Storm Events locations (StormEvents_locations CSV). Bronze contract:
+  snake_case names and typed values. DET coerces source strings to these types
+  before validation. Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.
 type: object
 required: [event_id, location_index]
 properties:
-  yearmonth: { type: ["integer", "null"] }
-  episode_id: { type: ["integer", "null"] }
-  event_id: { type: "integer" }
-  location_index: { type: "integer" }
-  range: { type: ["number", "null"] }
-  azimuth: { type: ["string", "null"] }
-  location: { type: ["string", "null"] }
-  latitude: { type: ["number", "null"] }
-  longitude: { type: ["number", "null"] }
-  lat2: { type: ["integer", "null"] }
-  lon2: { type: ["integer", "null"] }
+  yearmonth:
+    type: ["integer", "null"]
+    description: Year and month for the location row (YYYYMM).
+  episode_id:
+    type: ["integer", "null"]
+    description: >
+      NWS-assigned id for the storm episode; an episode may contain multiple events.
+  event_id:
+    type: "integer"
+    description: >
+      NWS-assigned id for each individual storm event within an episode; primary key
+      linking details, locations, and fatalities.
+  location_index:
+    type: "integer"
+    description: >
+      NWS-assigned sequence number for specific locations within the same storm
+      event; each index has a corresponding lat/lon point.
+  range:
+    type: ["number", "null"]
+    description: >
+      Distance (to the tenth of a mile) to the geographical center or primary post
+      office of the referenced village/city.
+  azimuth:
+    type: ["string", "null"]
+    description: 16-point compass direction from the documented reference location.
+  location:
+    type: ["string", "null"]
+    description: City/town/village from which range and azimuth are determined.
+  latitude:
+    type: ["number", "null"]
+    description: Latitude where the event occurred (negative in the southern hemisphere).
+  longitude:
+    type: ["number", "null"]
+    description: Longitude where the event occurred (negative in the western hemisphere).
+  lat2:
+    type: ["integer", "null"]
+    description: Scaled integer encoding of latitude from the bulk CSV (LAT2).
+  lon2:
+    type: ["integer", "null"]
+    description: Scaled integer encoding of longitude from the bulk CSV (LON2).
 additionalProperties: false

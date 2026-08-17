@@ -299,3 +299,128 @@ destination:
         isinstance(t, dict) and "accepted_values" in t
         for t in col_tests["event_severity"]
     )
+
+
+def test_scaffold_propagates_schema_and_docs_descriptions(tmp_path: Path):
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Wire events contract for tests.",
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+            "id": {"type": "string", "description": "Primary key from API."},
+            "severity": {"type": "string", "description": "Legacy severity."},
+            "level": {"type": "string", "description": "Current severity."},
+            "state": {
+                "type": ["string", "null"],
+                "description": "Two-letter state code.",
+            },
+            "analytics_only_src": {"type": "string"},
+        },
+        "additionalProperties": False,
+    }
+    schema_path = (
+        tmp_path / "schemas" / "example_api" / "events" / "events.schema.yaml"
+    )
+    schema_path.parent.mkdir(parents=True)
+    schema_path.write_text(yaml.safe_dump(schema), encoding="utf-8")
+
+    pipeline = tmp_path / "configs" / "pipelines" / "example_api" / "events.yaml"
+    pipeline.parent.mkdir(parents=True)
+    pipeline.write_text(
+        """
+name: example_api.events
+source:
+  type: example_api.events
+schema: schemas/example_api/events/events.schema.yaml
+wire_version: 1
+dbt:
+  silver:
+    unique_key: [__row_hash]
+    order_by: ["__extract_run_datetime desc"]
+    not_null: [id]
+  stg:
+    coalesce:
+      severity: [severity, level]
+    rename:
+      severity: event_severity
+    exclude: [level]
+  docs:
+    columns:
+      event_severity: Analytics severity (docs overlay).
+      state: State for reporting (docs overlay).
+      report_bucket: Docs-only column with no schema property.
+destination:
+  type: filesystem
+  path: ./data/lake
+""",
+        encoding="utf-8",
+    )
+    config = load_pipeline_config(pipeline)
+    models = tmp_path / "dbt" / "models" / "silver"
+    scaffold_dbt(config, project_root=tmp_path, dbt_models_dir=models)
+
+    sources_text = (models / "sources.yml").read_text(encoding="utf-8")
+    assert "Wire events contract for tests." in sources_text
+    assert "Primary key from API." in sources_text
+    assert "Legacy severity." in sources_text
+    assert "DET content hash used for silver dedupe." in sources_text
+
+    stg = (models / "stg_example_api__events.sql").read_text(encoding="utf-8")
+    # stg SQL stays transforms-only (descriptions live in YAML only)
+    assert "Analytics severity" not in stg
+    assert "Wire events contract" not in stg
+    assert "Primary key from API" not in stg
+
+    silver_yml = yaml.safe_load(
+        (models / "_silver__models.yml").read_text(encoding="utf-8")
+    )
+    model = next(
+        m for m in silver_yml["models"] if m["name"] == "silver_example_api__events"
+    )
+    assert model["description"] == "Wire events contract for tests."
+    by_name = {c["name"]: c for c in model["columns"]}
+    assert by_name["event_severity"]["description"] == "Analytics severity (docs overlay)."
+    assert by_name["state"]["description"] == "State for reporting (docs overlay)."
+    assert by_name["id"]["description"] == "Primary key from API."
+    assert by_name["report_bucket"]["description"] == (
+        "Docs-only column with no schema property."
+    )
+    assert "tests" not in by_name["report_bucket"]
+    assert by_name["__row_hash"]["description"] == (
+        "DET content hash used for silver dedupe."
+    )
+
+
+def test_scaffold_iceberg_uses_iceberg_scan(tmp_path: Path):
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": ["event_id"],
+        "properties": {"event_id": {"type": "integer"}},
+        "additionalProperties": False,
+    }
+    schema_path = tmp_path / "schemas" / "noaa" / "storm_events" / "storm_events.schema.yaml"
+    schema_path.parent.mkdir(parents=True)
+    schema_path.write_text(yaml.safe_dump(schema), encoding="utf-8")
+    pipeline = tmp_path / "configs" / "pipelines" / "noaa" / "storm_events.yaml"
+    pipeline.parent.mkdir(parents=True)
+    pipeline.write_text(
+        """
+name: noaa.storm_events
+source:
+  type: noaa.storm_events
+schema: schemas/noaa/storm_events/storm_events.schema.yaml
+destination:
+  type: iceberg
+""",
+        encoding="utf-8",
+    )
+    config = load_pipeline_config(pipeline)
+    models = tmp_path / "dbt" / "models" / "silver"
+    scaffold_dbt(config, project_root=tmp_path, dbt_models_dir=models)
+    sources_text = (models / "sources.yml").read_text(encoding="utf-8")
+    assert "iceberg_scan(" in sources_text
+    assert "**/data.jsonl" not in sources_text
+    assert "storm_events_v1" in sources_text
+    assert 'env_var("DET_LAKE_PATH"' in sources_text or "env_var('DET_LAKE_PATH'" in sources_text

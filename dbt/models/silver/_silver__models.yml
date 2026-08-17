@@ -1,45 +1,65 @@
 version: 2
 models:
 - name: silver_noaa__storm_events
-  description: Cleaned, deduped noaa__storm_events (silver)
+  description: 'NOAA Storm Events details (StormEvents_details CSV). Bronze contract:
+    snake_case names and typed values. DET coerces source strings to these types before
+    validation. Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.'
   columns:
   - name: __row_hash
+    description: DET content hash used for silver dedupe.
     tests:
     - unique
     - not_null
   - name: begin_day
+    description: Day of the month the event began (DD).
     tests:
     - not_null
   - name: begin_time
+    description: Time of day the event began (hhmm, 24-hour).
     tests:
     - not_null
   - name: event_id
+    description: NWS-assigned id for each individual storm event within an episode;
+      primary key linking details, locations, and fatalities.
     tests:
     - not_null
 - name: silver_noaa__fatalities
-  description: Cleaned, deduped noaa__fatalities (silver)
+  description: 'NOAA Storm Events fatalities (StormEvents_fatalities CSV). Bronze
+    contract: snake_case names and typed values. DET coerces source strings to these
+    types before validation. Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.'
   columns:
   - name: __row_hash
+    description: DET content hash used for silver dedupe.
     tests:
     - unique
     - not_null
   - name: fatality_id
+    description: NWS-assigned id for the individual fatality.
     tests:
     - not_null
   - name: event_id
+    description: NWS-assigned id for each individual storm event within an episode;
+      primary key linking details, locations, and fatalities.
     tests:
     - not_null
 - name: silver_noaa__locations
-  description: Cleaned, deduped noaa__locations (silver)
+  description: 'NOAA Storm Events locations (StormEvents_locations CSV). Bronze contract:
+    snake_case names and typed values. DET coerces source strings to these types before
+    validation. Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.'
   columns:
   - name: __row_hash
+    description: DET content hash used for silver dedupe.
     tests:
     - unique
     - not_null
   - name: event_id
+    description: NWS-assigned id for each individual storm event within an episode;
+      primary key linking details, locations, and fatalities.
     tests:
     - not_null
   - name: location_index
+    description: NWS-assigned sequence number for specific locations within the same
+      storm event; each index has a corresponding lat/lon point.
     tests:
     - not_null
 - name: silver_openlibrary__subjects
@@ -56,20 +76,28 @@ models:
     tests:
     - not_null
 - name: silver_example_api__events
-  description: Cleaned, deduped example_api__events (silver)
+  description: Bronze contract for example_api events. Wire-faithful typed landing;
+    analytics renames/coalesce live in dbt.stg.
   columns:
   - name: __row_hash
+    description: DET content hash used for silver dedupe.
     tests:
     - unique
     - not_null
   - name: id
+    description: Upstream event id (stable primary key).
     tests:
     - unique
     - not_null
   - name: occurred_at
+    description: Event timestamp as sent by the API (ISO-8601 string).
     tests:
     - not_null
   - name: event_severity
+    description: 'Normalized severity for reporting. Coalesces historical severity
+      / severity_level / level into one field.
+
+      '
     tests:
     - accepted_values:
         values:
@@ -78,12 +106,19 @@ models:
         - high
         - critical
   - name: status
+    description: 'Status as open/closed/archived (mapped from numeric codes when present).
+
+      '
     tests:
     - accepted_values:
         values:
         - open
         - closed
         - archived
+  - name: state
+    description: 'State abbreviation; empty/NA/null sentinels cleared in stg.
+
+      '
 - name: silver_example_api__orders
   description: Cleaned, deduped example_api__orders (silver)
   columns:
