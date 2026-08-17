@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -28,15 +29,19 @@ class DetBackend:
 
     def write(
         self,
-        records: list[dict[str, Any]],
+        records: Iterable[dict[str, Any]],
         *,
         config: PipelineConfig,
         project_root: Path,
         partition_dir: Path,
         destination: DestinationConfig,
+        chunk_rows: int | None = None,
     ) -> Path:
+        size = config.ingestion.chunk_rows if chunk_rows is None else chunk_rows
         if destination.type == "filesystem":
-            return self._write_filesystem(records, config=config, partition_dir=partition_dir)
+            return self._write_filesystem(
+                records, config=config, partition_dir=partition_dir, chunk_rows=size
+            )
         if destination.type == "duckdb":
             return self._write_duckdb(
                 records, config=config, project_root=project_root, destination=destination
@@ -49,16 +54,16 @@ class DetBackend:
 
     def _write_filesystem(
         self,
-        records: list[dict[str, Any]],
+        records: Iterable[dict[str, Any]],
         *,
         config: PipelineConfig,
         partition_dir: Path,
+        chunk_rows: int,
     ) -> Path:
-        out = write_jsonl_partition(records, partition_dir)
+        out = write_jsonl_partition(records, partition_dir, chunk_rows=chunk_rows)
         logger.info(
             "filesystem load finished",
             path=str(out),
-            rows=len(records),
             pipeline=config.name,
         )
         return partition_dir
