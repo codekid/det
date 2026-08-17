@@ -10,6 +10,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from det.logging import get_logger
 from det.runtime.config import (
+    DbtDocsConfig,
     DbtSilverConfig,
     DbtStgConfig,
     PipelineConfig,
@@ -17,6 +18,11 @@ from det.runtime.config import (
     resolve_path,
 )
 from det.runtime.ids import dbt_model_slug, parse_canonical_id, sql_names_for_config
+from det.runtime.sql_types import (
+    META_SQL_TYPES_DUCKDB,
+    bronze_sql_columns,
+    duckdb_type_for_prop,
+)
 from det.scaffold.adapt_scope import (
     FlatAdapt,
     compile_relation_adapt,
@@ -49,17 +55,81 @@ _META_COLUMNS = [
 ]
 
 # DuckDB types for DET meta columns in schema-aware read_json(... columns={}).
-_META_DUCKDB_TYPES = {
-    "__row_hash": "VARCHAR",
-    "__filename": "VARCHAR",
-    "__extract_run_datetime": "TIMESTAMP",
-    "__bronze_loaded_at": "TIMESTAMP",
-    "__interval_start_datetime": "TIMESTAMP",
-    "__interval_end_datetime": "TIMESTAMP",
-    "__data_interval_date": "DATE",
+_META_DUCKDB_TYPES = META_SQL_TYPES_DUCKDB
+
+_META_COLUMN_DESCRIPTIONS = {
+    "__row_hash": "DET content hash used for silver dedupe.",
+    "__filename": "Source artifact filename when extract recorded one.",
+    "__extract_run_datetime": "Extract run timestamp (UTC).",
+    "__bronze_loaded_at": "When the row was written to bronze (UTC).",
+    "__interval_start_datetime": "Pipeline interval start (UTC).",
+    "__interval_end_datetime": "Pipeline interval end (UTC).",
+    "__data_interval_date": "Calendar date of the interval start.",
 }
 
 _TEMPLATES = Path(__file__).resolve().parent / "templates"
+
+
+def schema_root_description(schema: dict[str, Any]) -> str | None:
+    raw = schema.get("description")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
+def schema_column_descriptions(schema: dict[str, Any]) -> dict[str, str]:
+    """Map bronze property name → description from JSON Schema properties."""
+    props = schema.get("properties") or {}
+    if not isinstance(props, dict):
+        return {}
+    out: dict[str, str] = {}
+    for name, prop in props.items():
+        if not isinstance(name, str) or not isinstance(prop, dict):
+            continue
+        desc = prop.get("description")
+        if isinstance(desc, str) and desc.strip():
+            out[name] = desc.strip()
+    return out
+
+
+def post_stg_description_map(
+    schema_descs: dict[str, str],
+    stg: DbtStgConfig,
+) -> dict[str, str]:
+    """
+    Remap schema descriptions onto post-stg column names (top-level only).
+
+    Coalesce: ensure the coalesce key has a description (prefer its own, else
+    first source with a desc). Rename: move desc from source → target. Exclude:
+    drop aliases from the map.
+    """
+    out = dict(schema_descs)
+    for canonical, sources in stg.coalesce.items():
+        if canonical in out:
+            continue
+        for src in sources:
+            if src in out:
+                out[canonical] = out[src]
+                break
+    for src, dest in stg.rename.items():
+        if src in out:
+            out[dest] = out.pop(src)
+    for name in stg.exclude:
+        out.pop(name, None)
+    return out
+
+
+def _yaml_block(mapping: dict[str, Any], *, indent: int) -> str:
+    """Dump a small mapping and indent every line for embedding in sources.yml."""
+    raw = yaml.safe_dump(
+        mapping,
+        sort_keys=False,
+        default_flow_style=False,
+        allow_unicode=True,
+        width=1000,
+    ).rstrip()
+    prefix = " " * indent
+    return "\n".join(prefix + line if line else line for line in raw.splitlines())
 
 
 @dataclass
@@ -96,37 +166,9 @@ def _allowed_types(prop: dict[str, Any]) -> set[str]:
     return set()
 
 
-def duckdb_type_for_prop(prop: dict[str, Any]) -> str:
-    """Map a JSON Schema property to a DuckDB read_json column type."""
-    if is_object_prop(prop) or is_array_prop(prop):
-        return "JSON"
-    allowed = _allowed_types(prop)
-    if "integer" in allowed:
-        return "INTEGER"
-    if "number" in allowed:
-        return "DOUBLE"
-    if "boolean" in allowed:
-        return "BOOLEAN"
-    if "string" in allowed:
-        return "VARCHAR"
-    return "VARCHAR"
-
-
 def read_json_columns_from_schema(schema: dict[str, Any]) -> dict[str, str]:
     """Build DuckDB ``columns={...}`` map from a DET bronze JSON Schema."""
-    props = schema.get("properties") or {}
-    if not isinstance(props, dict):
-        props = {}
-    columns: dict[str, str] = {}
-    for name, prop in props.items():
-        if not isinstance(name, str):
-            continue
-        if isinstance(prop, dict):
-            columns[name] = duckdb_type_for_prop(prop)
-        else:
-            columns[name] = "VARCHAR"
-    columns.update(_META_DUCKDB_TYPES)
-    return columns
+    return dict(bronze_sql_columns(schema, "duckdb"))
 
 
 def widen_read_json_columns(
@@ -517,29 +559,69 @@ def _table_entry_yaml(
     description: str,
     provider: str,
     columns_struct: str,
+    column_descriptions: dict[str, str] | None = None,
+    schema_properties: dict[str, Any] | None = None,
+    bronze_source: str = "filesystem",
 ) -> str:
     """
     Emit a sources.yml table block as text (not yaml.dump).
 
     ``external_location`` embeds dbt Jinja; a YAML round-trip mangles quotes.
     """
-    columns: list[dict[str, Any]] = [{"name": "__row_hash", "tests": ["not_null"]}]
+    descs = column_descriptions or {}
+    props = schema_properties or {}
+
+    ordered_names: list[str] = []
+
+    def _add(name: str) -> None:
+        if name not in ordered_names:
+            ordered_names.append(name)
+
+    _add("__row_hash")
     for col in required:
-        if col == "__row_hash":
-            continue
-        columns.append({"name": col, "tests": ["not_null"]})
+        _add(col)
+    for name in props:
+        if name in descs:
+            _add(name)
+
+    columns: list[dict[str, Any]] = []
+    for name in ordered_names:
+        entry: dict[str, Any] = {"name": name}
+        if name in _META_COLUMN_DESCRIPTIONS:
+            entry["description"] = _META_COLUMN_DESCRIPTIONS[name]
+        elif name in descs:
+            entry["description"] = descs[name]
+        if name == "__row_hash" or name in required:
+            entry["tests"] = ["not_null"]
+        columns.append(entry)
+
     cols_yaml = yaml.safe_dump(
-        columns, sort_keys=False, default_flow_style=False
+        columns, sort_keys=False, default_flow_style=False, allow_unicode=True, width=1000
     ).rstrip()
     cols_indented = "\n".join(
         "        " + line if line else line for line in cols_yaml.splitlines()
     )
+    desc_indented = _yaml_block({"description": description}, indent=8)
 
     # Match existing lake path Jinja; path is concrete per table (not {name}).
     lake_jinja = '{{ env_var("DET_LAKE_PATH", "../data/lake") }}'
+    if bronze_source == "iceberg":
+        lines = [
+            f"      - name: {table}",
+            desc_indented,
+            "        meta:",
+            "          # Iceberg bronze: DuckDB iceberg_scan of the table location",
+            "          # (Hadoop catalog on the lake). Not a JSONL hive glob.",
+            "          formatter: template",
+            "          external_location: >-",
+            f"            iceberg_scan('{lake_jinja}/bronze/{provider}/{table}')",
+            "        columns:",
+            cols_indented,
+        ]
+        return "\n".join(lines)
     lines = [
         f"      - name: {table}",
-        f"        description: {description}",
+        desc_indented,
         "        meta:",
         "          # Schema-aware columns avoid read_json_auto promoting mixed",
         "          # partitions to JSON (values that look like \"48\" / \"\").",
@@ -606,6 +688,10 @@ def _merge_sources_table(
     force: bool,
     dry_run: bool,
     actions: list[ScaffoldAction],
+    table_description: str | None = None,
+    column_descriptions: dict[str, str] | None = None,
+    schema_properties: dict[str, Any] | None = None,
+    bronze_source: str = "filesystem",
 ) -> None:
     """
     Merge a bronze table into sources.yml under ``bronze_{provider}``.
@@ -617,9 +703,12 @@ def _merge_sources_table(
     table_yaml = _table_entry_yaml(
         table,
         required,
-        description=f"DET bronze {provider}.{table}",
+        description=table_description or f"DET bronze {provider}.{table}",
         provider=provider,
         columns_struct=columns_struct,
+        column_descriptions=column_descriptions,
+        schema_properties=schema_properties,
+        bronze_source=bronze_source,
     )
 
     if not sources_path.exists():
@@ -764,6 +853,9 @@ def _merge_silver_models_yml(
     force: bool,
     dry_run: bool,
     actions: list[ScaffoldAction],
+    model_description: str | None = None,
+    column_descriptions: dict[str, str] | None = None,
+    docs: DbtDocsConfig | None = None,
 ) -> None:
     model_name = f"silver_{dataset}"
     if models_yml.exists():
@@ -795,10 +887,39 @@ def _merge_silver_models_yml(
             by_col, col, {"accepted_values": {"values": list(values)}}
         )
 
+    mapped = column_descriptions or {}
+    docs_cols = dict(docs.columns) if docs is not None else {}
+
+    def _desc_for(name: str) -> str | None:
+        if name in docs_cols:
+            return docs_cols[name]
+        if name in _META_COLUMN_DESCRIPTIONS:
+            return _META_COLUMN_DESCRIPTIONS[name]
+        if name in mapped:
+            return mapped[name]
+        return None
+
+    columns_out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for name, tests in by_col.items():
+        entry: dict[str, Any] = {"name": name}
+        desc = _desc_for(name)
+        if desc:
+            entry["description"] = desc
+        entry["tests"] = tests
+        columns_out.append(entry)
+        seen.add(name)
+    # Docs-only columns (no tests) so analytics overlays aren't dropped.
+    for name, text in docs_cols.items():
+        if name in seen:
+            continue
+        columns_out.append({"name": name, "description": text})
+        seen.add(name)
+
     entry = {
         "name": model_name,
-        "description": f"Cleaned, deduped {dataset} (silver)",
-        "columns": [{"name": name, "tests": tests} for name, tests in by_col.items()],
+        "description": model_description or f"Cleaned, deduped {dataset} (silver)",
+        "columns": columns_out,
     }
 
     if existing is not None and not force:
@@ -820,7 +941,7 @@ def _merge_silver_models_yml(
 
     models_yml.parent.mkdir(parents=True, exist_ok=True)
     models_yml.write_text(
-        yaml.safe_dump(doc, sort_keys=False, default_flow_style=False),
+        yaml.safe_dump(doc, sort_keys=False, default_flow_style=False, allow_unicode=True),
         encoding="utf-8",
     )
     actions.append(ScaffoldAction(path=models_yml, action="write", detail=detail))
@@ -849,8 +970,13 @@ def scaffold_dbt(
     sql_schema, sql_table = sql_names_for_config(config)
     silver: DbtSilverConfig = config.dbt.silver
     stg_cfg: DbtStgConfig = config.dbt.stg
+    docs_cfg: DbtDocsConfig = config.dbt.docs
     schema = load_json_schema(resolve_path(root, config.schema_path))
     required = [c for c in (schema.get("required") or []) if isinstance(c, str)]
+    schema_descs = schema_column_descriptions(schema)
+    root_desc = schema_root_description(schema)
+    silver_descs = post_stg_description_map(schema_descs, stg_cfg)
+    props = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
     columns = stg_columns_from_schema(schema, stg_cfg)
     columns_struct = format_read_json_columns(
         widen_read_json_columns(schema, stg_cfg)
@@ -897,6 +1023,10 @@ def scaffold_dbt(
         force=force,
         dry_run=dry_run,
         actions=actions,
+        table_description=root_desc,
+        column_descriptions=schema_descs,
+        schema_properties=props,
+        bronze_source=config.destination.type,
     )
     _merge_silver_models_yml(
         models_dir / "_silver__models.yml",
@@ -906,6 +1036,9 @@ def scaffold_dbt(
         force=force,
         dry_run=dry_run,
         actions=actions,
+        model_description=root_desc,
+        column_descriptions=silver_descs,
+        docs=docs_cfg,
     )
 
     for name_parts, path_chain_t, rel in iter_relation_paths(stg_cfg.relations):
@@ -982,6 +1115,9 @@ def scaffold_dbt(
             force=force,
             dry_run=dry_run,
             actions=actions,
+            model_description=root_desc,
+            column_descriptions=silver_descs,
+            docs=docs_cfg,
         )
 
     if warn:

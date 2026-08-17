@@ -31,6 +31,16 @@ dbt = [
 postgres = [
     "psycopg[binary]>=3.1",
 ]
+s3 = [
+    "s3fs>=2024.0.0",
+]
+gcs = [
+    "gcsfs>=2024.0.0",
+]
+iceberg = [
+    "pyiceberg>=0.8",
+    "pyarrow>=15",
+]
 mcp = [
     # FastMCP lives in mcp 1.x; mcp 2.0 replaced it with MCPServer.
     "mcp>=1.2,<2",

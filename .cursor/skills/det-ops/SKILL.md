@@ -25,9 +25,10 @@ Install: `uv pip install -e ".[mcp]"`.
    - `sample_raw` (`stage`: wire|rows|named|coerced) — adjust `limit` up/down
    - `validate_sample` — coerce/schema errors as data (raise `limit` toward 50 for
      nested/noisy APIs so rare extra fields show up)
-   - `sample_bronze` — landed rows (FS / DuckDB / Postgres); inspection only
+   - `sample_bronze` — landed rows (FS / Iceberg / DuckDB / Postgres); inspection only
    - `read_manifest` on a raw run path
-5. If raw is empty: check extract interval (`-s`/`-e`), source plugin, and lake path.
+5. If raw is empty: check extract interval (`-s`/`-e`), source plugin, and lake
+   (`DET_LAKE_PATH` / default `./data/lake` — not a per-pipeline `destination.path`).
    Bronze without raw usually means load/migrate was pointed at the wrong interval.
    Rebuild bronze from raw via `det migrate`, not from a bronze payload column.
 
@@ -54,9 +55,12 @@ does **not** fail load. Failures are not stamped (CLI/Airflow exit stays the ale
 
 ## Preview prune
 
-1. `describe_pipeline` — confirm destination type (filesystem / duckdb / postgres).
+1. `describe_pipeline` — confirm destination type (filesystem / iceberg / duckdb / postgres).
 2. `prune_dry_run` with `interval_start`, optional `interval_end`, and `keep`.
 3. Show `to_remove` to the user. Prune never touches `raw/`.
+   Iceberg bronze (`type: iceberg`) is a Hadoop-style catalog on `DET_LAKE_PATH`
+   (install `.[iceberg]`). BigQuery can register that table later as a reader;
+   it is not a DET destination.
 4. Apply only via CLI when approved: `det prune -p … -s … --keep N --apply`.
 
 ## Scaffold / init from pipeline

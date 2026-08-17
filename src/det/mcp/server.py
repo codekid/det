@@ -63,7 +63,7 @@ def create_server():
     def list_bronze_partitions(
         pipeline: str, limit: int = t.DEFAULT_LIST_LIMIT
     ) -> dict[str, Any]:
-        """Walk filesystem bronze hive dirs, or return a destination hint for duckdb/postgres."""
+        """Walk filesystem bronze hive dirs, Iceberg extract-runs, or a SQL dest hint."""
         return t.list_bronze_partitions(pipeline, limit=limit)
 
     @mcp.tool()
@@ -106,7 +106,7 @@ def create_server():
         source_type: str,
         destination_type: str = "filesystem",
         connection: str | None = None,
-        lake_path: str = "./data/lake",
+        lake_path: str | None = None,
         skip_dbt: bool = False,
     ) -> dict[str, Any]:
         """Preview init-pipeline actions without writing files."""

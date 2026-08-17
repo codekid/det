@@ -4,9 +4,10 @@ sources:
   - name: {{ source_name }}
     description: >
       DET bronze for provider feeds under this SQL schema / lake prefix.
-      Tables set schema-aware read_json(... columns={...}) in meta.external_location.
-      DuckDB native tables use det_bronze_from when DET_BRONZE_SOURCE=duckdb
-      (set by det dbt --pipeline).
+      Tables set schema-aware read_json(... columns={...}) or iceberg_scan(...)
+      in meta.external_location. DuckDB native tables use det_bronze_from when
+      DET_BRONZE_SOURCE=duckdb (set by det dbt --pipeline). Iceberg bronze uses
+      iceberg_scan when DET_BRONZE_SOURCE=iceberg.
     schema: {{ source_name }}
     tables:
 {{ tables_yaml }}

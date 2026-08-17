@@ -286,10 +286,10 @@ def dbt_cmd(
         "--project-dir",
         help="dbt project directory (default: <project-root>/dbt)",
     ),
-    lake_path: Path | None = typer.Option(
+    lake_path: str | None = typer.Option(
         None,
         "--lake-path",
-        help="Sets DET_LAKE_PATH when unset (default: pipeline lake or data/lake)",
+        help="Lake root URI or path (default: DET_LAKE_PATH or ./data/lake)",
     ),
     dry_run: bool = typer.Option(
         False,
@@ -319,7 +319,7 @@ def dbt_cmd(
         for w in emit_view_size_warnings(
             cfg,
             project_root=root,
-            lake_path=lake_path.resolve() if lake_path is not None else None,
+            lake_path=lake_path,
         ):
             typer.echo(f"WARNING: {w.message}", err=True)
 
@@ -330,7 +330,7 @@ def dbt_cmd(
             project_dir=project_dir,
             select=select or None,
             full_refresh=full_refresh,
-            lake_path=lake_path.resolve() if lake_path is not None else None,
+            lake_path=lake_path,
             pipeline=pipe,
             pipeline_overrides=set_ or None,
             dry_run=dry_run,
@@ -372,14 +372,18 @@ def init_pipeline_cmd(
     destination_type: str = typer.Option(
         "filesystem",
         "--destination-type",
-        help="filesystem | duckdb | postgres",
+        help="filesystem | duckdb | postgres | iceberg",
     ),
     connection: str | None = typer.Option(
         None,
         "--connection",
         help="DuckDB file path or Postgres DSN (required for duckdb/postgres)",
     ),
-    lake_path: str = typer.Option("./data/lake", "--lake-path"),
+    lake_path: str | None = typer.Option(
+        None,
+        "--lake-path",
+        help="Rare: emit destination.path (default lake is DET_LAKE_PATH or ./data/lake)",
+    ),
     skip_dbt: bool = typer.Option(False, "--skip-dbt", help="Skip scaffold-dbt"),
     force: bool = typer.Option(False, "--force"),
     dry_run: bool = typer.Option(False, "--dry-run"),
@@ -388,9 +392,9 @@ def init_pipeline_cmd(
     """Create pipeline YAML + minimal schema + scaffold-dbt models."""
     from det.scaffold.init_pipeline import init_pipeline
 
-    if destination_type not in {"filesystem", "duckdb", "postgres"}:
+    if destination_type not in {"filesystem", "duckdb", "postgres", "iceberg"}:
         raise typer.BadParameter(
-            "must be filesystem, duckdb, or postgres",
+            "must be filesystem, duckdb, postgres, or iceberg",
             param_hint="--destination-type",
         )
     root = _project_root(project_root)

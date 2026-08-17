@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import duckdb
 
-from det.destinations.models import bronze_dataset_dir, duckdb_connection_path
+from det.destinations.models import bronze_dataset_dir, duckdb_connection_path, lake_root
+from det.ingestion.sql_replace import delete_extract_run_sql
 from det.logging import get_logger
 from det.runtime.config import PipelineConfig
 from det.runtime.ids import sql_names_for_config
-from det.runtime.meta import from_partition_value, resolve_interval, to_interval_datetime
+from det.runtime.lake import LakeRef
+from det.runtime.meta import from_partition_value, identity_iso, resolve_interval
 
 logger = get_logger(__name__)
 
@@ -26,7 +27,7 @@ class BronzeRunRef:
     interval_start: str
     interval_end: str
     extract_run_datetime: str
-    path: Path | None = None  # filesystem bronze run dir, when applicable
+    path: LakeRef | None = None  # filesystem bronze run dir, when applicable
 
 
 @dataclass
@@ -70,9 +71,13 @@ class BronzePruner:
             return self._plan_postgres(
                 config, window_start=window_start, window_end=window_end, keep=keep
             )
+        if dest.type == "iceberg":
+            return self._plan_iceberg(
+                config, window_start=window_start, window_end=window_end, keep=keep
+            )
         raise ValueError(
             f"det prune does not support destination.type={dest.type!r}; "
-            "use filesystem, duckdb, or postgres"
+            "use filesystem, duckdb, postgres, or iceberg"
         )
 
     def apply(self, config: PipelineConfig, plan: PrunePlan) -> int:
@@ -85,6 +90,8 @@ class BronzePruner:
             return self._apply_duckdb(config, plan)
         if dest.type == "postgres":
             return self._apply_postgres(config, plan)
+        if dest.type == "iceberg":
+            return self._apply_iceberg(config, plan)
         raise ValueError(f"Unsupported destination type for prune apply: {dest.type}")
 
     def _plan_filesystem(
@@ -174,8 +181,8 @@ class BronzePruner:
                     __interval_end_datetime,
                     __extract_run_datetime
                 from {qualified}
-                where cast(__interval_start_datetime as varchar) >= ?
-                  and cast(__interval_start_datetime as varchar) < ?
+                where __interval_start_datetime >= ?
+                  and __interval_start_datetime < ?
                 order by 1, 2, 3
                 """,
                 [window_start, window_end],
@@ -224,8 +231,8 @@ class BronzePruner:
                         __interval_end_datetime,
                         __extract_run_datetime
                     from {qualified}
-                    where cast(__interval_start_datetime as text) >= %s
-                      and cast(__interval_start_datetime as text) < %s
+                    where __interval_start_datetime >= %s
+                      and __interval_start_datetime < %s
                     order by 1, 2, 3
                     """,
                     (window_start, window_end),
@@ -234,17 +241,18 @@ class BronzePruner:
         return _plan_from_run_rows(rows, keep=keep)
 
     def _apply_filesystem(self, config: PipelineConfig, plan: PrunePlan) -> int:
-        bronze_root = bronze_dataset_dir(config, self.project_root).resolve()
+        bronze_root = bronze_dataset_dir(config, self.project_root)
         removed = 0
         for ref in plan.to_remove:
             if ref.path is None or not ref.path.exists():
                 continue
-            path = ref.path.resolve()
-            if not path.is_relative_to(bronze_root):
-                raise RuntimeError(f"refusing to delete path outside bronze dataset: {path}")
-            shutil.rmtree(path)
+            if not ref.path.is_relative_to(bronze_root):
+                raise RuntimeError(
+                    f"refusing to delete path outside bronze dataset: {ref.path}"
+                )
+            ref.path.rmtree()
             removed += 1
-            logger.info("pruned bronze run dir", path=str(path))
+            logger.info("pruned bronze run dir", path=str(ref.path))
         return removed
 
     def _apply_duckdb(self, config: PipelineConfig, plan: PrunePlan) -> int:
@@ -256,12 +264,7 @@ class BronzePruner:
         try:
             for ref in plan.to_remove:
                 con.execute(
-                    f"""
-                    delete from {qualified}
-                    where cast(__interval_start_datetime as varchar) = ?
-                      and cast(__interval_end_datetime as varchar) = ?
-                      and cast(__extract_run_datetime as varchar) = ?
-                    """,
+                    delete_extract_run_sql(qualified, placeholder="?"),
                     [
                         ref.interval_start,
                         ref.interval_end,
@@ -297,12 +300,7 @@ class BronzePruner:
             with conn.cursor() as cur:
                 for ref in plan.to_remove:
                     cur.execute(
-                        f"""
-                        delete from {qualified}
-                        where cast(__interval_start_datetime as text) = %s
-                          and cast(__interval_end_datetime as text) = %s
-                          and cast(__extract_run_datetime as text) = %s
-                        """,
+                        delete_extract_run_sql(qualified, placeholder="%s"),
                         (
                             ref.interval_start,
                             ref.interval_end,
@@ -319,13 +317,64 @@ class BronzePruner:
             conn.commit()
         return deleted_groups
 
+    def _plan_iceberg(
+        self,
+        config: PipelineConfig,
+        *,
+        window_start: str,
+        window_end: str,
+        keep: int,
+    ) -> PrunePlan:
+        from det.ingestion.iceberg_writer import list_iceberg_extract_runs, load_iceberg_table
+
+        schema, table = sql_names_for_config(config)
+        ice = load_iceberg_table(
+            lake=lake_root(config.destination, self.project_root),
+            namespace=schema,
+            table=table,
+            table_location=bronze_dataset_dir(config, self.project_root),
+        )
+        if ice is None:
+            return PrunePlan(keep=keep)
+        rows = list_iceberg_extract_runs(
+            ice, window_start=window_start, window_end=window_end
+        )
+        return _plan_from_run_rows(rows, keep=keep)
+
+    def _apply_iceberg(self, config: PipelineConfig, plan: PrunePlan) -> int:
+        from det.ingestion.iceberg_writer import delete_iceberg_extract_run, load_iceberg_table
+
+        schema, table = sql_names_for_config(config)
+        ice = load_iceberg_table(
+            lake=lake_root(config.destination, self.project_root),
+            namespace=schema,
+            table=table,
+            table_location=bronze_dataset_dir(config, self.project_root),
+        )
+        if ice is None:
+            return 0
+        deleted_groups = 0
+        for ref in plan.to_remove:
+            delete_iceberg_extract_run(
+                ice,
+                (ref.interval_start, ref.interval_end, ref.extract_run_datetime),
+            )
+            deleted_groups += 1
+            logger.info(
+                "pruned iceberg bronze run",
+                table=f"{schema}.{table}",
+                interval_start=ref.interval_start,
+                extract_run_datetime=ref.extract_run_datetime,
+            )
+        return deleted_groups
+
 
 def _plan_from_run_rows(rows: list, *, keep: int) -> PrunePlan:
     by_interval: dict[tuple[str, str], list[BronzeRunRef]] = {}
     for start, end, run in rows:
-        start_s = _as_iso(start)
-        end_s = _as_iso(end)
-        run_s = _as_iso(run)
+        start_s = identity_iso(start)
+        end_s = identity_iso(end)
+        run_s = identity_iso(run)
         by_interval.setdefault((start_s, end_s), []).append(
             BronzeRunRef(
                 interval_start=start_s,
@@ -344,12 +393,3 @@ def _plan_from_run_rows(rows: list, *, keep: int) -> PrunePlan:
         to_keep.extend(refs_sorted[-keep:])
         to_remove.extend(refs_sorted[:-keep])
     return PrunePlan(keep=keep, to_remove=to_remove, to_keep=to_keep)
-
-
-def _as_iso(value: object) -> str:
-    if hasattr(value, "isoformat"):
-        return to_interval_datetime(value.isoformat())  # type: ignore[union-attr]
-    text = str(value)
-    if len(text) >= 15 and text[8:9] == "T" and "-" not in text[:8]:
-        return from_partition_value(text)
-    return to_interval_datetime(text)

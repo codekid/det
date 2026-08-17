@@ -11,6 +11,9 @@ from det.mcp import generate as gen
 from det.mcp import inspect as insp
 from det.mcp.context import PathSandboxError, project_root, resolve_under_root
 from det.mcp.reload import refresh_det_runtime
+from det.runtime.lake import LakeRef
+from det.runtime.lake import relpath as lake_relpath
+from det.runtime.manifest import is_committed_raw_dir
 
 DEFAULT_LIST_LIMIT = insp.DEFAULT_LIST_LIMIT
 DEFAULT_SAMPLE_LIMIT = insp.DEFAULT_SAMPLE_LIMIT
@@ -50,11 +53,8 @@ def _load_pipeline(pipeline: str, root: Path):
     return load_pipeline_config(resolved.path), resolved.path
 
 
-def _rel(path: Path, root: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(root))
-    except ValueError:
-        return str(path.resolve())
+def _rel(path: Path | LakeRef, root: Path) -> str:
+    return lake_relpath(path, root)
 
 
 def _parse_hive_key(dirname: str, prefix: str) -> str | None:
@@ -63,7 +63,13 @@ def _parse_hive_key(dirname: str, prefix: str) -> str | None:
     return dirname[len(prefix) :]
 
 
-def _walk_hive_runs(dataset_dir: Path, *, root: Path, limit: int) -> list[dict[str, Any]]:
+def _walk_hive_runs(
+    dataset_dir: Path | LakeRef,
+    *,
+    root: Path,
+    limit: int,
+    require_committed: bool = False,
+) -> list[dict[str, Any]]:
     """Walk hive interval/extract-run dirs; cap at *limit* runs."""
     out: list[dict[str, Any]] = []
     if not dataset_dir.is_dir():
@@ -85,6 +91,8 @@ def _walk_hive_runs(dataset_dir: Path, *, root: Path, limit: int) -> list[dict[s
                     continue
                 run_val = _parse_hive_key(run_dir.name, "__extract_run_datetime=")
                 if run_val is None:
+                    continue
+                if require_committed and not is_committed_raw_dir(run_dir):
                     continue
                 out.append(
                     {
@@ -198,7 +206,9 @@ def list_raw_partitions(
     config, _ = _load_pipeline(pipeline, base)
     dataset_dir = raw_dataset_dir(config, base)
     capped = max(1, min(int(limit), DEFAULT_LIST_LIMIT))
-    runs = _walk_hive_runs(dataset_dir, root=base, limit=capped)
+    runs = _walk_hive_runs(
+        dataset_dir, root=base, limit=capped, require_committed=True
+    )
     return {
         "pipeline": config.name,
         "dataset_dir": _rel(dataset_dir, base),
@@ -221,6 +231,51 @@ def list_bronze_partitions(
     base = _root(root)
     config, _ = _load_pipeline(pipeline, base)
     dest = config.destination
+    if dest.type == "iceberg":
+        from det.destinations.models import lake_root
+        from det.ingestion.iceberg_writer import list_iceberg_extract_runs, load_iceberg_table
+
+        sql_schema, sql_table = sql_names_for_config(config)
+        dataset_dir = bronze_dataset_dir(config, base)
+        capped = max(1, min(int(limit), DEFAULT_LIST_LIMIT))
+        try:
+            ice = load_iceberg_table(
+                lake=lake_root(dest, base),
+                namespace=sql_schema,
+                table=sql_table,
+                table_location=dataset_dir,
+            )
+        except ImportError as exc:
+            return {
+                "pipeline": config.name,
+                "destination_type": "iceberg",
+                "schema": sql_schema,
+                "table": sql_table,
+                "location": _rel(dataset_dir, base),
+                "runs": [],
+                "note": str(exc),
+            }
+        runs_raw = (
+            list_iceberg_extract_runs(ice, limit=capped) if ice is not None else []
+        )
+        runs = [
+            {
+                "interval_start": start,
+                "interval_end": end,
+                "extract_run_datetime": run,
+            }
+            for start, end, run in runs_raw
+        ]
+        return {
+            "pipeline": config.name,
+            "destination_type": "iceberg",
+            "schema": sql_schema,
+            "table": sql_table,
+            "location": _rel(dataset_dir, base),
+            "limit": capped,
+            "truncated": len(runs) >= capped,
+            "runs": runs,
+        }
     if dest.type != "filesystem":
         hint: dict[str, Any] = {
             "pipeline": config.name,
@@ -389,7 +444,7 @@ def init_pipeline_dry_run(
     *,
     destination_type: str = "filesystem",
     connection: str | None = None,
-    lake_path: str = "./data/lake",
+    lake_path: str | None = None,
     skip_dbt: bool = False,
     root: Path | None = None,
 ) -> dict[str, Any]:

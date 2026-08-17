@@ -133,6 +133,35 @@ destination:
     assert result.bronze_source == "duckdb"
 
 
+def test_run_dbt_sets_iceberg_bronze_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    monkeypatch.delenv("DET_BRONZE_SOURCE", raising=False)
+    dbt_dir = tmp_path / "dbt"
+    dbt_dir.mkdir()
+    (dbt_dir / "dbt_project.yml").write_text("name: x\n", encoding="utf-8")
+    pipeline = tmp_path / "pipe.yaml"
+    pipeline.write_text(
+        """
+name: noaa.storm_events
+source:
+  type: noaa.storm_events
+schema: schemas/mini.schema.yaml
+destination:
+  type: iceberg
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "schemas").mkdir()
+    (tmp_path / "schemas" / "mini.schema.yaml").write_text(
+        "type: object\nproperties: {}\n",
+        encoding="utf-8",
+    )
+    result = run_dbt(project_root=tmp_path, pipeline=pipeline, dry_run=True)
+    assert result.bronze_source == "iceberg"
+
+
 def test_run_dbt_missing_cli(tmp_path: Path):
     dbt_dir = tmp_path / "dbt"
     dbt_dir.mkdir()

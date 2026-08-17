@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import duckdb
+import pytest
 import structlog
 from typer.testing import CliRunner
 
@@ -16,7 +17,7 @@ from det.runtime.config import (
     PipelineConfig,
     SourceConfig,
 )
-from det.runtime.meta import to_partition_value
+from det.runtime.meta import identity_iso, to_partition_value
 from det.runtime.prune import BronzePruner
 
 
@@ -139,6 +140,10 @@ def test_duckdb_prune_deletes_old_runs(tmp_path: Path):
             connection_path=db_path,
             schema="bronze_noaa",
             table="storm_events_v1",
+            json_schema={
+                "type": "object",
+                "properties": {"event_id": {"type": "integer"}},
+            },
         )
 
     pruner = BronzePruner(tmp_path)
@@ -158,10 +163,77 @@ def test_duckdb_prune_deletes_old_runs(tmp_path: Path):
             "select __extract_run_datetime, event_id from bronze_noaa.storm_events_v1"
         ).fetchall()
         assert len(rows) == 1
-        assert rows[0][0] == "2026-08-06T12:00:00+00:00"
+        assert identity_iso(rows[0][0]) == "2026-08-06T12:00:00+00:00"
         assert rows[0][1] == 2
     finally:
         con.close()
+
+
+def test_iceberg_prune_deletes_old_runs(tmp_path: Path):
+    pytest.importorskip("pyiceberg")
+    pytest.importorskip("pyarrow")
+    from det.destinations.models import bronze_dataset_dir, lake_root
+    from det.ingestion.iceberg_writer import (
+        list_iceberg_extract_runs,
+        load_iceberg_table,
+        write_iceberg_table,
+    )
+
+    config = PipelineConfig(
+        name="noaa.storm_events",
+        source=SourceConfig(type="noaa.storm_events"),
+        schema_path="schemas/noaa/storm_events/storm_events.schema.yaml",
+        ingestion=IngestionConfig(library="det"),
+        destination=DestinationConfig(type="iceberg", path=str(tmp_path / "lake")),
+        medallion=MedallionConfig(bronze_prefix="bronze", raw_prefix="raw"),
+    )
+    lake = lake_root(config.destination, tmp_path)
+    loc = bronze_dataset_dir(config, tmp_path)
+    start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
+    schema = {"type": "object", "properties": {"event_id": {"type": "integer"}}}
+    for i, run in enumerate(
+        (
+            "2026-08-06T10:00:00+00:00",
+            "2026-08-06T11:00:00+00:00",
+            "2026-08-06T12:00:00+00:00",
+        )
+    ):
+        write_iceberg_table(
+            [
+                {
+                    "event_id": i,
+                    "__row_hash": f"h{i}",
+                    "__filename": "x.csv",
+                    "__extract_run_datetime": run,
+                    "__bronze_loaded_at": run,
+                    "__interval_start_datetime": start,
+                    "__interval_end_datetime": end,
+                    "__data_interval_date": "2026-08-06",
+                }
+            ],
+            lake=lake,
+            table_location=loc,
+            namespace="bronze_noaa",
+            table="storm_events_v1",
+            json_schema=schema,
+        )
+
+    pruner = BronzePruner(tmp_path)
+    plan = pruner.plan(
+        config,
+        interval_start="2026-08-01",
+        interval_end="2026-09-01",
+        keep=1,
+    )
+    assert plan.remove_count == 2
+    removed = pruner.apply(config, plan)
+    assert removed == 2
+    ice = load_iceberg_table(
+        lake=lake, namespace="bronze_noaa", table="storm_events_v1", table_location=loc
+    )
+    runs = list_iceberg_extract_runs(ice)
+    assert len(runs) == 1
+    assert identity_iso(runs[0][2]) == "2026-08-06T12:00:00+00:00"
 
 
 def test_cli_prune_requires_mode(tmp_path: Path):

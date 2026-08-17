@@ -138,6 +138,7 @@ flowchart TD
   yaml --> extract
   manifest --> parse
   write -->|filesystem| jsonl[Hive data.jsonl]
+  write -->|iceberg| iceberg[Iceberg Parquet table]
   write -->|duckdb| duck[(DuckDB table)]
   write -->|postgres| pg[(Postgres table)]
 ```
@@ -153,22 +154,27 @@ flowchart TD
 
 ## Lake layout
 
-Raw always lands under `destination.path`. Bronze landing depends on `destination.type`.
+Raw always lands under the DET lake root (default `./data/lake`, override with
+`DET_LAKE_PATH` or `--lake-path`). Bronze landing depends on `destination.type`.
+There is no `destination.type: s3` — object storage is the same hive under
+`s3://…` / `gs://…`.
 
 ```mermaid
 flowchart TB
-  subgraph lake [destination.path lake root]
+  subgraph lake [DET lake root]
     rawFS["raw/dataset/hive…/data + meta"]
     bronzeFS["bronze/dataset/hive…/data.jsonl"]
+    bronzeIce["bronze/dataset Iceberg table"]
   end
 
-  subgraph other [Other bronze targets]
+  subgraph other [SQL serving]
     duck["duckdb → bronze_{provider}.{source}"]
     pg["postgres → bronze_{provider}.{source}"]
   end
 
   extract[extract] --> rawFS
   load[load] --> bronzeFS
+  load --> bronzeIce
   load --> duck
   load --> pg
 ```
@@ -225,6 +231,7 @@ uv venv
 make install          # editable install + macOS .pth unhide
 # Optional extras:
 # uv pip install -e ".[postgres]"   # Postgres bronze writer
+# uv pip install -e ".[iceberg]"    # Iceberg+Parquet bronze writer
 # uv pip install -e ".[mcp]"        # Cursor MCP server
 ```
 
@@ -233,6 +240,7 @@ make install          # editable install + macOS .pth unhide
 | `dev` | pytest, ruff |
 | `dbt` | dbt-core, dbt-duckdb |
 | `postgres` | psycopg |
+| `iceberg` | pyiceberg, pyarrow (Hadoop-style Iceberg bronze on the lake) |
 | `mcp` | FastMCP stdio server |
 
 Prefer one of these when invoking the CLI so the venv `dbt` binary is found:
@@ -357,8 +365,7 @@ validation:
 ingestion:
   library: det                 # det (default) | dlt (alias) | thin (filesystem only)
 destination:
-  type: filesystem             # filesystem | duckdb | postgres
-  path: ./data/lake            # always the raw lake root
+  type: filesystem             # filesystem | iceberg | duckdb | postgres
   # connection: ./data/analytics.duckdb   # required for duckdb / postgres
   # dataset: bronze                       # medallion prefix → SQL bronze_{provider}
 medallion:
@@ -450,13 +457,26 @@ det list-mappers
 
 ## Destinations
 
-`destination.path` is always the **raw lake root**. Only bronze landing changes with `type`.
+The lake root is DET runtime, not a per-pipeline field. Default is project-relative
+`./data/lake`. Override with `--lake-path`, a rare `destination.path`, or
+`DET_LAKE_PATH` (first hit wins in that order). Same hive keys on local disk,
+`s3://bucket/prefix`, or `gs://bucket/prefix` (install `.[s3]` / `.[gcs]`).
+
+Only bronze landing changes with `destination.type`. `type: iceberg` writes an Iceberg
+table of Parquet files on the same lake root (Hadoop-style catalog: warehouse is the
+lake, table at `<lake>/bronze/<provider>/<source>_vN/`). Install `.[iceberg]`.
+BigQuery can **register** that table later as a reader (BigLake / Iceberg managed
+table); DET does not add `destination.type: bigquery` or dual-load a clone.
+`type: filesystem` on object storage is supported for DET I/O; dbt
+`read_json('…/**/data.jsonl')` globs are local-only — Iceberg bronze uses
+`iceberg_scan` instead.
 
 | type | Bronze write | Required knobs |
 | --- | --- | --- |
-| `filesystem` | Hive JSONL under `path/bronze/<provider>/<source>_vN/` | `path` |
-| `duckdb` | Append-only `{medallion}_{provider}.{source}_vN` (e.g. `bronze_noaa.storm_events_v1`) | `path`, `connection`, optional `dataset` (**medallion prefix**, default `bronze`) |
-| `postgres` | Same SQL naming as DuckDB | `path`, `connection`, optional `dataset`; install `.[postgres]` |
+| `filesystem` | Hive JSONL under `<lake>/bronze/<provider>/<source>_vN/` | — |
+| `iceberg` | Iceberg table at the same lake path (Parquet + metadata; not JSONL hive folders) | — ; install `.[iceberg]` (`pyiceberg`, `pyarrow`) |
+| `duckdb` | `{medallion}_{provider}.{source}_vN` (e.g. `bronze_noaa.storm_events_v1`) | `connection`, optional `dataset` (**medallion prefix**, default `bronze`) |
+| `postgres` | Same SQL naming as DuckDB | `connection`, optional `dataset`; install `.[postgres]` |
 
 **Breaking change:** `destination.dataset` is no longer the SQL schema name. It is the medallion prefix only; the SQL schema is `{dataset}_{provider}`. Lake table/path leaf is `{source}_v{wire_version}`.
 
@@ -469,12 +489,13 @@ det run -p noaa.storm_events -s 2026-08-06 \
 ```
 
 Use the **same** DuckDB file as `dbt/profiles.yml` when stg should read native tables.
-`det dbt -p …` then sets `DET_BRONZE_SOURCE=duckdb`, `DET_BRONZE_SCHEMA=bronze_noaa`, and stg uses `det_bronze_from("storm_events_v1")`.
+`det dbt -p …` then sets `DET_BRONZE_SOURCE=duckdb`, `DET_BRONZE_SCHEMA=bronze_noaa`, and stg uses `det_bronze_from("storm_events_v1")`. For Iceberg, `det dbt -p …` sets `DET_BRONZE_SOURCE=iceberg` and stg reads `iceberg_scan('<lake>/bronze/…')` from `sources.yml`.
 
 ```mermaid
 flowchart LR
   subgraph bronzeSide [Bronze]
     lakeJSONL[JSONL lake]
+    lakeIceberg[Iceberg Parquet]
     duckTable[DuckDB bronze_noaa.storm_events_v1]
   end
   subgraph dbtSide [dbt]
@@ -486,6 +507,7 @@ flowchart LR
     macro --> stg --> dedupe --> silver --> gold
   end
   lakeJSONL -->|DET_BRONZE_SOURCE=filesystem| macro
+  lakeIceberg -->|DET_BRONZE_SOURCE=iceberg| macro
   duckTable -->|DET_BRONZE_SOURCE=duckdb| macro
 ```
 
