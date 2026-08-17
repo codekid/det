@@ -63,7 +63,7 @@ def create_server():
     def list_bronze_partitions(
         pipeline: str, limit: int = t.DEFAULT_LIST_LIMIT
     ) -> dict[str, Any]:
-        """Walk filesystem bronze hive dirs, Iceberg extract-runs, or a destination hint for duckdb/postgres."""
+        """Walk filesystem bronze hive dirs, Iceberg extract-runs, or a SQL dest hint."""
         return t.list_bronze_partitions(pipeline, limit=limit)
 
     @mcp.tool()
