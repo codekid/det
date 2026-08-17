@@ -3,6 +3,8 @@
 ``wire_version`` is payload + lake id (``{name}_vN``). ``LAKE_LAYOUT`` is the
 path and naming contract every era hangs on. Additive sibling prefixes and extra
 manifest keys do not bump this; renaming hive keys or SQL names does.
+
+Published contract and changelog: ``docs/lake-layout.md``.
 """
 
 from __future__ import annotations

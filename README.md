@@ -163,6 +163,9 @@ under `runs/`). New extracts stamp `lake_layout: 1` on `meta/manifest.json` and
 on receipt JSON. Missing field ⇒ 1. Wipe `data/lake` (and `data/det_ops.duckdb`
 for a clean ops DB) and re-extract; there is no layout migrator.
 
+**Compatibility contract and changelog:** [docs/lake-layout.md](docs/lake-layout.md)
+(stable path keys, SQL names, what bumps `wire_version` vs `lake_layout`).
+
 Raw always lands under the DET lake root (default `./data/lake`, override with
 `DET_LAKE_PATH` or `--lake-path`). Bronze landing depends on `destination.type`.
 There is no `destination.type: s3` — object storage is the same hive under
@@ -993,6 +996,7 @@ holds the file — stop other dbt/DuckDB clients and retry.
 
 ```text
 src/det/                 # DET package (CLI, runtime, sources, scaffold, writers)
+docs/lake-layout.md      # lake_layout vs wire_version; layout 1 changelog
 src/det/mcp/             # optional FastMCP stdio server (.[mcp])
 configs/pipelines/<provider>/  # pipeline YAML (provider.source)
 schemas/<provider>/<source>/   # typed bronze JSON Schema
