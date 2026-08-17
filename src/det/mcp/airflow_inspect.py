@@ -373,15 +373,13 @@ def describe_airflow_det_env(*, root: Path | None = None) -> dict[str, Any]:
             public[key] = redact_uri_credentials(val)
 
     det_keys = {k: v for k, v in public.items() if k.startswith("DET_")}
-    analytics = raw.get("DET_ANALYTICS_DUCKDB", "")
-    analytics_notes: list[str] = []
-    if analytics and not (
-        analytics.startswith("/") or Path(analytics).is_absolute()
-    ):
-        analytics_notes.append(
-            "DET_ANALYTICS_DUCKDB should be absolute in Compose/Airflow "
-            f"(got {analytics!r})"
-        )
+    path_notes: list[str] = []
+    for key in ("DET_ANALYTICS_DUCKDB", "DET_OPS_DUCKDB"):
+        value = raw.get(key, "")
+        if value and not (value.startswith("/") or Path(value).is_absolute()):
+            path_notes.append(
+                f"{key} should be absolute in Compose/Airflow (got {value!r})"
+            )
 
     client = airflow_settings(root=base)
     client_public: dict[str, Any]
@@ -404,7 +402,7 @@ def describe_airflow_det_env(*, root: Path | None = None) -> dict[str, Any]:
         "web_user": raw.get("_AIRFLOW_WWW_USER_USERNAME", DEFAULT_USER),
         "password_set": bool(raw.get("_AIRFLOW_WWW_USER_PASSWORD")),
         "det": det_keys,
-        "analytics_duckdb_notes": analytics_notes,
+        "analytics_duckdb_notes": path_notes,
         "airflow_client": client_public,
         "note": (
             "Local Compose helper reading airflow/.env. "

@@ -2,7 +2,9 @@
 
 PyIceberg 0.9+ dropped HadoopCatalog. DET keeps the same filesystem contract:
 table data+metadata live at an explicit location (``{lake}/bronze/{provider}/{source}_vN``),
-and ``metadata/version-hint.text`` is the current metadata file. No Glue/REST/SQLite.
+and ``metadata/version-hint.text`` holds the metadata **stem** (DuckDB
+``iceberg_scan`` interpolates ``{stem}.metadata.json``). Full ``file://`` URIs in
+the hint break DuckDB. No Glue/REST/SQLite.
 """
 
 from __future__ import annotations
@@ -38,6 +40,34 @@ if TYPE_CHECKING:
     import pyarrow as pa
 
 _HINT = "metadata/version-hint.text"
+_META_SUFFIX = ".metadata.json"
+_GZ_META_SUFFIX = ".gz.metadata.json"
+
+
+def hint_version_from_metadata_location(metadata_location: str) -> str:
+    """Stem DuckDB ``iceberg_scan`` interpolates into ``{version}.metadata.json``.
+
+    PyIceberg stores a full metadata URI in memory; Hadoop ``version-hint.text``
+    must be that stem (not ``file://…``) or DuckDB concatenates it into a bogus path.
+    """
+    name = metadata_location.rstrip("/").rsplit("/", 1)[-1]
+    if name.endswith(_GZ_META_SUFFIX):
+        return name[: -len(_GZ_META_SUFFIX)]
+    if name.endswith(_META_SUFFIX):
+        return name[: -len(_META_SUFFIX)]
+    return name
+
+
+def resolve_metadata_location(table_location: str, hint: str) -> str:
+    """Map a version-hint value to a metadata file URI PyIceberg FileIO can open."""
+    text = hint.strip()
+    if not text:
+        raise ValueError("empty Iceberg version hint")
+    if "://" in text or text.startswith("/"):
+        return text
+    loc = table_location.rstrip("/")
+    name = text if text.endswith(_META_SUFFIX) else f"{text}{_META_SUFFIX}"
+    return f"{loc}/metadata/{name}"
 
 
 class LakeHadoopCatalog(MetastoreCatalog):
@@ -74,13 +104,16 @@ class LakeHadoopCatalog(MetastoreCatalog):
             raw = fh.read()
         text = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else str(raw)
         hint = text.strip()
-        return hint or None
+        if not hint:
+            return None
+        return resolve_metadata_location(table_location, hint)
 
     def _write_hint(self, table_location: str, metadata_location: str) -> None:
         io = self._load_file_io(location=table_location)
         path = self._hint_path(table_location)
+        version = hint_version_from_metadata_location(metadata_location)
         with io.new_output(path).create(overwrite=True) as fh:
-            fh.write(metadata_location.encode("utf-8"))
+            fh.write(version.encode("utf-8"))
 
     def _table_from_metadata(
         self, identifier: str | Identifier, metadata_location: str

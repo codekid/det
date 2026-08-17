@@ -10,8 +10,11 @@ from det.runtime.config import PipelineConfig, SourceConfig
 from det.runtime.dbt_runner import (
     DbtNotInstalledError,
     _run_dbt_subprocess,
+    analytics_exclude,
     build_dbt_argv,
     default_select_for_pipeline,
+    is_ops_selector,
+    ops_dbt_target,
     run_dbt,
 )
 
@@ -61,6 +64,47 @@ def test_build_dbt_argv():
     assert "--project-dir" in argv and "/proj/dbt" in argv
     assert argv[argv.index("--select") + 1] == "stg_mini+"
     assert "--full-refresh" in argv
+
+
+def test_build_dbt_argv_exclude():
+    argv = build_dbt_argv(
+        command="build",
+        project_dir=Path("/proj/dbt"),
+        exclude=["tag:ops"],
+    )
+    assert argv[argv.index("--exclude") + 1] == "tag:ops"
+
+
+def test_analytics_exclude_skips_when_selecting_ops():
+    assert analytics_exclude(None) == ["tag:ops"]
+    assert analytics_exclude(["stg_noaa__storm_events+"]) == ["tag:ops"]
+    assert analytics_exclude(["tag:ops"]) is None
+    assert analytics_exclude(["stg_det__run_receipts"]) is None
+    assert is_ops_selector("path:models/ops")
+
+
+def test_ops_dbt_target():
+    assert ops_dbt_target(None) is None
+    assert ops_dbt_target(["stg_noaa__storm_events+"]) is None
+    assert ops_dbt_target(["tag:ops"]) == "ops"
+    assert ops_dbt_target(["stg_det__run_receipts"]) == "ops"
+
+
+def test_run_dbt_ops_select_uses_ops_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    monkeypatch.delenv("DET_OPS_DUCKDB", raising=False)
+    dbt_dir = tmp_path / "dbt"
+    dbt_dir.mkdir()
+    (dbt_dir / "dbt_project.yml").write_text("name: x\n", encoding="utf-8")
+    result = run_dbt(
+        project_root=tmp_path,
+        select=["tag:ops"],
+        dry_run=True,
+    )
+    assert result.command[result.command.index("--target") + 1] == "ops"
+    assert "--exclude" not in result.command
 
 
 def test_run_dbt_dry_run_sets_lake_and_select(

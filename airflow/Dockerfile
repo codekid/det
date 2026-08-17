@@ -17,4 +17,4 @@ COPY --chown=airflow:0 src /opt/det/src
 
 WORKDIR /opt/det
 # No Airflow constraints file: it pins duckdb==1.1.x while DET needs >=1.5.
-RUN pip install --no-cache-dir -e ".[dbt]"
+RUN pip install --no-cache-dir -e ".[dbt,iceberg]"

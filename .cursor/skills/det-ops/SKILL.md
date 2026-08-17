@@ -56,6 +56,9 @@ is still the authority for what landed.
 4. Airflow: `owner` is `airflow:{dag_id}:{run_id}` when the DAG set `DET_LOCK_OWNER`.
 5. Do not treat a missing receipt as a missing partition; `DET_RUN_RECEIPTS=0`
    disables writing. A write failure never fails extract/load.
+6. Warehouse projection: `det runs-materialize` (or DAG `det_ops_receipts`) writes
+   Iceberg `{lake}/ops/run_receipts`; dbt `tag:ops` / `--target ops` reads it into
+   `DET_OPS_DUCKDB`. JSON under `runs/` remains the attempt log.
 
 ## Schema invalid / contract drift
 

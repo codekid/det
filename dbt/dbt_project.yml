@@ -22,3 +22,8 @@ models:
     gold:
       +schema: gold
       +materialized: table
+    ops:
+      +tags: [ops]
+      +schema: ops
+      # Table (not view): Iceberg scan is cwd-sensitive; persist rows in DET_OPS_DUCKDB.
+      +materialized: table

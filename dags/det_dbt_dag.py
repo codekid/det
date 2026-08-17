@@ -45,6 +45,7 @@ def det_dbt_silver_gold():
                 command="build",
                 project_dir=DBT_PROJECT,
                 select=select,
+                exclude=_analytics_exclude(select),
             )
         except DbtNotInstalledError:
             raise
@@ -62,6 +63,12 @@ def det_dbt_silver_gold():
         }
 
     dbt_build()
+
+
+def _analytics_exclude(select: list[str] | None) -> list[str] | None:
+    from det.runtime.dbt_runner import analytics_exclude
+
+    return analytics_exclude(select)
 
 
 det_dbt_silver_gold()

@@ -409,6 +409,95 @@ def _percentile(values: list[int], p: float) -> int | None:
     return ordered[max(0, rank - 1)]
 
 
+# Canonical Iceberg / ops-row columns (v1). Unknown JSON extras are ignored.
+OPS_RECEIPT_COLUMNS: tuple[str, ...] = (
+    "receipt_version",
+    "attempt_id",
+    "attempt_date",
+    "pipeline",
+    "command",
+    "interval_start",
+    "interval_end",
+    "extract_run_datetime",
+    "wire_version",
+    "status",
+    "started_at",
+    "finished_at",
+    "duration_ms",
+    "owner",
+    "destination",
+    "artifacts",
+    "raw_bytes",
+    "rows",
+    "schema_sha256",
+    "error_code",
+    "error_class",
+    "error_message",
+)
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def normalize_receipt(raw: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Map a receipt JSON body to the fixed ops row. Returns None if unusable."""
+    attempt_id = _optional_str(raw.get("attempt_id"))
+    pipeline = _optional_str(raw.get("pipeline"))
+    command = _optional_str(raw.get("command"))
+    status = _optional_str(raw.get("status"))
+    started_raw = raw.get("started_at")
+    if not attempt_id or not pipeline or not command or not status or not started_raw:
+        return None
+    try:
+        attempt_date = parse_attempt_date(str(started_raw))
+    except (TypeError, ValueError):
+        return None
+    version = _optional_int(raw.get("receipt_version"))
+    if version is None:
+        version = RECEIPT_VERSION
+    return {
+        "receipt_version": version,
+        "attempt_id": attempt_id,
+        "attempt_date": attempt_date,
+        "pipeline": pipeline,
+        "command": command,
+        "interval_start": _optional_str(raw.get("interval_start")),
+        "interval_end": _optional_str(raw.get("interval_end")),
+        "extract_run_datetime": _optional_str(raw.get("extract_run_datetime")),
+        "wire_version": _optional_int(raw.get("wire_version")),
+        "status": status,
+        "started_at": str(started_raw),
+        "finished_at": _optional_str(raw.get("finished_at")),
+        "duration_ms": _optional_int(raw.get("duration_ms")),
+        "owner": _optional_str(raw.get("owner")) or "",
+        "destination": _optional_str(raw.get("destination")),
+        "artifacts": _optional_int(raw.get("artifacts")),
+        "raw_bytes": _optional_int(raw.get("raw_bytes")),
+        "rows": _optional_int(raw.get("rows")),
+        "schema_sha256": _optional_str(raw.get("schema_sha256")),
+        "error_code": _optional_str(raw.get("error_code")),
+        "error_class": _optional_str(raw.get("error_class")),
+        "error_message": (
+            _scrub_error_message(str(raw["error_message"]))
+            if raw.get("error_message") is not None
+            else None
+        ),
+    }
+
+
 def summarize_receipts(
     lake: LakeRef,
     *,

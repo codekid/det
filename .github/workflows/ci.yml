@@ -26,6 +26,7 @@ jobs:
       DET_POSTGRES_DSN: postgresql://det:det@localhost:5432/det
       DET_LAKE_PATH: ${{ github.workspace }}/data/lake
       DET_ANALYTICS_DUCKDB: ${{ github.workspace }}/data/analytics.duckdb
+      DET_OPS_DUCKDB: ${{ github.workspace }}/data/det_ops.duckdb
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
@@ -34,7 +35,7 @@ jobs:
       - name: Install
         # mcp extra required for tests/mcp; dbt + postgres match prod extras.
         # avoid --system (PEP 668 on ubuntu-latest)
-        run: uv sync --extra dev --extra mcp --extra dbt --extra postgres
+        run: uv sync --extra dev --extra mcp --extra dbt --extra postgres --extra iceberg
       - name: Lint
         run: uv run ruff check .
       - name: Structure check

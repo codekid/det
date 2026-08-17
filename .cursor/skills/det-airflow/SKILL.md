@@ -49,10 +49,12 @@ Unreachable local URL → `make airflow-up`. For a future remote Airflow, point
 | --- | --- |
 | `det_extract_bronze` | extract → load → optional prune (`@daily`) |
 | `det_backfill_extract_bronze` | trigger extract once per day for `[start, end)` |
-| `det_dbt_silver_gold` | single-process `dbt build` — **full project** by default (separate schedule) |
+| `det_dbt_silver_gold` | single-process `dbt build` on analytics DuckDB with `--exclude tag:ops` |
+| `det_ops_receipts` | materialize `runs/` → Iceberg, then `dbt build --select tag:ops --target ops` on `DET_OPS_DUCKDB` |
 
-Extract and dbt are **decoupled**. Nightly dbt is not limited to `DET_PIPELINE_CONFIG`.
-File-backed DuckDB cannot safely fan out per-model writers, so dbt is one task.
+Extract, silver/gold, and ops are **decoupled**. Nightly analytics dbt is not limited to
+`DET_PIPELINE_CONFIG`. File-backed DuckDB cannot safely fan out per-model writers, so
+each dbt DAG is one task.
 
 ## Important env (workers / Compose)
 
@@ -61,9 +63,10 @@ File-backed DuckDB cannot safely fan out per-model writers, so dbt is one task.
 | `DET_PROJECT_ROOT` | Project mount (Compose default `/opt/det`) |
 | `DET_PIPELINE_CONFIG` | Canonical id for extract/load DAGs (not dbt select) |
 | `DET_PIPELINE_OVERRIDES` | Comma-separated `dotted.key=value` (same as `det --set`); leave empty for live NOAA |
-| `DET_DBT_SELECT` | Optional dbt `--select`; unset = entire dbt project |
+| `DET_DBT_SELECT` | Optional dbt `--select`; unset = entire analytics project (still excludes `tag:ops`) |
 | `DET_BRONZE_SOURCE` / `DET_BRONZE_SCHEMA` | dbt bronze reader |
 | `DET_ANALYTICS_DUCKDB` | Prefer **absolute** path in Compose |
+| `DET_OPS_DUCKDB` | Prefer **absolute** path for ops dbt target (Compose default `/opt/det/data/det_ops.duckdb`). File stem must not be `ops` (catalog/schema clash). |
 | `DET_LOG_FORMAT` | Compose sets `json` so task logs are greppable (`pipeline`, `extract_run_datetime`) |
 | `DET_PRUNE` / `DET_PRUNE_APPLY` / `DET_PRUNE_KEEP` | Optional prune after load |
 | `DET_LOCK_TTL_SEC` | Lake lease TTL seconds (default 7200). Per-run: DAG conf `lock_ttl_sec` or `det --lock-ttl-sec` |

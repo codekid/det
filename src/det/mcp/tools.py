@@ -399,7 +399,7 @@ def dbt_dry_run(
     root: Path | None = None,
 ) -> dict[str, Any]:
     _prepare_tool()
-    from det.runtime.dbt_runner import run_dbt
+    from det.runtime.dbt_runner import analytics_exclude, run_dbt
 
     base = _root(root)
     pipeline_arg: Path | str | None = None
@@ -409,6 +409,7 @@ def dbt_dry_run(
         project_root=base,
         command=command,  # type: ignore[arg-type]
         select=select,
+        exclude=analytics_exclude(select),
         pipeline=pipeline_arg,
         dry_run=True,
     )

@@ -224,3 +224,38 @@ def test_iceberg_alter_adds_missing_column(tmp_path: Path):
     rows = scan_iceberg_rows(ice, limit=10)
     states = {r.get("state") for r in rows}
     assert states == {None, "TX"}
+
+
+def test_version_hint_is_duckdb_stem_not_file_uri(tmp_path: Path):
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    loc = lake / "bronze" / "noaa" / "storm_events_v1"
+    write_iceberg_table(
+        _records(),
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_noaa",
+        table="storm_events_v1",
+        json_schema=_json_schema(),
+    )
+    hint_path = (
+        tmp_path / "lake" / "bronze" / "noaa" / "storm_events_v1" / "metadata" / "version-hint.text"
+    )
+    hint = hint_path.read_text(encoding="utf-8").strip()
+    assert "://" not in hint
+    assert not hint.endswith(".metadata.json")
+    ice = load_iceberg_table(
+        lake=lake, namespace="bronze_noaa", table="storm_events_v1", table_location=loc
+    )
+    assert ice is not None
+    assert scan_iceberg_rows(ice, limit=1)
+
+    duckdb = pytest.importorskip("duckdb")
+    con = duckdb.connect()
+    try:
+        con.execute("INSTALL iceberg")
+        con.execute("LOAD iceberg")
+    except Exception as exc:  # pragma: no cover - optional extension
+        pytest.skip(f"duckdb iceberg extension unavailable: {exc}")
+    path = str((tmp_path / "lake" / "bronze" / "noaa" / "storm_events_v1").resolve())
+    n = con.execute(f"SELECT count(*) FROM iceberg_scan('{path}')").fetchone()[0]
+    assert n >= 1

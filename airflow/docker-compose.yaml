@@ -26,6 +26,7 @@ x-airflow-common: &airflow-common
     DET_LAKE_PATH: /opt/det/data/lake
     DET_LOG_FORMAT: json
     DET_ANALYTICS_DUCKDB: /opt/det/data/analytics.duckdb
+    DET_OPS_DUCKDB: /opt/det/data/det_ops.duckdb
     DET_DBT_PROJECT: /opt/det/dbt
     # Defaults for noaa.storm_events filesystem bronze; DAG may refine from pipeline YAML.
     DET_BRONZE_SOURCE: ${DET_BRONZE_SOURCE:-filesystem}

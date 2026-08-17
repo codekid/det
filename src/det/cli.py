@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # Emit before any heavy imports so a hang during import is visible under `uv run`.
@@ -93,6 +94,12 @@ def _resolve_pipeline(ref: str, root: Path):
         err=True,
     )
     return resolved
+
+
+def _analytics_exclude(select: list[str] | None) -> list[str] | None:
+    from det.runtime.dbt_runner import analytics_exclude
+
+    return analytics_exclude(select)
 
 
 @app.command("extract")
@@ -338,6 +345,11 @@ def dbt_cmd(
         "--project-dir",
         help="dbt project directory (default: <project-root>/dbt)",
     ),
+    target: str | None = typer.Option(
+        None,
+        "--target",
+        help="dbt profile target (default: ops when --select is ops-only)",
+    ),
     lake_path: str | None = typer.Option(
         None,
         "--lake-path",
@@ -381,6 +393,8 @@ def dbt_cmd(
             command=command,  # type: ignore[arg-type]
             project_dir=project_dir,
             select=select or None,
+            exclude=_analytics_exclude(select or None),
+            target=target,
             full_refresh=full_refresh,
             lake_path=lake_path,
             pipeline=pipe,
@@ -594,6 +608,174 @@ def prune_bronze(
     )
 
 
+def _format_duration(value: object) -> str:
+    try:
+        milliseconds = max(0, int(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return "-"
+    if milliseconds < 1000:
+        return f"{milliseconds}ms"
+    seconds = milliseconds / 1000
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, remainder = divmod(milliseconds // 1000, 60)
+    return f"{minutes}m {remainder:02d}s"
+
+
+def _format_started(value: object) -> str:
+    text = str(value or "")
+    if not text:
+        return "-"
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed.astimezone().strftime("%b %d %H:%M:%S")
+    except ValueError:
+        return text[:19]
+
+
+def _format_window_date(value: object) -> str:
+    text = str(value or "")
+    try:
+        return datetime.fromisoformat(text).strftime("%b %d, %Y")
+    except ValueError:
+        return text or "-"
+
+
+def _truncate(value: object, width: int) -> str:
+    text = str(value or "-")
+    if len(text) <= width:
+        return text
+    return text[: max(1, width - 1)] + "…"
+
+
+def _table_widths(
+    headers: tuple[str, ...], rows: list[tuple[str, ...]]
+) -> tuple[int, ...]:
+    return tuple(
+        max(len(header), *(len(row[index]) for row in rows))
+        for index, header in enumerate(headers)
+    )
+
+
+def _table_row(
+    values: tuple[str, ...],
+    widths: tuple[int, ...],
+    *,
+    status_color: bool = False,
+) -> str:
+    cells = [value.ljust(widths[index]) for index, value in enumerate(values)]
+    if status_color and sys.stdout.isatty():
+        color = typer.colors.GREEN if values[0] == "OK" else typer.colors.RED
+        cells[0] = typer.style(cells[0], fg=color, bold=True)
+    return "  ".join(cells).rstrip()
+
+
+def _print_run_list(
+    receipts: list[dict[str, object]],
+    *,
+    include_pipeline: bool,
+    verbose: bool,
+) -> None:
+    headers = ("STATUS", "COMMAND")
+    if include_pipeline:
+        headers += ("PIPELINE",)
+    headers += ("DURATION", "STARTED")
+
+    rows: list[tuple[str, ...]] = []
+    for receipt in receipts:
+        values = (
+            str(receipt.get("status") or "-").upper(),
+            str(receipt.get("command") or "-"),
+        )
+        if include_pipeline:
+            values += (_truncate(receipt.get("pipeline"), 30),)
+        values += (
+            _format_duration(receipt.get("duration_ms")),
+            _format_started(receipt.get("started_at")),
+        )
+        rows.append(values)
+
+    widths = _table_widths(headers, rows)
+    typer.echo(_table_row(headers, widths))
+    for receipt, row in zip(receipts, rows, strict=True):
+        typer.echo(_table_row(row, widths, status_color=True))
+        if receipt.get("status") == "error":
+            code = str(receipt.get("error_code") or "unknown")
+            message = str(receipt.get("error_message") or "")
+            detail = f"{code}: {message}" if message else code
+            typer.echo(f"        └─ {_truncate(detail, 110)}")
+        if verbose:
+            typer.echo(
+                "        "
+                f"Owner: {receipt.get('owner') or '-'}  "
+                f"Destination: {receipt.get('destination') or '-'}"
+            )
+            typer.echo(
+                "        "
+                f"Interval: {receipt.get('interval_start') or '-'} → "
+                f"{receipt.get('interval_end') or '-'}"
+            )
+            typer.echo(
+                "        "
+                f"Extract: {receipt.get('extract_run_datetime') or '-'}  "
+                f"Attempt ID: {receipt.get('attempt_id') or '-'}"
+            )
+            if receipt.get("error_class"):
+                typer.echo(f"        Error class: {receipt['error_class']}")
+
+
+def _print_run_summary(
+    payload: dict[str, object],
+    *,
+    include_pipeline: bool,
+) -> None:
+    typer.echo(
+        f"Attempt window: {_format_window_date(payload.get('since'))} – "
+        f"{_format_window_date(payload.get('until'))} (end exclusive)"
+    )
+    typer.echo()
+    headers = ("COMMAND",)
+    if include_pipeline:
+        headers = ("PIPELINE",) + headers
+    headers += ("ATTEMPTS", "OK", "ERRORS", "P50", "P95", "ROWS", "ERROR CODES")
+
+    rows: list[tuple[str, ...]] = []
+    groups = payload.get("groups")
+    assert isinstance(groups, list)
+    for group in groups:
+        assert isinstance(group, dict)
+        values = (str(group.get("command") or "-"),)
+        if include_pipeline:
+            values = (_truncate(group.get("pipeline"), 30),) + values
+        error_codes = group.get("error_codes")
+        codes = ""
+        if isinstance(error_codes, dict):
+            codes = ", ".join(
+                f"{name}×{count}" for name, count in sorted(error_codes.items())
+            )
+        rows_value = group.get("rows")
+        shown_rows = (
+            "-"
+            if group.get("command") == "extract"
+            else f"{int(rows_value or 0):,}"
+        )
+        values += (
+            f"{int(group.get('attempts') or 0):,}",
+            f"{int(group.get('ok') or 0):,}",
+            f"{int(group.get('error') or 0):,}",
+            _format_duration(group.get("p50_ms")),
+            _format_duration(group.get("p95_ms")),
+            shown_rows,
+            codes or "-",
+        )
+        rows.append(values)
+
+    widths = _table_widths(headers, rows)
+    typer.echo(_table_row(headers, widths))
+    for row in rows:
+        typer.echo(_table_row(row, widths))
+
+
 @app.command("runs")
 def runs_cmd(
     pipeline: str | None = typer.Option(None, "--pipeline", "-p", help=_PIPELINE_HELP),
@@ -613,6 +795,12 @@ def runs_cmd(
     command: str | None = typer.Option(None, "--command", help="extract or load"),
     limit: int = typer.Option(50, "--limit", help="Max receipts to print"),
     summary: bool = typer.Option(False, "--summary", help="Per pipeline+command counts"),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Show interval, owner, destination, extract, and attempt details",
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON"),
     lake_path: str | None = typer.Option(None, "--lake-path"),
     project_root: Path | None = typer.Option(
@@ -669,33 +857,56 @@ def runs_cmd(
                 f"(no receipts in {payload.get('since')}..{payload.get('until')})"
             )
             return
-        typer.echo(f"since={payload['since']} until={payload['until']}")
-        for group in groups:
-            typer.echo(
-                f"pipeline={group['pipeline']} command={group['command']} "
-                f"attempts={group['attempts']} ok={group['ok']} error={group['error']} "
-                f"p50_ms={group['p50_ms']} p95_ms={group['p95_ms']} rows={group['rows']}"
-            )
-            codes = group.get("error_codes") or {}
-            if codes:
-                coded = " ".join(f"{k}={v}" for k, v in codes.items())
-                typer.echo(f"  error_codes: {coded}")
+        _print_run_summary(payload, include_pipeline=pipe_id is None)
         return
     if not payload:
         typer.echo("(no receipts)")
         return
-    for row in payload:
-        parts = [
-            f"pipeline={row.get('pipeline')}",
-            f"command={row.get('command')}",
-            f"status={row.get('status')}",
-            f"duration_ms={row.get('duration_ms')}",
-        ]
-        if row.get("error_code"):
-            parts.append(f"error_code={row['error_code']}")
-        if row.get("started_at"):
-            parts.append(f"started_at={row['started_at']}")
-        typer.echo(" ".join(parts))
+    _print_run_list(payload, include_pipeline=pipe_id is None, verbose=verbose)
+
+
+@app.command("runs-materialize")
+def runs_materialize_cmd(
+    interval_start: str | None = typer.Option(
+        None,
+        "--interval-start",
+        "-s",
+        help="Attempt-date window start (default: 7 days ago). Not the data interval.",
+    ),
+    interval_end: str | None = typer.Option(
+        None,
+        "--interval-end",
+        "-e",
+        help="Attempt-date window end, exclusive (default: tomorrow UTC).",
+    ),
+    lake_path: str | None = typer.Option(None, "--lake-path"),
+    project_root: Path | None = typer.Option(
+        None, "--project-root", help=_PROJECT_ROOT_HELP
+    ),
+) -> None:
+    """Project ``{lake}/runs/`` JSON into Iceberg ``ops.run_receipts`` (replace-by-day)."""
+    from det.runtime.lake import open_lake, pick_lake_spec
+    from det.runtime.receipts_materialize import materialize_receipts
+
+    root = _project_root(project_root)
+    spec = pick_lake_spec(cli_lake_path=lake_path, destination_path=None)
+    lake = open_lake(spec, root)
+    try:
+        stats = materialize_receipts(
+            lake,
+            since=interval_start,
+            until=interval_end,
+        )
+    except ImportError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"OK materialize since={stats.since.isoformat()} until={stats.until.isoformat()} "
+        f"days={stats.days_touched} rows={stats.rows_written} "
+        f"skipped={stats.skipped} table={stats.table_location}"
+    )
 
 
 @app.command("lock-show")

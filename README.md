@@ -267,6 +267,28 @@ MCP: `list_runs` / `summarize_runs` (read-only). Manifest remains the authority 
 landed partitions; receipts are observability. No SLO thresholds or alerting in this
 slice. `det prune` never touches `runs/` (bronze-only).
 
+### Ops projection (Iceberg + dbt)
+
+JSON under `runs/` stays the attempt log. Project a window into Iceberg for dbt:
+
+```text
+{lake}/ops/run_receipts   # namespace ops, table run_receipts, partition attempt_date
+```
+
+```bash
+det runs-materialize -s 2026-08-01 -e 2026-08-17   # replace-by-day; needs det[iceberg]
+det dbt --select tag:ops                           # --target ops + DET_LAKE_PATH
+```
+
+dbt models under `dbt/models/ops/` are tagged `ops` and land in a **separate** DuckDB
+file (`DET_OPS_DUCKDB`, default `../data/det_ops.duckdb` / Compose `/opt/det/data/det_ops.duckdb`).
+Do not name the file `ops.duckdb`: DuckDB uses the file stem as the catalog name, which
+collides with schema `ops`.
+Silver/gold builds always `--exclude tag:ops` so ops never writes `analytics.duckdb`.
+
+Airflow DAG **`det_ops_receipts`** (standalone): materialize → `dbt build --select tag:ops --target ops`.
+Not chained onto extract or `det_dbt_silver_gold`.
+
 ---
 
 ## Install
@@ -842,26 +864,30 @@ flowchart TD
   load[load]
   prune[prune optional]
   dag2[det_dbt_silver_gold]
-  dbtBuild[single dbt build]
+  dbtBuild[dbt build exclude tag ops]
+  dag3[det_ops_receipts]
+  materialize[runs-materialize]
+  opsDbt[dbt build tag ops target ops]
   backfill -->|"one trigger per day"| dag1
   dag1 --> extract --> load --> prune
   dag2 --> dbtBuild
+  dag3 --> materialize --> opsDbt
 ```
 
-Extract and dbt are **decoupled**: bronze lands on its own schedule; silver/gold
-runs on a separate `@daily` (or manual trigger after backfill).
+Extract, silver/gold, and ops are **decoupled** schedules.
 
 | DAG | Flow |
 | --- | --- |
 | `det_extract_bronze` | extract → load → optional prune |
 | `det_backfill_extract_bronze` | trigger `det_extract_bronze` once per day for `[interval_start, interval_end)` |
-| `det_dbt_silver_gold` | one Airflow task: `dbt build` for the whole project (not chained from extract) |
+| `det_dbt_silver_gold` | one Airflow task: `dbt build` on analytics DuckDB with `--exclude tag:ops` |
+| `det_ops_receipts` | materialize `runs/` → Iceberg `ops.run_receipts`, then `dbt build --select tag:ops --target ops` on `DET_OPS_DUCKDB` |
 
-File-backed DuckDB only allows a single writer, so the dbt DAG is **one process**
-(same as local `det dbt`), not parallel per-model Cosmos tasks. By default it
-runs the **entire** dbt project. Narrow with optional `DET_DBT_SELECT`
-(space/comma selectors). Task env: `DET_LAKE_PATH`, `DET_BRONZE_*`, and
-**`DET_ANALYTICS_DUCKDB`** (prefer absolute in Compose).
+File-backed DuckDB only allows a single writer, so each dbt DAG is **one process**
+(same as local `det dbt`), not parallel per-model Cosmos tasks. Silver/gold always
+`--exclude tag:ops` (even when `DET_DBT_SELECT` is set). Ops models run only on
+`det_ops_receipts` / `--target ops`. Task env: `DET_LAKE_PATH`, `DET_BRONZE_*`,
+**`DET_ANALYTICS_DUCKDB`**, and for ops **`DET_OPS_DUCKDB`** (prefer absolute in Compose).
 
 Backfill (no UI form required) — DET half-open interval, one child DagRun per day:
 
@@ -876,7 +902,7 @@ cd airflow && docker compose exec airflow-scheduler \
 
 Useful env vars (see `airflow/.env.example`): `DET_PROJECT_ROOT`,
 `DET_PIPELINE_CONFIG`, `DET_PIPELINE_OVERRIDES`, `DET_DBT_PROJECT`,
-`DET_DBT_SELECT`, `DET_LAKE_PATH`, `DET_LOG_FORMAT`, `DET_ANALYTICS_DUCKDB`, `DET_BRONZE_SOURCE`,
+`DET_DBT_SELECT`, `DET_LAKE_PATH`, `DET_LOG_FORMAT`, `DET_ANALYTICS_DUCKDB`, `DET_OPS_DUCKDB`, `DET_BRONZE_SOURCE`,
 `DET_BRONZE_SCHEMA`, `DET_PRUNE`, `DET_PRUNE_APPLY`, `DET_PRUNE_KEEP`,
 `DET_LOCK_TTL_SEC`, `DET_LOCK_OWNER`. `DET_LOCK=0` is unsafe (disables the lake lease).
 

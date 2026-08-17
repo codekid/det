@@ -9,3 +9,10 @@ disaster_analytics:
       schema: main
       # File-backed DuckDB: one writer; keep dbt single-threaded.
       threads: 1
+    ops:
+      type: duckdb
+      # File stem must not be `ops` — DuckDB names the catalog after the file,
+      # which collides with +schema: ops (`ops.stg_…` becomes ambiguous).
+      path: "{{ env_var('DET_OPS_DUCKDB', '../data/det_ops.duckdb') }}"
+      schema: main
+      threads: 1

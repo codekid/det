@@ -134,6 +134,7 @@ Bronze recreate after renames: identity migrate (no growing Python normalize map
 | `DET_BRONZE_SOURCE` | `filesystem` (default), `iceberg`, or `duckdb` |
 | `DET_BRONZE_SCHEMA` | SQL schema when bronze is DuckDB/Postgres |
 | `DET_ANALYTICS_DUCKDB` | Absolute analytics DB path (prefer in Airflow/Compose) |
+| `DET_OPS_DUCKDB` | Absolute ops DB path for `--target ops` (separate from analytics) |
 
 Macro `det_bronze_from("table", "bronze_{provider}")` switches stg to a native
 DuckDB table when `DET_BRONZE_SOURCE=duckdb`. Iceberg bronze keeps `source()` and
@@ -141,6 +142,20 @@ reads `iceberg_scan` from `sources.yml` when `DET_BRONZE_SOURCE=iceberg`. Pass t
 source name explicitly so multi-provider projects parse when `det dbt -p` sets
 `DET_BRONZE_SCHEMA`. BigQuery is a later **reader** of the Iceberg table (BigLake),
 not a DET destination.
+
+## Ops models
+
+- Models under `dbt/models/ops/` are tagged `ops` and use schema `ops`.
+- Source: Iceberg `{lake}/ops/run_receipts` via `iceberg_scan` (after `det runs-materialize`).
+- Analytics builds (`det dbt`, `det_dbt_silver_gold`, MCP `dbt_dry_run`) always
+  `--exclude tag:ops` unless `--select` explicitly targets ops (`tag:ops`,
+  `stg_det__…`, `path:models/ops`).
+- Build ops with `det dbt --select tag:ops` (sets `--target ops`, `DET_LAKE_PATH`,
+  `DET_OPS_DUCKDB`) or Airflow DAG `det_ops_receipts`. Materialize first:
+  `det runs-materialize`. Query `data/det_ops.duckdb` schema `ops` (not
+  `analytics.duckdb`). Do not name the DuckDB file `ops.duckdb` — catalog stem
+  `ops` collides with schema `ops`. Raw `dbt` from repo root must set **absolute**
+  `DET_LAKE_PATH`.
 
 ## Hard rules
 

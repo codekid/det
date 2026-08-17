@@ -113,6 +113,21 @@ def dbt_env_for_pipeline() -> dict[str, str]:
     }
 
 
+def ops_dbt_env() -> dict[str, str]:
+    """Env for ops dbt target (receipts Iceberg → DET_OPS_DUCKDB)."""
+    root = project_root()
+    lake = os.environ.get("DET_LAKE_PATH")
+    if not lake:
+        lake = str((root / "data" / "lake").resolve())
+    ops_db = os.environ.get("DET_OPS_DUCKDB")
+    if not ops_db:
+        ops_db = str((root / "data" / "det_ops.duckdb").resolve())
+    return {
+        "DET_LAKE_PATH": lake,
+        "DET_OPS_DUCKDB": ops_db,
+    }
+
+
 def daily_logical_dates_for_interval(
     interval_start: str, interval_end: str
 ) -> list[datetime]:

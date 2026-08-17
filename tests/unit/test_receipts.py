@@ -577,3 +577,101 @@ def test_cli_runs_json(project_root: Path, tmp_path: Path):
     assert summary.exit_code == 0, summary.output
     payload = json.loads(summary.stdout)
     assert payload["groups"][0]["ok"] == 1
+
+
+def test_cli_runs_human_table(project_root: Path, tmp_path: Path):
+    import structlog
+    from typer.testing import CliRunner
+
+    from det.cli import app
+    from det.logging import configure_logging
+
+    pipe = _example_pipe(tmp_path, project_root)
+    PipelineRunner(tmp_path).extract(
+        pipe, interval_start="2026-08-06", interval_end="2026-08-07"
+    )
+    runner = CliRunner()
+    try:
+        listed = runner.invoke(
+            app,
+            [
+                "runs",
+                "-p",
+                "example_api.events",
+                "--project-root",
+                str(tmp_path),
+            ],
+        )
+        verbose = runner.invoke(
+            app,
+            [
+                "runs",
+                "-p",
+                "example_api.events",
+                "--project-root",
+                str(tmp_path),
+                "--verbose",
+            ],
+        )
+        summary = runner.invoke(
+            app,
+            [
+                "runs",
+                "-p",
+                "example_api.events",
+                "--project-root",
+                str(tmp_path),
+                "--summary",
+            ],
+        )
+    finally:
+        structlog.reset_defaults()
+        configure_logging("WARNING")
+
+    assert listed.exit_code == 0, listed.output
+    assert "STATUS  COMMAND  DURATION  STARTED" in listed.stdout
+    assert "OK      extract" in listed.stdout
+    assert "duration_ms=" not in listed.stdout
+    assert "PIPELINE" not in listed.stdout
+
+    assert verbose.exit_code == 0, verbose.output
+    assert "Owner:" in verbose.stdout
+    assert "Interval:" in verbose.stdout
+    assert "Attempt ID:" in verbose.stdout
+
+    assert summary.exit_code == 0, summary.output
+    assert "Attempt window:" in summary.stdout
+    assert "COMMAND  ATTEMPTS  OK  ERRORS  P50" in summary.stdout
+    assert "extract" in summary.stdout
+
+
+def test_human_run_output_shows_error_detail(capsys):
+    from det.cli import _print_run_list
+
+    _print_run_list(
+        [
+            {
+                "status": "error",
+                "command": "load",
+                "pipeline": "example_api.events",
+                "duration_ms": 4120,
+                "started_at": "2026-08-17T10:04:02+00:00",
+                "error_code": "schema_invalid",
+                "error_message": "'severity' is a required property",
+                "error_class": "ValidationError",
+                "owner": "airflow:det_extract_bronze:manual__2026-08-17",
+                "destination": "postgres",
+                "interval_start": "2026-08-06T00:00:00+00:00",
+                "interval_end": "2026-08-07T00:00:00+00:00",
+                "extract_run_datetime": "2026-08-17T10:03:58+00:00",
+                "attempt_id": "abc123",
+            }
+        ],
+        include_pipeline=True,
+        verbose=True,
+    )
+    output = capsys.readouterr().out
+    assert "ERROR   load     example_api.events" in output
+    assert "4.1s" in output
+    assert "schema_invalid: 'severity' is a required property" in output
+    assert "Error class: ValidationError" in output

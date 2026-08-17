@@ -86,6 +86,18 @@ def test_daily_logical_dates_rejects_empty_range(project_root: Path):
         det_env.daily_logical_dates_for_interval("2026-08-01", "2026-08-01")
 
 
+def test_ops_dbt_env(project_root: Path, monkeypatch):
+    det_env = _load_det_env(project_root)
+    monkeypatch.setenv("DET_PROJECT_ROOT", str(project_root))
+    monkeypatch.setenv("DET_LAKE_PATH", str(project_root / "data" / "lake"))
+    monkeypatch.delenv("DET_OPS_DUCKDB", raising=False)
+    monkeypatch.delenv("DET_ANALYTICS_DUCKDB", raising=False)
+    env = det_env.ops_dbt_env()
+    assert env["DET_LAKE_PATH"] == str(project_root / "data" / "lake")
+    assert env["DET_OPS_DUCKDB"] == str((project_root / "data" / "det_ops.duckdb").resolve())
+    assert "DET_ANALYTICS_DUCKDB" not in env
+
+
 def test_lock_ttl_sec_from_conf(project_root: Path):
     det_env = _load_det_env(project_root)
     assert det_env.lock_ttl_sec_from_conf({}) is None

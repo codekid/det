@@ -116,6 +116,8 @@ def build_dbt_argv(
     project_dir: Path,
     profiles_dir: Path | None = None,
     select: Sequence[str] | None = None,
+    exclude: Sequence[str] | None = None,
+    target: str | None = None,
     full_refresh: bool = False,
     extra_args: Sequence[str] | None = None,
     dbt_executable: str = "dbt",
@@ -131,11 +133,46 @@ def build_dbt_argv(
     ]
     if select:
         argv.extend(["--select", *select])
+    if exclude:
+        argv.extend(["--exclude", *exclude])
+    if target:
+        argv.extend(["--target", target])
     if full_refresh:
         argv.append("--full-refresh")
     if extra_args:
         argv.extend(extra_args)
     return argv
+
+
+OPS_TAG_EXCLUDE = "tag:ops"
+
+
+def is_ops_selector(selector: str) -> bool:
+    """True when a ``--select`` token intentionally targets ops models."""
+    text = selector.strip().lower()
+    if not text:
+        return False
+    if "tag:ops" in text:
+        return True
+    if text == "ops" or text.startswith("ops.") or text.startswith("path:models/ops"):
+        return True
+    if text.startswith("stg_det__"):
+        return True
+    return False
+
+
+def analytics_exclude(select: Sequence[str] | None) -> list[str] | None:
+    """Exclude ops from analytics builds unless select explicitly targets ops."""
+    if select and any(is_ops_selector(s) for s in select):
+        return None
+    return [OPS_TAG_EXCLUDE]
+
+
+def ops_dbt_target(select: Sequence[str] | None) -> str | None:
+    """Use profile target ``ops`` when select is ops-only."""
+    if select and all(is_ops_selector(s) for s in select):
+        return "ops"
+    return None
 
 
 def run_dbt(
@@ -145,6 +182,8 @@ def run_dbt(
     project_dir: Path | str | None = None,
     profiles_dir: Path | str | None = None,
     select: Sequence[str] | None = None,
+    exclude: Sequence[str] | None = None,
+    target: str | None = None,
     full_refresh: bool = False,
     lake_path: str | Path | None = None,
     pipeline: PipelineConfig | Path | str | None = None,
@@ -176,6 +215,9 @@ def run_dbt(
     if resolved_select is None and config is not None:
         resolved_select = default_select_for_pipeline(config)
 
+    resolved_exclude = list(exclude) if exclude is not None else None
+    resolved_target = target if target is not None else ops_dbt_target(resolved_select)
+
     profiles = (
         resolve_dbt_project_dir(root, profiles_dir)
         if profiles_dir is not None
@@ -190,6 +232,11 @@ def run_dbt(
     )
     lake = open_lake(spec, root)
     env["DET_LAKE_PATH"] = str(lake)
+    if resolved_target == "ops":
+        env.setdefault(
+            "DET_OPS_DUCKDB",
+            str((root / "data" / "det_ops.duckdb").resolve()),
+        )
 
     # Native DuckDB bronze vs JSONL lake — DET_BRONZE_SCHEMA is bronze_{provider}.
     if config is not None:
@@ -213,6 +260,8 @@ def run_dbt(
         project_dir=dbt_dir,
         profiles_dir=profiles,
         select=resolved_select,
+        exclude=resolved_exclude,
+        target=resolved_target,
         full_refresh=full_refresh,
         extra_args=extra_args,
         dbt_executable=dbt_bin or "dbt",
