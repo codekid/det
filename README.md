@@ -409,6 +409,8 @@ flowchart LR
 
 `-p` accepts a **pipeline ref**: canonical id (`noaa.storm_events`), slash form (`noaa/storm_events`), or a YAML path. Resolution uses `--project-root`, else `DET_PROJECT_ROOT`, else cwd. Every command logs `pipeline=<id> path=configs/pipelines/...` to stderr.
 
+Logs: laptop TTY stays human console. Non-TTY (Airflow, CI, pipes) is JSON with bound `pipeline`, `interval_start` / `interval_end`, `extract_run_datetime`, `destination` (type only), and `command` on extract/load/migrate/prune/dbt lines. Override with `--log-format json|console` or `DET_LOG_FORMAT` (CLI wins). Grep `pipeline` / `extract_run_datetime`. Compose sets `DET_LOG_FORMAT=json`.
+
 ```bash
 # Extract / load / run
 det run -p noaa.storm_events -s 2026-08-06
@@ -764,7 +766,7 @@ cd airflow && docker compose exec airflow-scheduler \
 
 Useful env vars (see `airflow/.env.example`): `DET_PROJECT_ROOT`,
 `DET_PIPELINE_CONFIG`, `DET_PIPELINE_OVERRIDES`, `DET_DBT_PROJECT`,
-`DET_DBT_SELECT`, `DET_LAKE_PATH`, `DET_ANALYTICS_DUCKDB`, `DET_BRONZE_SOURCE`,
+`DET_DBT_SELECT`, `DET_LAKE_PATH`, `DET_LOG_FORMAT`, `DET_ANALYTICS_DUCKDB`, `DET_BRONZE_SOURCE`,
 `DET_BRONZE_SCHEMA`, `DET_PRUNE`, `DET_PRUNE_APPLY`, `DET_PRUNE_KEEP`.
 
 ---

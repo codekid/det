@@ -7,9 +7,10 @@ from pathlib import Path
 from det.destinations.models import (
     bronze_dataset_dir,
     hive_partition_dir,
+    lake_root,
     raw_dataset_dir,
 )
-from det.logging import get_logger
+from det.logging import bound_run_context, get_logger, sanitize_lake_uri, update_run_context
 from det.plugins import load_plugins
 from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
 from det.runtime.lake import LakeRef
@@ -74,6 +75,7 @@ class PipelineRunner:
         effective = merge_source_config(source.defaults(), config.source.overrides)
         start_iso, end_iso = resolve_interval(interval_start, interval_end)
         interval = Interval(start=start_iso, end=end_iso)
+        lake = lake_root(config.destination, self.project_root)
 
         raw_dir = hive_partition_dir(
             raw_dataset_dir(config, self.project_root),
@@ -96,43 +98,49 @@ class PipelineRunner:
         data_dir = raw_dir / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
 
-        logger.info(
-            "extract starting",
+        with bound_run_context(
+            command="extract",
             pipeline=config.name,
-            source=source.name,
             interval_start=start_iso,
             interval_end=end_iso,
-            raw_dir=str(raw_dir),
-        )
-        try:
-            artifacts = source.extract_to_raw(
-                config=effective, interval=interval, data_dir=data_dir
-            )
+            extract_run_datetime=extract_ts,
+            destination=config.destination.type,
+            lake=sanitize_lake_uri(str(lake)),
+        ):
             logger.info(
-                "writing raw manifest", artifacts=len(artifacts), raw_dir=str(raw_dir)
+                "extract starting",
+                source=source.name,
+                raw_dir=str(raw_dir),
             )
-            # Data already at final keys (one write). Manifest is the commit.
-            write_manifest(
-                raw_dir,
-                {
-                    "source": source.name,
-                    "interval_start": start_iso,
-                    "interval_end": end_iso,
-                    "extract_run_datetime": extract_ts,
-                    "wire_version": config.wire_version,
-                    "artifacts": artifacts,
-                },
+            try:
+                artifacts = source.extract_to_raw(
+                    config=effective, interval=interval, data_dir=data_dir
+                )
+                logger.info(
+                    "writing raw manifest",
+                    artifacts=len(artifacts),
+                    raw_dir=str(raw_dir),
+                )
+                write_manifest(
+                    raw_dir,
+                    {
+                        "source": source.name,
+                        "interval_start": start_iso,
+                        "interval_end": end_iso,
+                        "extract_run_datetime": extract_ts,
+                        "wire_version": config.wire_version,
+                        "artifacts": artifacts,
+                    },
+                )
+            except Exception:
+                if not is_committed_raw_dir(raw_dir):
+                    raw_dir.rmtree(ignore_errors=True)
+                raise
+            logger.info(
+                "extract complete",
+                artifacts=len(artifacts),
+                raw_dir=str(raw_dir),
             )
-        except Exception:
-            if not is_committed_raw_dir(raw_dir):
-                raw_dir.rmtree(ignore_errors=True)
-            raise
-        logger.info(
-            "extract complete",
-            pipeline=config.name,
-            artifacts=len(artifacts),
-            raw_dir=str(raw_dir),
-        )
         return ExtractResult(
             pipeline=config.name,
             raw_dir=raw_dir,
@@ -156,75 +164,83 @@ class PipelineRunner:
         source = get_source(config.source.type)
         effective = merge_source_config(source.defaults(), config.source.overrides)
         start_iso, end_iso = resolve_interval(interval_start, interval_end)
+        lake = lake_root(config.destination, self.project_root)
 
-        logger.info(
-            "load starting",
+        with bound_run_context(
+            command="load",
             pipeline=config.name,
             interval_start=start_iso,
             interval_end=end_iso,
             extract_run_datetime=extract_run_datetime,
-        )
-        raw_dir = self._resolve_raw_dir(
-            config,
-            interval_start=start_iso,
-            interval_end=end_iso,
-            extract_run_datetime=extract_run_datetime,
-        )
-        logger.info("resolved raw partition", raw_dir=str(raw_dir))
-        manifest = read_manifest(raw_dir)
-        extract_ts = str(manifest.get("extract_run_datetime") or extract_run_datetime)
+            destination=config.destination.type,
+            lake=sanitize_lake_uri(str(lake)),
+        ):
+            logger.info("load starting")
+            raw_dir = self._resolve_raw_dir(
+                config,
+                interval_start=start_iso,
+                interval_end=end_iso,
+                extract_run_datetime=extract_run_datetime,
+            )
+            logger.info("resolved raw partition", raw_dir=str(raw_dir))
+            manifest = read_manifest(raw_dir)
+            extract_ts = str(
+                manifest.get("extract_run_datetime") or extract_run_datetime
+            )
+            update_run_context(extract_run_datetime=extract_ts)
 
-        bronze_loaded_at = format_extract_run_datetime()
-        counted = CountingIter(
-            iter_bronze_rows(
-                source.records_from_raw(
-                    config=effective, raw_dir=raw_dir, manifest=manifest
-                ),
-                schema=schema,
-                naming=config.bronze.naming,
-                extract_run_datetime=extract_ts,
+            bronze_loaded_at = format_extract_run_datetime()
+            counted = CountingIter(
+                iter_bronze_rows(
+                    source.records_from_raw(
+                        config=effective, raw_dir=raw_dir, manifest=manifest
+                    ),
+                    schema=schema,
+                    naming=config.bronze.naming,
+                    extract_run_datetime=extract_ts,
+                    interval_start_datetime=start_iso,
+                    interval_end_datetime=end_iso,
+                    bronze_loaded_at=bronze_loaded_at,
+                    log_every=config.ingestion.chunk_rows,
+                )
+            )
+
+            partition = hive_partition_dir(
+                bronze_dataset_dir(config, self.project_root),
                 interval_start_datetime=start_iso,
                 interval_end_datetime=end_iso,
-                bronze_loaded_at=bronze_loaded_at,
-                log_every=config.ingestion.chunk_rows,
+                extract_run_datetime=extract_ts,
             )
-        )
-
-        partition = hive_partition_dir(
-            bronze_dataset_dir(config, self.project_root),
-            interval_start_datetime=start_iso,
-            interval_end_datetime=end_iso,
-            extract_run_datetime=extract_ts,
-        )
-        backend = get_ingestion(config.ingestion.library)
-        logger.info(
-            "writing bronze partition",
-            backend=config.ingestion.library,
-            chunk_rows=config.ingestion.chunk_rows,
-            partition=str(partition),
-        )
-        written = backend.write(
-            counted,
-            config=config,
-            project_root=self.project_root,
-            partition_dir=partition,
-            destination=config.destination,
-            chunk_rows=config.ingestion.chunk_rows,
-        )
-        stamp_validation_success(
-            raw_dir,
-            schema_path=config.schema_path,
-            schema_sha256=sha256_file(resolve_path(self.project_root, config.schema_path)),
-            row_count=counted.n,
-            wire_version=config.wire_version,
-            validated_at=format_extract_run_datetime(),
-        )
-        logger.info(
-            "load complete",
-            pipeline=config.name,
-            rows=counted.n,
-            partition=str(written),
-        )
+            backend = get_ingestion(config.ingestion.library)
+            logger.info(
+                "writing bronze partition",
+                backend=config.ingestion.library,
+                chunk_rows=config.ingestion.chunk_rows,
+                partition=str(partition),
+            )
+            written = backend.write(
+                counted,
+                config=config,
+                project_root=self.project_root,
+                partition_dir=partition,
+                destination=config.destination,
+                chunk_rows=config.ingestion.chunk_rows,
+            )
+            stamp_validation_success(
+                raw_dir,
+                schema_path=config.schema_path,
+                schema_sha256=sha256_file(
+                    resolve_path(self.project_root, config.schema_path)
+                ),
+                row_count=counted.n,
+                wire_version=config.wire_version,
+                validated_at=format_extract_run_datetime(),
+            )
+            logger.info(
+                "load complete",
+                rows=counted.n,
+                partition=str(written),
+            )
         return RunResult(
             pipeline=config.name,
             partition_dir=written,
@@ -243,15 +259,16 @@ class PipelineRunner:
         overrides: Sequence[str] | None = None,
     ) -> RunResult:
         extract_ts = format_extract_run_datetime()
+        config = self._load_config(pipeline, overrides)
         extracted = self.extract(
-            pipeline,
+            config,
             interval_start=interval_start,
             interval_end=interval_end,
             overrides=overrides,
             extract_run_datetime=extract_ts,
         )
         return self.load(
-            pipeline,
+            config,
             interval_start=extracted.interval_start,
             interval_end=extracted.interval_end,
             overrides=overrides,

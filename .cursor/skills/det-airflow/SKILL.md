@@ -64,6 +64,7 @@ File-backed DuckDB cannot safely fan out per-model writers, so dbt is one task.
 | `DET_DBT_SELECT` | Optional dbt `--select`; unset = entire dbt project |
 | `DET_BRONZE_SOURCE` / `DET_BRONZE_SCHEMA` | dbt bronze reader |
 | `DET_ANALYTICS_DUCKDB` | Prefer **absolute** path in Compose |
+| `DET_LOG_FORMAT` | Compose sets `json` so task logs are greppable (`pipeline`, `extract_run_datetime`) |
 | `DET_PRUNE` / `DET_PRUNE_APPLY` / `DET_PRUNE_KEEP` | Optional prune after load |
 
 ## Backfill

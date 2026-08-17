@@ -7,7 +7,7 @@ import duckdb
 
 from det.destinations.models import bronze_dataset_dir, duckdb_connection_path, lake_root
 from det.ingestion.sql_replace import delete_extract_run_sql
-from det.logging import get_logger
+from det.logging import bound_run_context, get_logger, sanitize_lake_uri
 from det.runtime.config import PipelineConfig
 from det.runtime.ids import sql_names_for_config
 from det.runtime.lake import LakeRef
@@ -59,40 +59,61 @@ class BronzePruner:
             raise ValueError("--keep must be >= 1")
         window_start, window_end = resolve_interval(interval_start, interval_end)
         dest = config.destination
-        if dest.type == "filesystem":
-            return self._plan_filesystem(
-                config, window_start=window_start, window_end=window_end, keep=keep
+        with bound_run_context(
+            command="prune",
+            pipeline=config.name,
+            interval_start=window_start,
+            interval_end=window_end,
+            destination=dest.type,
+            lake=sanitize_lake_uri(str(lake_root(dest, self.project_root))),
+        ):
+            if dest.type == "filesystem":
+                return self._plan_filesystem(
+                    config, window_start=window_start, window_end=window_end, keep=keep
+                )
+            if dest.type == "duckdb":
+                return self._plan_duckdb(
+                    config, window_start=window_start, window_end=window_end, keep=keep
+                )
+            if dest.type == "postgres":
+                return self._plan_postgres(
+                    config, window_start=window_start, window_end=window_end, keep=keep
+                )
+            if dest.type == "iceberg":
+                return self._plan_iceberg(
+                    config, window_start=window_start, window_end=window_end, keep=keep
+                )
+            raise ValueError(
+                f"det prune does not support destination.type={dest.type!r}; "
+                "use filesystem, duckdb, postgres, or iceberg"
             )
-        if dest.type == "duckdb":
-            return self._plan_duckdb(
-                config, window_start=window_start, window_end=window_end, keep=keep
-            )
-        if dest.type == "postgres":
-            return self._plan_postgres(
-                config, window_start=window_start, window_end=window_end, keep=keep
-            )
-        if dest.type == "iceberg":
-            return self._plan_iceberg(
-                config, window_start=window_start, window_end=window_end, keep=keep
-            )
-        raise ValueError(
-            f"det prune does not support destination.type={dest.type!r}; "
-            "use filesystem, duckdb, postgres, or iceberg"
-        )
 
-    def apply(self, config: PipelineConfig, plan: PrunePlan) -> int:
+    def apply(
+        self,
+        config: PipelineConfig,
+        plan: PrunePlan,
+    ) -> int:
         if not plan.to_remove:
             return 0
+        return self._apply_body(config, plan)
+
+    def _apply_body(self, config: PipelineConfig, plan: PrunePlan) -> int:
         dest = config.destination
-        if dest.type == "filesystem":
-            return self._apply_filesystem(config, plan)
-        if dest.type == "duckdb":
-            return self._apply_duckdb(config, plan)
-        if dest.type == "postgres":
-            return self._apply_postgres(config, plan)
-        if dest.type == "iceberg":
-            return self._apply_iceberg(config, plan)
-        raise ValueError(f"Unsupported destination type for prune apply: {dest.type}")
+        with bound_run_context(
+            command="prune",
+            pipeline=config.name,
+            destination=dest.type,
+            lake=sanitize_lake_uri(str(lake_root(dest, self.project_root))),
+        ):
+            if dest.type == "filesystem":
+                return self._apply_filesystem(config, plan)
+            if dest.type == "duckdb":
+                return self._apply_duckdb(config, plan)
+            if dest.type == "postgres":
+                return self._apply_postgres(config, plan)
+            if dest.type == "iceberg":
+                return self._apply_iceberg(config, plan)
+            raise ValueError(f"Unsupported destination type for prune apply: {dest.type}")
 
     def _plan_filesystem(
         self,

@@ -4,8 +4,13 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from det.destinations.models import bronze_dataset_dir, hive_partition_dir, raw_dataset_dir
-from det.logging import get_logger
+from det.destinations.models import (
+    bronze_dataset_dir,
+    hive_partition_dir,
+    lake_root,
+    raw_dataset_dir,
+)
+from det.logging import bound_run_context, get_logger, sanitize_lake_uri
 from det.plugins import load_plugins
 from det.runtime.coerce import CoerceError, coerce_record
 from det.runtime.config import (
@@ -222,120 +227,133 @@ class BronzeMigrator:
         effective = merge_source_config(source.defaults(), config.source.overrides)
         window_start, window_end = resolve_interval(interval_start, interval_end)
 
-        raw_name = validate_canonical_id(from_raw or config.bronze_dataset())
-        to_bronze_id = validate_canonical_id(to_bronze)
-        raw_dataset = raw_dataset_dir(
-            config, self.project_root, dataset=raw_name
-        )
-        source_parts = _raw_partitions_in_window(raw_dataset, window_start, window_end)
-        if wire_version is not None:
-            filtered: list[Path | LakeRef] = []
-            for part in source_parts:
-                try:
-                    part_manifest = read_manifest(part)
-                except Exception:
-                    continue
-                if manifest_wire_version(part_manifest) == wire_version:
-                    filtered.append(part)
-            source_parts = filtered
-
-        # Keep name == source.type; _lake_id overrides the target lake/SQL identity.
-        to_config = PipelineConfig(
-            name=config.name,
-            source=SourceConfig(type=config.source.type, overrides=config.source.overrides),
-            schema_path=str(schema_path),
-            validation=ValidationConfig(),
-            ingestion=IngestionConfig(
-                library=ingestion_library,  # type: ignore[arg-type]
-                chunk_rows=config.ingestion.chunk_rows,
-            ),
-            destination=config.destination,
-            medallion=config.medallion,
-            bronze=config.bronze,
-            wire_version=config.wire_version,
-        )
-        to_config._lake_id = to_bronze_id
-
-        if dry_run:
-            return self._migrate_dry_run(
-                config=config,
-                to_config=to_config,
-                source=source,
-                effective=effective,
-                mapper=mapper,
-                schema=schema,
-                schema_rel=schema_rel,
-                mapper_name=mapper_name,
-                raw_name=raw_name,
-                to_bronze_id=to_bronze_id,
-                source_parts=source_parts,
-                window_start=window_start,
-                window_end=window_end,
-                extract_ts=extract_ts,
-                validate_limit=validate_limit,
-                wire_version_filter=wire_version,
+        with bound_run_context(
+            command="migrate",
+            pipeline=config.name,
+            interval_start=window_start,
+            interval_end=window_end,
+            extract_run_datetime=extract_ts,
+            destination=config.destination.type,
+            lake=sanitize_lake_uri(str(lake_root(config.destination, self.project_root))),
+        ):
+            raw_name = validate_canonical_id(from_raw or config.bronze_dataset())
+            to_bronze_id = validate_canonical_id(to_bronze)
+            raw_dataset = raw_dataset_dir(
+                config, self.project_root, dataset=raw_name
             )
+            source_parts = _raw_partitions_in_window(raw_dataset, window_start, window_end)
+            if wire_version is not None:
+                filtered: list[Path | LakeRef] = []
+                for part in source_parts:
+                    try:
+                        part_manifest = read_manifest(part)
+                    except Exception:
+                        continue
+                    if manifest_wire_version(part_manifest) == wire_version:
+                        filtered.append(part)
+                source_parts = filtered
 
-        backend = get_ingestion(ingestion_library)
-        total_rows = 0
-        written = 0
-
-        for raw_dir in source_parts:
-            manifest = read_manifest(raw_dir)
-            start_iso = str(manifest.get("interval_start") or window_start)
-            end_iso = str(manifest.get("interval_end") or window_end)
-            start_iso, end_iso = resolve_interval(start_iso, end_iso)
-            bronze_loaded_at = format_extract_run_datetime()
-            stream = iter_bronze_rows(
-                source.records_from_raw(
-                    config=effective, raw_dir=raw_dir, manifest=manifest
+            # Keep name == source.type; _lake_id overrides the target lake/SQL identity.
+            to_config = PipelineConfig(
+                name=config.name,
+                source=SourceConfig(type=config.source.type, overrides=config.source.overrides),
+                schema_path=str(schema_path),
+                validation=ValidationConfig(),
+                ingestion=IngestionConfig(
+                    library=ingestion_library,  # type: ignore[arg-type]
+                    chunk_rows=config.ingestion.chunk_rows,
                 ),
-                schema=schema,
-                naming=config.bronze.naming,
-                extract_run_datetime=extract_ts,
-                interval_start_datetime=start_iso,
-                interval_end_datetime=end_iso,
-                bronze_loaded_at=bronze_loaded_at,
-                mapper=mapper,
-                log_every=to_config.ingestion.chunk_rows,
+                destination=config.destination,
+                medallion=config.medallion,
+                bronze=config.bronze,
+                wire_version=config.wire_version,
             )
-            first = next(stream, None)
-            if first is None:
-                continue
+            to_config._lake_id = to_bronze_id
 
-            counted = CountingIter(chain_first(first, stream))
-            out_part = hive_partition_dir(
-                bronze_dataset_dir(to_config, self.project_root, dataset=to_bronze_id),
-                interval_start_datetime=start_iso,
-                interval_end_datetime=end_iso,
-                extract_run_datetime=extract_ts,
-            )
-            backend.write(
-                counted,
-                config=to_config,
-                project_root=self.project_root,
-                partition_dir=out_part,
-                destination=to_config.destination,
-                chunk_rows=to_config.ingestion.chunk_rows,
-            )
-            stamp_validation_success(
-                raw_dir,
-                schema_path=schema_rel,
-                schema_sha256=sha256_file(schema_resolved),
-                row_count=counted.n,
-                wire_version=to_config.wire_version,
-                validated_at=format_extract_run_datetime(),
-            )
-            total_rows += counted.n
-            written += 1
-            logger.info("migrated raw partition", raw_dir=str(raw_dir), rows=counted.n)
+            if dry_run:
+                return self._migrate_dry_run(
+                    config=config,
+                    to_config=to_config,
+                    source=source,
+                    effective=effective,
+                    mapper=mapper,
+                    schema=schema,
+                    schema_rel=schema_rel,
+                    mapper_name=mapper_name,
+                    raw_name=raw_name,
+                    to_bronze_id=to_bronze_id,
+                    source_parts=source_parts,
+                    window_start=window_start,
+                    window_end=window_end,
+                    extract_ts=extract_ts,
+                    validate_limit=validate_limit,
+                    wire_version_filter=wire_version,
+                )
 
-        return MigrateResult(
-            from_raw=raw_name,
-            to_bronze=to_bronze_id,
-            partitions=written,
-            rows=total_rows,
-        )
+            backend = get_ingestion(ingestion_library)
+            total_rows = 0
+            written = 0
+
+            for raw_dir in source_parts:
+                manifest = read_manifest(raw_dir)
+                start_iso = str(manifest.get("interval_start") or window_start)
+                end_iso = str(manifest.get("interval_end") or window_end)
+                start_iso, end_iso = resolve_interval(start_iso, end_iso)
+                bronze_loaded_at = format_extract_run_datetime()
+                stream = iter_bronze_rows(
+                    source.records_from_raw(
+                        config=effective, raw_dir=raw_dir, manifest=manifest
+                    ),
+                    schema=schema,
+                    naming=config.bronze.naming,
+                    extract_run_datetime=extract_ts,
+                    interval_start_datetime=start_iso,
+                    interval_end_datetime=end_iso,
+                    bronze_loaded_at=bronze_loaded_at,
+                    mapper=mapper,
+                    log_every=to_config.ingestion.chunk_rows,
+                )
+                first = next(stream, None)
+                if first is None:
+                    continue
+
+                counted = CountingIter(chain_first(first, stream))
+                out_part = hive_partition_dir(
+                    bronze_dataset_dir(
+                        to_config, self.project_root, dataset=to_bronze_id
+                    ),
+                    interval_start_datetime=start_iso,
+                    interval_end_datetime=end_iso,
+                    extract_run_datetime=extract_ts,
+                )
+                backend.write(
+                    counted,
+                    config=to_config,
+                    project_root=self.project_root,
+                    partition_dir=out_part,
+                    destination=to_config.destination,
+                    chunk_rows=to_config.ingestion.chunk_rows,
+                )
+                stamp_validation_success(
+                    raw_dir,
+                    schema_path=schema_rel,
+                    schema_sha256=sha256_file(schema_resolved),
+                    row_count=counted.n,
+                    wire_version=to_config.wire_version,
+                    validated_at=format_extract_run_datetime(),
+                )
+                total_rows += counted.n
+                written += 1
+                logger.info(
+                    "migrated raw partition", raw_dir=str(raw_dir), rows=counted.n
+                )
+
+            return MigrateResult(
+                from_raw=raw_name,
+                to_bronze=to_bronze_id,
+                partitions=written,
+                rows=total_rows,
+            )
 
     def _migrate_dry_run(
         self,
