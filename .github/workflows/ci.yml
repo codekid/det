@@ -8,17 +8,38 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: det
+          POSTGRES_PASSWORD: det
+          POSTGRES_DB: det
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U det -d det"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DET_POSTGRES_DSN: postgresql://det:det@localhost:5432/det
+      DET_LAKE_PATH: ${{ github.workspace }}/data/lake
+      DET_ANALYTICS_DUCKDB: ${{ github.workspace }}/data/analytics.duckdb
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
       - name: Install
-        # mcp extra required for tests/mcp; avoid --system (PEP 668 on ubuntu-latest)
-        run: uv sync --extra dev --extra mcp
+        # mcp extra required for tests/mcp; dbt + postgres match prod extras.
+        # avoid --system (PEP 668 on ubuntu-latest)
+        run: uv sync --extra dev --extra mcp --extra dbt --extra postgres
       - name: Lint
         run: uv run ruff check .
       - name: Structure check
         run: uv run det check
+      - name: dbt parse
+        run: uv run dbt parse --project-dir dbt --profiles-dir dbt
       - name: Pytest
         run: uv run pytest -q

@@ -228,11 +228,9 @@ Requires Python 3.12+ and [uv](https://github.com/astral-sh/uv).
 ```bash
 cd det
 uv venv
-make install          # editable install + macOS .pth unhide
+make install          # editable install + macOS .pth unhide (dev, dbt, mcp, postgres)
 # Optional extras:
-# uv pip install -e ".[postgres]"   # Postgres bronze writer
 # uv pip install -e ".[iceberg]"    # Iceberg+Parquet bronze writer
-# uv pip install -e ".[mcp]"        # Cursor MCP server
 ```
 
 | Extra | Adds |
@@ -795,9 +793,11 @@ uv run det check
 # uv run det check --strict   # also fail on warnings
 ```
 
-CI runs `det check` (errors fail the job; warnings do not). Cursor
-`afterFileEdit` hook under [`.cursor/hooks/`](.cursor/hooks/) surfaces the same
-findings when agents edit `configs/pipelines/` or `schemas/`.
+CI (`uv sync --extra dev --extra mcp --extra dbt --extra postgres`) runs ruff,
+`det check`, `dbt parse`, and pytest. The live Postgres load+retry test needs
+`DET_POSTGRES_DSN` (set in GitHub Actions); local pytest skips it when unset.
+Cursor `afterFileEdit` hook under [`.cursor/hooks/`](.cursor/hooks/) surfaces
+the same `det check` findings when agents edit `configs/pipelines/` or `schemas/`.
 
 ---
 

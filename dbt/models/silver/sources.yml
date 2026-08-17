@@ -50,6 +50,30 @@ sources:
           description: Upstream status code or label.
         - name: debug_info
           description: Internal debug payload; not for analytics.
+      - name: orders_v1
+        description: DET bronze example_api.orders_v1
+        meta:
+          # Schema-aware columns avoid read_json_auto promoting mixed
+          # partitions to JSON (values that look like "48" / "").
+          # formatter=template: columns={...} braces must not go through
+          # str.format_map (dbt-duckdb default newstyle).
+          # hive_partitioning=false: partition keys are also payload cols.
+          formatter: template
+          external_location: >-
+            read_json(
+              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/example_api/orders_v1/**/data.jsonl',
+              columns={'id': 'VARCHAR', 'email': 'VARCHAR', 'currency': 'VARCHAR', 'status': 'VARCHAR', 'customer': 'JSON', 'shipping_address': 'JSON', 'discount_codes': 'JSON', 'line_items': 'JSON', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
+              union_by_name=true,
+              hive_partitioning=false
+            )
+        columns:
+        - name: __row_hash
+          description: DET content hash used for silver dedupe.
+          tests:
+          - not_null
+        - name: id
+          tests:
+          - not_null
   - name: bronze_noaa
     description: >
       DET bronze for provider feeds under this SQL schema / lake prefix.
@@ -279,3 +303,39 @@ sources:
           description: Scaled integer encoding of latitude from the bulk CSV (LAT2).
         - name: lon2
           description: Scaled integer encoding of longitude from the bulk CSV (LON2).
+  - name: bronze_openlibrary
+    description: >
+      DET bronze for provider feeds under this SQL schema / lake prefix.
+      Tables set schema-aware read_json(... columns={...}) or iceberg_scan(...)
+      in meta.external_location. DuckDB native tables use det_bronze_from when
+      DET_BRONZE_SOURCE=duckdb (set by det dbt --pipeline). Iceberg bronze uses
+      iceberg_scan when DET_BRONZE_SOURCE=iceberg.
+    schema: bronze_openlibrary
+    tables:
+      - name: subjects_v1
+        description: DET bronze openlibrary.subjects_v1
+        meta:
+          # Schema-aware columns avoid read_json_auto promoting mixed
+          # partitions to JSON (values that look like "48" / "").
+          # formatter=template: columns={...} braces must not go through
+          # str.format_map (dbt-duckdb default newstyle).
+          # hive_partitioning=false: partition keys are also payload cols.
+          formatter: template
+          external_location: >-
+            read_json(
+              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/openlibrary/subjects_v1/**/data.jsonl',
+              columns={'key': 'VARCHAR', 'subject_key': 'VARCHAR', 'title': 'VARCHAR', 'edition_count': 'INTEGER', 'cover_id': 'INTEGER', 'cover_edition_key': 'VARCHAR', 'first_publish_year': 'INTEGER', 'has_fulltext': 'BOOLEAN', 'public_scan': 'BOOLEAN', 'printdisabled': 'BOOLEAN', 'ia': 'VARCHAR', 'lending_edition': 'VARCHAR', 'lending_identifier': 'VARCHAR', 'authors': 'JSON', 'subject': 'JSON', 'ia_collection': 'JSON', 'availability': 'JSON', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
+              union_by_name=true,
+              hive_partitioning=false
+            )
+        columns:
+        - name: __row_hash
+          description: DET content hash used for silver dedupe.
+          tests:
+          - not_null
+        - name: key
+          tests:
+          - not_null
+        - name: subject_key
+          tests:
+          - not_null
