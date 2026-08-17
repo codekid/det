@@ -13,10 +13,12 @@ from det.mcp.tools import (
     list_bronze_partitions,
     list_pipelines,
     list_raw_partitions,
+    list_runs,
     list_sources_tool,
     prune_dry_run,
     read_manifest,
     scaffold_dbt_dry_run,
+    summarize_runs,
 )
 from det.runtime.meta import to_partition_value
 
@@ -164,6 +166,37 @@ def test_read_manifest_rejects_escape(tmp_path: Path):
         read_manifest(str(tmp_path.parent / "nope"), root=tmp_path)
 
 
+def _write_postgres_pipeline(tmp_path: Path, **destination) -> None:
+    _write_pipeline(tmp_path)
+    pipe = tmp_path / "configs" / "pipelines" / "example_api" / "events.yaml"
+    doc = yaml.safe_load(pipe.read_text(encoding="utf-8"))
+    doc["destination"] = {"type": "postgres", "dataset": "bronze", **destination}
+    pipe.write_text(yaml.safe_dump(doc), encoding="utf-8")
+
+
+def test_describe_pipeline_reports_the_secret_name(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("DET_POSTGRES_DSN", "postgresql://det:hunter2pw@db/det")
+    _write_postgres_pipeline(tmp_path, connection_env="DET_POSTGRES_DSN")
+    described = describe_pipeline("example_api.events", root=tmp_path)
+    assert described["destination"]["connection_env"] == "DET_POSTGRES_DSN"
+    assert described["destination"]["connection"] == "env:DET_POSTGRES_DSN"
+    assert "hunter2pw" not in json.dumps(described)
+
+
+def test_describe_pipeline_never_echoes_a_literal_dsn(tmp_path: Path):
+    _write_postgres_pipeline(tmp_path, connection="postgresql://det:hunter2pw@db/det")
+    described = describe_pipeline("example_api.events", root=tmp_path)
+    assert "hunter2pw" not in json.dumps(described)
+    assert "connection_env" in described["destination"]["connection"]
+
+
+def test_bronze_postgres_hint_never_echoes_a_dsn(tmp_path: Path):
+    _write_postgres_pipeline(tmp_path, connection="postgresql://det:hunter2pw@db/det")
+    listing = list_bronze_partitions("example_api.events", root=tmp_path)
+    assert listing["destination_type"] == "postgres"
+    assert "hunter2pw" not in json.dumps(listing)
+
+
 def test_bronze_duckdb_hint(tmp_path: Path):
     _write_pipeline(tmp_path)
     pipe = tmp_path / "configs" / "pipelines" / "example_api" / "events.yaml"
@@ -181,3 +214,48 @@ def test_bronze_duckdb_hint(tmp_path: Path):
     assert listing["schema"] == "bronze_example_api"
     assert listing["table"] == "events_v1"
     assert "note" in listing
+
+
+def test_list_runs_and_summarize_never_return_connection(tmp_path: Path):
+    from datetime import UTC, datetime
+
+    _write_pipeline(tmp_path)
+    dt = datetime.now(UTC).date().isoformat()
+    receipt_dir = (
+        tmp_path / "data" / "lake" / "runs" / f"dt={dt}" / "example_api.events"
+    )
+    receipt_dir.mkdir(parents=True)
+    (receipt_dir / "extract__x__1.json").write_text(
+        json.dumps(
+            {
+                "pipeline": "example_api.events",
+                "command": "extract",
+                "status": "ok",
+                "started_at": f"{dt}T12:00:00+00:00",
+                "duration_ms": 12,
+                "destination": "postgres",
+                "connection": "postgresql://det:hunter2pw@db/det",
+                "rows": 3,
+            }
+        ),
+        encoding="utf-8",
+    )
+    listed = list_runs("example_api.events", root=tmp_path)
+    blob = json.dumps(listed)
+    assert "hunter2pw" not in blob
+    assert "connection" not in listed["runs"][0]
+    assert listed["runs"][0]["destination"] == "postgres"
+    assert "authority" in listed["note"]
+    summary = summarize_runs("example_api.events", root=tmp_path)
+    assert summary["groups"][0]["ok"] == 1
+    assert "hunter2pw" not in json.dumps(summary)
+
+
+def test_list_runs_rejects_escape(tmp_path: Path):
+    outside = tmp_path.parent / f"det-runs-escape-{tmp_path.name}.yaml"
+    outside.write_text("name: nope\n", encoding="utf-8")
+    try:
+        with pytest.raises(PathSandboxError):
+            list_runs(str(outside), root=tmp_path)
+    finally:
+        outside.unlink(missing_ok=True)

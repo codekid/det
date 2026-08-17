@@ -68,6 +68,8 @@ File-backed DuckDB cannot safely fan out per-model writers, so dbt is one task.
 | `DET_PRUNE` / `DET_PRUNE_APPLY` / `DET_PRUNE_KEEP` | Optional prune after load |
 | `DET_LOCK_TTL_SEC` | Lake lease TTL seconds (default 7200). Per-run: DAG conf `lock_ttl_sec` or `det --lock-ttl-sec` |
 | `DET_LOCK=0` | Disables the lake lease (unsafe; tests only) |
+| `DET_LOCK_OWNER` | Set by `set_lock_owner` to `airflow:{dag_id}:{run_id}`. Correlates lake leases **and** `{lake}/runs/` receipts to a DagRun. `list_runs` / `det runs` filter on `owner`. |
+| `DET_RUN_RECEIPTS=0` | Disables extract/load receipt writing (tests only) |
 
 Do **not** set `max_active_runs=1` on `det_extract_bronze` to “fix” locking — that serializes backfill of many days. The lake lease is per `(pipeline, interval)`; cap backfill with a pool / mapped TI limit later.
 
@@ -89,8 +91,9 @@ DET interval is half-open `[start, end)`.
 
 ## Lake debugging
 
-Use MCP lake inspect (`diagnose_pipeline`, `diff_partitions`, …) against
-`DET_PROJECT_ROOT` — **do not** run extract/load via MCP.
+Use MCP lake inspect (`diagnose_pipeline`, `diff_partitions`, `list_runs`, …) against
+`DET_PROJECT_ROOT` — **do not** run extract/load via MCP. Receipt `owner` is
+`airflow:{dag_id}:{run_id}` when the DAG called `set_lock_owner`.
 
 ## Hard rules
 

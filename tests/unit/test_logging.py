@@ -10,8 +10,11 @@ from det.logging import (
     bound_run_context,
     configure_logging,
     get_logger,
+    redact_uri_credentials,
+    register_secret_value,
     resolve_log_format,
     sanitize_lake_uri,
+    scrub_secrets,
     update_run_context,
 )
 
@@ -134,6 +137,59 @@ def test_connection_dsn_never_logged():
     obj = _last_json(buf)
     assert "connection" not in obj
     assert obj["destination"] == "postgres"
+
+
+def test_resolved_secret_scrubbed_from_exception_text():
+    buf = io.StringIO()
+    configure_logging("INFO", log_format="json", stream=buf)
+    dsn = "postgresql://det:hunter2pw@db.internal:5432/det"
+    register_secret_value(dsn)
+    try:
+        # psycopg quotes the DSN it failed on; dict_tracebacks renders that verbatim.
+        raise RuntimeError(f'connection failed for "{dsn}"')
+    except RuntimeError:
+        get_logger("t").exception("postgres load failed")
+    text = buf.getvalue()
+    assert "hunter2pw" not in text
+    assert dsn not in text
+    assert "postgres load failed" in text
+
+
+def test_password_alone_scrubbed_when_driver_echoes_only_it():
+    buf = io.StringIO()
+    configure_logging("INFO", log_format="json", stream=buf)
+    register_secret_value("postgresql://det:hunter2pw@db.internal:5432/det")
+    get_logger("t").info("boom", detail='password authentication failed: hunter2pw')
+    assert "hunter2pw" not in buf.getvalue()
+
+
+def test_short_values_are_not_scrubbed():
+    register_secret_value("abc")
+    buf = io.StringIO()
+    configure_logging("INFO", log_format="json", stream=buf)
+    get_logger("t").info("abc def")
+    assert "abc def" in buf.getvalue()
+
+
+def test_redact_uri_credentials_handles_compound_strings():
+    overrides = (
+        "destination.connection=postgresql://det:hunter2pw@db/det,ingestion.chunk_rows=5"
+    )
+    out = redact_uri_credentials(overrides)
+    assert "hunter2pw" not in out
+    assert "det:" not in out
+    assert "ingestion.chunk_rows=5" in out
+    assert redact_uri_credentials("./data/lake") == "./data/lake"
+    assert "pw" not in redact_uri_credentials("postgresql://db/det?password=pw")
+
+
+def test_scrub_secrets_replaces_registered_values_and_uri_userinfo():
+    register_secret_value("postgresql://det:hunter2pw@db.internal:5432/det")
+    text = 'failed: postgresql://det:hunter2pw@db.internal:5432/det extra=postgresql://u:p@h/db'
+    out = scrub_secrets(text)
+    assert "hunter2pw" not in out
+    assert "u:p@" not in out
+    assert "***" in out
 
 
 def test_sanitize_lake_uri_strips_userinfo():

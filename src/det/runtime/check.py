@@ -18,9 +18,15 @@ from det.runtime.pipelines import (
     resolve_project_root,
 )
 from det.runtime.registry import list_sources
+from det.runtime.secrets import looks_like_passwordful_uri, uri_has_userinfo
 from det.validation.jsonschema_validator import load_json_schema
 
 Severity = Literal["error", "warning"]
+
+# Keys whose value in YAML is a credential, not a name (auth_env stays legal).
+_CREDENTIAL_KEY_NAMES = frozenset(
+    {"token", "password", "secret", "api_key", "apikey", "client_secret", "dsn"}
+)
 
 
 @dataclass(frozen=True)
@@ -136,6 +142,14 @@ def check_pipeline_config(
             )
         )
 
+    findings.extend(
+        _secret_findings(
+            config,
+            pipeline_id=pipeline_id,
+            config_rel=_rel(config_path, root),
+        )
+    )
+
     dbt_root = root / "dbt"
     if dbt_root.is_dir():
         slug = dbt_model_slug(config.name)
@@ -158,6 +172,95 @@ def check_pipeline_config(
                 )
             )
 
+    return findings
+
+
+def _credential_literals(value: Any, *, prefix: str = "") -> list[str]:
+    """Dotted paths of credential-named keys holding a literal string value."""
+    hits: list[str] = []
+    if isinstance(value, dict):
+        for key, val in value.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            lowered = str(key).lower()
+            is_credential = lowered in _CREDENTIAL_KEY_NAMES or lowered.endswith(
+                ("_token", "_password", "_secret", "_api_key")
+            )
+            if is_credential and isinstance(val, str) and val.strip():
+                hits.append(path)
+                continue
+            hits.extend(_credential_literals(val, prefix=path))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            hits.extend(_credential_literals(item, prefix=f"{prefix}[{index}]"))
+    return hits
+
+
+def _secret_findings(
+    config: Any,
+    *,
+    pipeline_id: str,
+    config_rel: str,
+) -> list[Finding]:
+    """Credentials must be names in YAML, never values. Details never echo a value."""
+    findings: list[Finding] = []
+    dest = config.destination
+    connection = (dest.connection or "").strip()
+
+    if dest.type == "postgres" and connection:
+        if looks_like_passwordful_uri(connection):
+            findings.append(
+                Finding(
+                    severity="error",
+                    code="secret_in_config",
+                    pipeline=pipeline_id,
+                    path=config_rel,
+                    detail=(
+                        "destination.connection embeds a password. Export the DSN "
+                        "and set destination.connection_env: DET_POSTGRES_DSN"
+                    ),
+                )
+            )
+        else:
+            findings.append(
+                Finding(
+                    severity="warning",
+                    code="secret_in_config",
+                    pipeline=pipeline_id,
+                    path=config_rel,
+                    detail=(
+                        "destination.connection holds a DSN in git. Prefer "
+                        "destination.connection_env: DET_POSTGRES_DSN"
+                    ),
+                )
+            )
+
+    if uri_has_userinfo(dest.path):
+        findings.append(
+            Finding(
+                severity="error",
+                code="secret_in_config",
+                pipeline=pipeline_id,
+                path=config_rel,
+                detail=(
+                    "destination.path embeds object-store credentials. Use the "
+                    "provider credential chain (env / IAM role) instead"
+                ),
+            )
+        )
+
+    for dotted in _credential_literals(config.source.overrides):
+        findings.append(
+            Finding(
+                severity="error",
+                code="secret_in_config",
+                pipeline=pipeline_id,
+                path=config_rel,
+                detail=(
+                    f"source.overrides.{dotted} looks like a credential value. "
+                    "Declare a name instead (auth_env) and export the secret"
+                ),
+            )
+        )
     return findings
 
 

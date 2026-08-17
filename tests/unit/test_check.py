@@ -106,6 +106,110 @@ def test_missing_dbt_models_warning(tmp_path: Path):
     assert any(f.code == "missing_dbt_models" for f in findings)
 
 
+def _write_pipeline_with(root: Path, **doc_updates) -> Path:
+    path = _write_pipeline(root)
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    doc.update(doc_updates)
+    path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    return path
+
+
+def test_passwordful_dsn_in_config_is_an_error(tmp_path: Path):
+    path = _write_pipeline_with(
+        tmp_path,
+        destination={
+            "type": "postgres",
+            "connection": "postgresql://det:hunter2pw@db/det",
+            "dataset": "bronze",
+        },
+    )
+    findings = check_pipeline_config(path, project_root=tmp_path)
+    assert has_errors(findings)
+    secret = [f for f in findings if f.code == "secret_in_config"]
+    assert secret and "connection_env" in secret[0].detail
+    assert "hunter2pw" not in secret[0].detail
+
+
+def test_passwordless_dsn_in_config_is_a_warning(tmp_path: Path):
+    path = _write_pipeline_with(
+        tmp_path,
+        destination={
+            "type": "postgres",
+            "connection": "postgresql://db/det",
+            "dataset": "bronze",
+        },
+    )
+    findings = check_pipeline_config(path, project_root=tmp_path)
+    assert not has_errors(findings)
+    assert any(
+        f.code == "secret_in_config" and f.severity == "warning" for f in findings
+    )
+
+
+def test_connection_env_is_clean(tmp_path: Path):
+    path = _write_pipeline_with(
+        tmp_path,
+        destination={
+            "type": "postgres",
+            "connection_env": "DET_POSTGRES_DSN",
+            "dataset": "bronze",
+        },
+    )
+    findings = check_pipeline_config(path, project_root=tmp_path)
+    assert not any(f.code == "secret_in_config" for f in findings)
+
+
+def test_duckdb_file_path_is_clean(tmp_path: Path):
+    path = _write_pipeline_with(
+        tmp_path,
+        destination={
+            "type": "duckdb",
+            "connection": "./data/analytics.duckdb",
+            "dataset": "bronze",
+        },
+    )
+    findings = check_pipeline_config(path, project_root=tmp_path)
+    assert not any(f.code == "secret_in_config" for f in findings)
+
+
+def test_lake_userinfo_is_an_error(tmp_path: Path):
+    path = _write_pipeline_with(
+        tmp_path,
+        destination={"type": "filesystem", "path": "s3://AKIA:hunter2pw@bucket/lake"},
+    )
+    findings = check_pipeline_config(path, project_root=tmp_path)
+    assert has_errors(findings)
+    secret = [f for f in findings if f.code == "secret_in_config"]
+    assert secret and "hunter2pw" not in secret[0].detail
+
+
+def test_credential_literal_in_overrides_is_an_error(tmp_path: Path):
+    path = _write_pipeline_with(
+        tmp_path,
+        source={
+            "type": "example_api.events",
+            "overrides": {"headers": {"api_key": "tok-abc123"}},
+        },
+    )
+    findings = check_pipeline_config(path, project_root=tmp_path)
+    assert has_errors(findings)
+    secret = [f for f in findings if f.code == "secret_in_config"]
+    assert secret and "headers.api_key" in secret[0].detail
+    assert "tok-abc123" not in secret[0].detail
+
+
+def test_auth_env_name_in_overrides_is_clean(tmp_path: Path):
+    path = _write_pipeline_with(
+        tmp_path,
+        source={
+            "type": "example_api.events",
+            "overrides": {"auth_env": "DET_EXAMPLE_API"},
+        },
+    )
+    findings = check_pipeline_config(path, project_root=tmp_path)
+    assert not any(f.code == "secret_in_config" for f in findings)
+
+
 def test_repo_root_smoke():
     """Real project: no errors; example_api may warn about missing dbt models."""
     root = Path(__file__).resolve().parents[2]

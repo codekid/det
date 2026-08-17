@@ -210,6 +210,7 @@ class BronzeMigrator:
                 path=lake_path,
                 dataset=config.destination.dataset,
                 connection=config.destination.connection,
+                connection_env=config.destination.connection_env,
             )
         if bronze_prefix is not None or raw_prefix is not None:
             config.medallion = MedallionConfig(

@@ -16,6 +16,7 @@ from det.runtime.ids import (
 )
 from det.runtime.lake import DEFAULT_LAKE_REL
 from det.runtime.registry import list_sources
+from det.runtime.secrets import looks_like_passwordful_uri, looks_like_secret_name
 from det.scaffold.dbt import ScaffoldAction, ScaffoldResult, scaffold_dbt
 
 logger = get_logger(__name__)
@@ -41,6 +42,25 @@ _MINIMAL_SCHEMA = {
     },
     "additionalProperties": False,
 }
+
+
+def _postgres_connection_entry(connection: str) -> dict[str, str]:
+    """
+    Scaffolded Postgres points at a secret name, never a DSN with a password.
+
+    ``--connection DET_POSTGRES_DSN`` writes ``connection_env``; a passwordless
+    local DSN is still allowed as a literal.
+    """
+    value = connection.strip()
+    if looks_like_secret_name(value):
+        return {"connection_env": value}
+    if looks_like_passwordful_uri(value):
+        raise ValueError(
+            "refusing to write a Postgres DSN with a password into pipeline YAML. "
+            "Export it (e.g. DET_POSTGRES_DSN=...) and pass "
+            "--connection DET_POSTGRES_DSN"
+        )
+    return {"connection": value}
 
 
 def init_pipeline(
@@ -93,7 +113,10 @@ def init_pipeline(
             raise ValueError(
                 f"connection is required when destination_type={destination_type}"
             )
-        dest["connection"] = connection
+        if destination_type == "postgres":
+            dest.update(_postgres_connection_entry(connection))
+        else:
+            dest["connection"] = connection
         dest["dataset"] = "bronze"  # medallion prefix → SQL schema bronze_{provider}
 
     pipeline_doc = {

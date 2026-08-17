@@ -6,8 +6,27 @@ import json
 from pathlib import Path
 from typing import Any
 
+from det.runtime.ids import parse_canonical_id
 from det.runtime.lake import LakeRef
 from det.runtime.manifest import sha256_file
+from det.runtime.secrets import HTTP_TOKEN_KEYS, resolve_secret, source_secret_names
+
+
+def source_bearer_token(config: dict[str, Any], *, source_name: str) -> str | None:
+    """
+    Resolve a source credential, or None when the source declares itself public.
+
+    ``auth_env: null`` is the explicit public declaration (NOAA, Open Library).
+    Anything else must resolve: a source that declares auth and cannot resolve it
+    fails the run rather than quietly fetching the unauthenticated subset.
+    """
+    if "auth_env" in config and config.get("auth_env") is None:
+        return None
+    provider, _ = parse_canonical_id(source_name)
+    return resolve_secret(
+        source_secret_names(provider, config.get("auth_env")),
+        keys=HTTP_TOKEN_KEYS,
+    )
 
 
 def dig(payload: Any, path: str) -> Any:

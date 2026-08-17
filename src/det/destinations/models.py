@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from det.logging import register_secret_value
 from det.runtime.config import DestinationConfig, MedallionConfig, PipelineConfig
 from det.runtime.ids import (
     fs_dataset_parts,
@@ -13,6 +14,7 @@ from det.runtime.ids import (
 )
 from det.runtime.lake import LakeRef, open_lake, pick_lake_spec
 from det.runtime.meta import to_partition_value
+from det.runtime.secrets import DSN_KEYS, SecretsBackend, resolve_secret
 
 
 def lake_root(
@@ -36,6 +38,31 @@ def duckdb_connection_path(destination: DestinationConfig, project_root: Path) -
     if not path.is_absolute():
         path = (project_root / path).resolve()
     return path
+
+
+def postgres_dsn(
+    destination: DestinationConfig,
+    *,
+    backend: SecretsBackend | None = None,
+) -> str:
+    """
+    Resolve the Postgres DSN from ``connection_env`` (preferred) or ``connection``.
+
+    Raises when the declared secret is unset: a run must fail loudly rather than
+    fall back to some other database. MCP passes ``backend="env"``.
+    """
+    name = (destination.connection_env or "").strip()
+    if name:
+        return resolve_secret(name, keys=DSN_KEYS, backend=backend)
+    literal = (destination.connection or "").strip()
+    if not literal:
+        raise ValueError(
+            "destination.connection_env (env var name holding the DSN) is required "
+            "for postgres"
+        )
+    # A DSN in YAML still deserves scrubbing if a driver echoes it in an error.
+    register_secret_value(literal)
+    return literal
 
 
 def duckdb_schema_name(

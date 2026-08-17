@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -13,7 +12,12 @@ from dlt.sources.helpers.rest_client.paginators import JSONLinkPaginator
 from det.logging import get_logger
 from det.runtime.lake import LakeRef
 from det.sources.base import Interval, SourceRow
-from det.sources.http_json import dig, nest_under_path, write_json_page
+from det.sources.http_json import (
+    dig,
+    nest_under_path,
+    source_bearer_token,
+    write_json_page,
+)
 
 logger = get_logger(__name__)
 
@@ -210,8 +214,7 @@ class ExampleApiOrdersSource:
                 )
             ]
 
-        token_env = config.get("auth_env")
-        token = os.environ.get(token_env) if token_env else None
+        token = source_bearer_token(config, source_name=self.name)
         client = RESTClient(
             base_url=config["base_url"],
             auth=BearerTokenAuth(token) if token else None,

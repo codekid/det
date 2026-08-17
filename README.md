@@ -14,20 +14,22 @@ optional Airflow DAGs, and a Cursor MCP server for inspect + dry-run ops.
 2. [Mental model](#mental-model)
 3. [How a run works](#how-a-run-works)
 4. [Lake layout](#lake-layout)
-5. [Install](#install)
-6. [Follow along (local E2E)](#follow-along-local-e2e)
-7. [Pipeline YAML](#pipeline-yaml)
-8. [CLI reference](#cli-reference)
-9. [Destinations](#destinations)
-10. [Schemas, coerce, and meta](#schemas-coerce-and-meta)
-11. [Prune (bronze only)](#prune-bronze-only)
-12. [dbt (silver / gold)](#dbt-silver--gold)
-13. [Migrate](#migrate)
-14. [MCP (Cursor)](#mcp-cursor)
-15. [Airflow](#airflow)
-16. [Tests](#tests)
-17. [Troubleshooting](#troubleshooting)
-18. [Repository layout](#repository-layout)
+5. [Run receipts](#run-receipts)
+6. [Install](#install)
+7. [Follow along (local E2E)](#follow-along-local-e2e)
+8. [Pipeline YAML](#pipeline-yaml)
+9. [CLI reference](#cli-reference)
+10. [Destinations](#destinations)
+11. [Secrets](#secrets)
+12. [Schemas, coerce, and meta](#schemas-coerce-and-meta)
+13. [Prune (bronze only)](#prune-bronze-only)
+14. [dbt (silver / gold)](#dbt-silver--gold)
+15. [Migrate](#migrate)
+16. [MCP (Cursor)](#mcp-cursor)
+17. [Airflow](#airflow)
+18. [Tests](#tests)
+19. [Troubleshooting](#troubleshooting)
+20. [Repository layout](#repository-layout)
 
 ---
 
@@ -46,6 +48,7 @@ optional Airflow DAGs, and a Cursor MCP server for inspect + dry-run ops.
 | `det list-pipelines` | Canonical ids under `configs/pipelines/` |
 | `det list-sources` / `list-mappers` | Discover plugins |
 | `det check` | Structure check (schema/source; dbt models warn) |
+| `det runs` | List extract/load receipts (status, duration, error code) |
 
 Also:
 
@@ -165,6 +168,7 @@ flowchart TB
     rawFS["raw/dataset/hive…/data + meta"]
     bronzeFS["bronze/dataset/hive…/data.jsonl"]
     bronzeIce["bronze/dataset Iceberg table"]
+    runs["runs/dt=YYYY-MM-DD/… receipts"]
   end
 
   subgraph other [SQL serving]
@@ -177,6 +181,8 @@ flowchart TB
   load --> bronzeIce
   load --> duck
   load --> pg
+  extract --> runs
+  load --> runs
 ```
 
 Filesystem layout:
@@ -196,7 +202,14 @@ data/lake/bronze/noaa/storm_events/          # filesystem destination only
     __interval_end_datetime=…/
       __extract_run_datetime=…/
         data.jsonl
+
+data/lake/runs/dt=2026-08-16/noaa.storm_events/
+  extract__20260806T000000Z_20260807T000000Z__<attempt_id>.json
 ```
+
+`runs/` is a sibling of `raw/`, `bronze/`, and `locks/`. Each file is one extract or
+load attempt (success or failure). `dt=` is the **attempt date** (UTC wall clock),
+not the data interval. See [Run receipts](#run-receipts).
 
 Partition values are compact UTC (`20260801T000000Z`) because paths cannot hold `/` or `:`.
 Re-runs append a sibling extract-run folder; they do not overwrite.
@@ -218,6 +231,41 @@ flowchart TB
   prune -.->|never| rawA
   prune -.->|never| rawB
 ```
+
+---
+
+## Run receipts
+
+`meta/manifest.json` records **what landed**. `{lake}/runs/` records **what happened**:
+every `extract` and `load` attempt, including failures and timings. A failed extract
+still deletes its incomplete partition (atomicity); the receipt lives outside that
+prefix so the attempt survives.
+
+Each attempt is one JSON object:
+
+```text
+{lake}/runs/dt=YYYY-MM-DD/{pipeline}/{command}__{interval_key}__{attempt_id}.json
+```
+
+- `dt=` is the UTC attempt date (a backfill of old data run today lands under today)
+- `status` is `ok` or `error`; failures include a stable `error_code` (`http_error`,
+  `lease_held`, `secret_not_set`, `schema_invalid`, …) plus a truncated, secret-scrubbed
+  `error_message`
+- `owner` reuses `DET_LOCK_OWNER` (Airflow sets `airflow:{dag_id}:{run_id}`)
+- `destination` is the **type only** — never a DSN
+- `det run` emits extract + load receipts, not a third combined one
+- Writing a receipt never fails the run. `DET_RUN_RECEIPTS=0` disables writing.
+
+```bash
+det runs -p noaa.storm_events
+det runs -p noaa.storm_events --status error
+det runs --summary --json
+det runs -s 2026-08-01 -e 2026-08-16   # attempt-date window, half-open, default last 7 days
+```
+
+MCP: `list_runs` / `summarize_runs` (read-only). Manifest remains the authority for
+landed partitions; receipts are observability. No SLO thresholds or alerting in this
+slice. `det prune` never touches `runs/` (bronze-only).
 
 ---
 
@@ -364,7 +412,8 @@ ingestion:
   library: det                 # det (default) | dlt (alias) | thin (filesystem only)
 destination:
   type: filesystem             # filesystem | iceberg | duckdb | postgres
-  # connection: ./data/analytics.duckdb   # required for duckdb / postgres
+  # connection: ./data/analytics.duckdb   # duckdb file path (required for duckdb)
+  # connection_env: DET_POSTGRES_DSN      # postgres: env var name, never the DSN
   # dataset: bronze                       # medallion prefix → SQL bronze_{provider}
 medallion:
   bronze_prefix: bronze
@@ -411,6 +460,8 @@ Logs: laptop TTY stays human console. Non-TTY (Airflow, CI, pipes) is JSON with 
 
 Extract/load/run take a lake lease on `(pipeline, interval)` under `{lake}/locks/…` so two writers cannot share a window (CLI vs Airflow included). Different days can run in parallel. Override TTL with `--lock-ttl-sec` or `DET_LOCK_TTL_SEC` (default 7200). `LeaseHeldError` means a live lease; kill the worker, then `det lock-release -p … -s … --force` (or the manual `det_clear_lock` DAG). Do not clear a lock while the job is still running. `DET_LOCK=0` disables the lease (tests only; unsafe). Prune leases the command’s resolved `[start, end)` only — a month prune can still overlap a one-day load.
 
+Every extract/load attempt also writes a run receipt under `{lake}/runs/` (status, duration, error code). `det runs` lists them; see [Run receipts](#run-receipts). `DET_RUN_RECEIPTS=0` disables writing.
+
 ```bash
 # Extract / load / run
 det run -p noaa.storm_events -s 2026-08-06
@@ -422,6 +473,10 @@ det load -p noaa.storm_events -s 2026-07-01 -e 2026-08-08 \
 
 det lock-show -p noaa.storm_events -s 2026-08-06
 det lock-release -p noaa.storm_events -s 2026-08-06 --force
+
+det runs -p noaa.storm_events
+det runs -p noaa.storm_events --status error --summary
+det runs --json                      # fleet-wide, last 7 attempt-days
 
 
 # Overrides (dotted.key=yaml-value)
@@ -483,7 +538,7 @@ table); DET does not add `destination.type: bigquery` or dual-load a clone.
 | `filesystem` | Hive JSONL under `<lake>/bronze/<provider>/<source>_vN/` | — |
 | `iceberg` | Iceberg table at the same lake path (Parquet + metadata; not JSONL hive folders) | — ; install `.[iceberg]` (`pyiceberg`, `pyarrow`) |
 | `duckdb` | `{medallion}_{provider}.{source}_vN` (e.g. `bronze_noaa.storm_events_v1`) | `connection`, optional `dataset` (**medallion prefix**, default `bronze`) |
-| `postgres` | Same SQL naming as DuckDB | `connection`, optional `dataset`; install `.[postgres]` |
+| `postgres` | Same SQL naming as DuckDB | `connection_env` (see [Secrets](#secrets)), optional `dataset`; install `.[postgres]` |
 
 **Breaking change:** `destination.dataset` is no longer the SQL schema name. It is the medallion prefix only; the SQL schema is `{dataset}_{provider}`. Lake table/path leaf is `{source}_v{wire_version}`.
 
@@ -517,6 +572,55 @@ flowchart LR
   lakeIceberg -->|DET_BRONZE_SOURCE=iceberg| macro
   duckTable -->|DET_BRONZE_SOURCE=duckdb| macro
 ```
+
+---
+
+## Secrets
+
+Config carries **names**; the process environment carries **values**. Nothing
+credential-shaped belongs in a committed YAML.
+
+| Where | Field | Example |
+| --- | --- | --- |
+| Source credential | `auth_env` in plugin `defaults()` (or `source.overrides`) | `auth_env: EXAMPLE_API_TOKEN` |
+| Postgres DSN | `destination.connection_env` | `connection_env: DET_POSTGRES_DSN` |
+| Public source | `auth_env: null` | NOAA, Open Library |
+
+A secret id defaults to the **provider, uppercased**, so one secret serves every
+dataset of that provider. Lookup order for `example_api.events` is the declared
+`auth_env`, then `DET_EXAMPLE_API`, then `EXAMPLE_API` (the `DET_` form avoids
+collisions on shared workers).
+
+A stored value is either the credential itself or a JSON object:
+
+```bash
+export DET_EXAMPLE_API='tok-abc123'
+export DET_EXAMPLE_API='{"token": "tok-abc123"}'      # same thing
+export DET_POSTGRES_DSN='postgresql://det:pw@db:5432/det'
+```
+
+Readable keys are `value`, `token`, `api_key`, `dsn`, `client_id`,
+`client_secret`, `username`, `password`. HTTP asks `token` → `api_key` → `value`;
+Postgres asks `dsn` → `value`. Other keys (`host`, `base_url`, …) are ignored with
+one warning — hosts and paths stay in plugin `defaults()` and YAML, never in the
+secret. DET never assembles a DSN from parts.
+
+A source that declares auth and cannot resolve it **fails the run**; it never
+downgrades to an unauthenticated request. Resolved values are cached ~300s
+(`DET_SECRETS_TTL_SEC`) so a long backfill picks up a rotation, and a 401/403
+triggers one re-resolve and retry.
+
+Local debugging without exporting by hand: set `DET_SECRETS_BACKEND=file` and
+point `DET_SECRETS_FILE` at a gitignored `NAME=value` file (default
+`.env.secrets`). Env always wins over the file, DET refuses to read a file that
+is inside the repo and not gitignored, and cloud deployments keep injecting env
+from their own secret manager (no boto3/GCP client here).
+
+`det check` fails on a passwordful DSN in YAML, on object-store credentials in
+`destination.path`, and on credential-named literals in `source.overrides`. Logs
+scrub resolved values and any embedded URI credentials, including inside
+exception text. MCP `describe_pipeline` reports the secret **name**; MCP resolves
+names from process env only and never returns a value.
 
 ---
 
@@ -681,6 +785,7 @@ Companion docs:
 | --- | --- |
 | `list_pipelines`, `list_sources`, `list_mappers`, `describe_pipeline` | `det://pipelines/{name}` |
 | `list_raw_partitions`, `list_bronze_partitions`, `read_manifest` | `det://schemas/{dataset}/{filename}` |
+| `list_runs`, `summarize_runs` | |
 | `diff_partitions`, `sample_raw`, `validate_sample`, `sample_bronze`, `diagnose_pipeline` | `det://readme` |
 | `schema_from_sample_dry_run`, `mapper_from_diff_dry_run` | |
 | `airflow_health`, `list_airflow_dags`, `list_airflow_dag_runs`, `describe_airflow_det_env`, `preview_backfill_conf` | |
@@ -794,7 +899,8 @@ uv run det check
 ```
 
 CI (`uv sync --extra dev --extra mcp --extra dbt --extra postgres`) runs ruff,
-`det check`, `dbt parse`, and pytest. The live Postgres load+retry test needs
+`det check`, a grep for committed `scheme://user:pass@` credentials under
+`configs/` and `dbt/`, `dbt parse`, and pytest. The live Postgres load+retry test needs
 `DET_POSTGRES_DSN` (set in GitHub Actions); local pytest skips it when unset.
 Cursor `afterFileEdit` hook under [`.cursor/hooks/`](.cursor/hooks/) surfaces
 the same `det check` findings when agents edit `configs/pipelines/` or `schemas/`.

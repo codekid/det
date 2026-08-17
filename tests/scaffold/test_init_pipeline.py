@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from det.scaffold.init_pipeline import init_pipeline
 
 
@@ -50,6 +52,39 @@ def test_init_pipeline_writes_and_scaffolds(tmp_path: Path):
         tmp_path / "dbt" / "models" / "silver" / "stg_example_api__events.sql"
     ).read_text(encoding="utf-8")
     assert 'det_bronze_from("events_v1", "bronze_example_api")' in stg
+
+
+def test_init_pipeline_postgres_writes_connection_env(tmp_path: Path):
+    result = init_pipeline(
+        name="example_api.events",
+        source_type="example_api.events",
+        project_root=tmp_path,
+        skip_dbt=True,
+        destination_type="postgres",
+        connection="DET_POSTGRES_DSN",
+    )
+    dest_block = (
+        result.pipeline_path.read_text(encoding="utf-8")
+        .split("destination:", 1)[1]
+        .split("medallion:", 1)[0]
+    )
+    assert "connection_env: DET_POSTGRES_DSN" in dest_block
+    assert "connection:" not in dest_block
+
+
+def test_init_pipeline_refuses_a_passwordful_dsn(tmp_path: Path):
+    with pytest.raises(ValueError, match="DET_POSTGRES_DSN"):
+        init_pipeline(
+            name="example_api.events",
+            source_type="example_api.events",
+            project_root=tmp_path,
+            skip_dbt=True,
+            destination_type="postgres",
+            connection="postgresql://det:hunter2pw@db/det",
+        )
+    assert not (
+        tmp_path / "configs" / "pipelines" / "example_api" / "events.yaml"
+    ).exists()
 
 
 def test_init_pipeline_iceberg_omits_path_and_scaffolds_scan(tmp_path: Path):

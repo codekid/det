@@ -39,6 +39,16 @@ jobs:
         run: uv run ruff check .
       - name: Structure check
         run: uv run det check
+      - name: No committed credentials
+        # det check parses pipeline YAML; this also covers files it never loads
+        # (dbt/profiles.yml). Matches scheme://user:pass@host. airflow/ is excluded:
+        # Compose ships throwaway local metadata-db defaults on purpose.
+        run: |
+          if grep -rInE '[a-z][a-z0-9+.-]*://[^/[:space:]"'"'"']+:[^/[:space:]"'"'"']+@' \
+            configs dbt; then
+            echo "::error::credentials found in committed config (use *_env names)"
+            exit 1
+          fi
       - name: dbt parse
         run: uv run dbt parse --project-dir dbt --profiles-dir dbt
       - name: Pytest

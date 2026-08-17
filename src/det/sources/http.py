@@ -4,6 +4,7 @@ import gzip
 import random
 import tempfile
 import time
+from collections.abc import Callable
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
@@ -85,6 +86,25 @@ class _RetryableStatus(Exception):
         self.retry_after = retry_after
 
 
+def _rotated_headers(
+    exc: requests.HTTPError,
+    refresh_headers: Callable[[], dict[str, str]] | None,
+) -> dict[str, str] | None:
+    """
+    New headers when a 401/403 may just be a rotated credential, else None.
+
+    Callers invalidate their cached secret inside *refresh_headers*, so the retry
+    fetches the current value. 401 stays non-retryable without a refresher.
+    """
+    if refresh_headers is None:
+        return None
+    status = exc.response.status_code if exc.response is not None else None
+    if status not in (401, 403):
+        return None
+    logger.info("http auth refresh after rejected credential", status=status)
+    return refresh_headers()
+
+
 def http_get(
     url: str,
     *,
@@ -92,11 +112,18 @@ def http_get(
     headers: dict[str, str] | None = None,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     session: requests.Session | None = None,
+    refresh_headers: Callable[[], dict[str, str]] | None = None,
 ) -> requests.Response:
-    """GET a small body with retry on 429/5xx and disconnects."""
+    """
+    GET a small body with retry on 429/5xx and disconnects.
+
+    ``refresh_headers`` re-resolves the credential once on a 401/403 so a rotation
+    mid-backfill does not fail the run.
+    """
     own_session = session is None
     sess = session or requests.Session()
     last_exc: BaseException | None = None
+    refreshed = False
     try:
         for attempt in range(1, max_attempts + 1):
             try:
@@ -108,7 +135,13 @@ def http_get(
                 retry_after = exc.retry_after
             except requests.RequestException as exc:
                 if isinstance(exc, requests.HTTPError):
-                    raise
+                    last_exc = exc
+                    rotated = None if refreshed else _rotated_headers(exc, refresh_headers)
+                    if rotated is None:
+                        raise
+                    refreshed = True
+                    headers = rotated
+                    continue
                 last_exc = exc
                 retry_after = None
             if attempt >= max_attempts:
@@ -140,6 +173,7 @@ def http_get_file(
     log_every: int = 1024 * 1024,
     encoding: str | None = None,
     session: requests.Session | None = None,
+    refresh_headers: Callable[[], dict[str, str]] | None = None,
 ) -> int:
     """
     Stream GET to *dest* with retry. Unlink dest before each attempt.
@@ -160,6 +194,7 @@ def http_get_file(
             log_every=log_every,
             encoding=encoding,
             session=session,
+            refresh_headers=refresh_headers,
         )
     local = dest.to_path() if isinstance(dest, LakeRef) else Path(dest)
     return _http_get_file_local(
@@ -171,6 +206,7 @@ def http_get_file(
         log_every=log_every,
         encoding=encoding,
         session=session,
+        refresh_headers=refresh_headers,
     )
 
 
@@ -184,10 +220,12 @@ def _http_get_file_local(
     log_every: int,
     encoding: str | None,
     session: requests.Session | None,
+    refresh_headers: Callable[[], dict[str, str]] | None = None,
 ) -> int:
     own_session = session is None
     sess = session or requests.Session()
     last_exc: BaseException | None = None
+    refreshed = False
     try:
         for attempt in range(1, max_attempts + 1):
             _unlink(dest)
@@ -211,7 +249,14 @@ def _http_get_file_local(
                 retry_after = exc.retry_after
             except requests.RequestException as exc:
                 if isinstance(exc, requests.HTTPError):
-                    raise
+                    last_exc = exc
+                    rotated = None if refreshed else _rotated_headers(exc, refresh_headers)
+                    if rotated is None:
+                        raise
+                    refreshed = True
+                    headers = rotated
+                    _unlink(dest)
+                    continue
                 last_exc = exc
                 retry_after = None
             _unlink(dest)
@@ -246,10 +291,12 @@ def _http_get_file_remote(
     log_every: int,
     encoding: str | None,
     session: requests.Session | None,
+    refresh_headers: Callable[[], dict[str, str]] | None = None,
 ) -> int:
     own_session = session is None
     sess = session or requests.Session()
     last_exc: BaseException | None = None
+    refreshed = False
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
         for attempt in range(1, max_attempts + 1):
@@ -284,7 +331,16 @@ def _http_get_file_remote(
                     retry_after = exc.retry_after
                 except requests.RequestException as exc:
                     if isinstance(exc, requests.HTTPError):
-                        raise
+                        last_exc = exc
+                        rotated = (
+                            None if refreshed else _rotated_headers(exc, refresh_headers)
+                        )
+                        if rotated is None:
+                            raise
+                        refreshed = True
+                        headers = rotated
+                        dest.unlink(missing_ok=True)
+                        continue
                     last_exc = exc
                     retry_after = None
                 dest.unlink(missing_ok=True)

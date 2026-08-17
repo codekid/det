@@ -15,6 +15,7 @@ _README_POINTER = """\
 - `det://schemas/{provider}/{source}/{filename}` — nested schema YAML
 - `det://schemas/{relative_path}` — same, with `/` as `%2F` in a single segment
 - Tools: lake inspect + generate dry-runs + Airflow inspect + prune/dbt/scaffold dry-runs (v1)
+- Run receipts: `list_runs` / `summarize_runs` (observability; manifest is landed-data truth)
 - Sample size: `limit` / `sample_limit` (default 5, max 50)
 - Generate tools never write files — review drafts, then CLI/manual apply
 - Airflow: DET_AIRFLOW_* (Compose defaults); never trigger DagRuns via MCP

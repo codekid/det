@@ -304,6 +304,105 @@ def test_sample_bronze_duckdb(tmp_path: Path):
     assert sample["truncated"] is True
 
 
+class _FakePgCursor:
+    def __init__(self, conn):
+        self._conn = conn
+        self._rows: list[tuple] = []
+        self.description = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def execute(self, sql, params=None):
+        self._conn.statements.append(sql)
+        if "information_schema.tables" in sql:
+            self._rows = [(1,)]
+            self.description = None
+            return
+        self._rows = [(1, "2026-08-06T10:00:00+00:00")]
+        self.description = [
+            type("Col", (), {"name": "id"}),
+            type("Col", (), {"name": "__extract_run_datetime"}),
+        ]
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+class _FakePgConn:
+    def __init__(self, dsn):
+        self.dsn = dsn
+        self.statements: list[str] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def cursor(self):
+        return _FakePgCursor(self)
+
+
+def _install_fake_psycopg(monkeypatch) -> list[str]:
+    import sys
+    import types
+
+    seen: list[str] = []
+    module = types.ModuleType("psycopg")
+
+    def connect(dsn):
+        seen.append(dsn)
+        return _FakePgConn(dsn)
+
+    module.connect = connect
+    monkeypatch.setitem(sys.modules, "psycopg", module)
+    return seen
+
+
+def test_sample_bronze_postgres_resolves_connection_env(monkeypatch, tmp_path: Path):
+    seen = _install_fake_psycopg(monkeypatch)
+    dsn = "postgresql://det:hunter2pw@db.internal/det"
+    monkeypatch.setenv("DET_POSTGRES_DSN", dsn)
+    _write_pipeline(
+        tmp_path,
+        destination={
+            "type": "postgres",
+            "path": "./data/lake",
+            "connection_env": "DET_POSTGRES_DSN",
+            "dataset": "bronze",
+        },
+    )
+    sample = sample_bronze("example_api.events", limit=5, root=tmp_path)
+    assert seen == [dsn]
+    assert sample["destination_type"] == "postgres"
+    assert sample["rows"][0]["data"]["id"] == 1
+    assert "hunter2pw" not in json.dumps(sample)
+
+
+def test_sample_bronze_postgres_reports_an_unset_secret(monkeypatch, tmp_path: Path):
+    _install_fake_psycopg(monkeypatch)
+    monkeypatch.delenv("DET_POSTGRES_DSN", raising=False)
+    _write_pipeline(
+        tmp_path,
+        destination={
+            "type": "postgres",
+            "path": "./data/lake",
+            "connection_env": "DET_POSTGRES_DSN",
+            "dataset": "bronze",
+        },
+    )
+    sample = sample_bronze("example_api.events", limit=5, root=tmp_path)
+    assert sample["rows"] == []
+    assert "DET_POSTGRES_DSN" in sample["errors"][0]["message"]
+
+
 def test_sample_bronze_iceberg(tmp_path: Path):
     pytest.importorskip("pyiceberg")
     pytest.importorskip("pyarrow")

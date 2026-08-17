@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from det.destinations.models import duckdb_connection_path
+from det.destinations.models import duckdb_connection_path, postgres_dsn
 from det.ingestion.duckdb_writer import write_duckdb_table
 from det.ingestion.jsonl import write_jsonl_partition
 from det.ingestion.postgres_writer import write_postgres_table
@@ -115,13 +115,12 @@ class DetBackend:
         destination: DestinationConfig,
         chunk_rows: int,
     ) -> Path:
-        if not destination.connection:
-            raise ValueError("destination.connection (Postgres DSN) is required")
+        dsn = postgres_dsn(destination)
         schema, table = sql_names_for_config(config)
         json_schema = load_json_schema(resolve_path(project_root, config.schema_path))
         write_postgres_table(
             records,
-            dsn=destination.connection,
+            dsn=dsn,
             schema=schema,
             table=table,
             json_schema=json_schema,

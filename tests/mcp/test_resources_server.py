@@ -48,5 +48,7 @@ def test_create_server_registers_tools():
         "describe_airflow_det_env",
         "preview_backfill_conf",
         "migrate_dry_run",
+        "list_runs",
+        "summarize_runs",
     ):
         assert expected in names

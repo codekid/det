@@ -28,6 +28,8 @@ def create_server():
             "Configure via DET_AIRFLOW_BASE_URL/USER/PASSWORD (Compose defaults). "
             "migrate_dry_run previews bronze rebuild from raw (never writes). "
             "Never trigger DagRuns or extract/load/prune-apply/migrate-write via MCP. "
+            "list_runs / summarize_runs read extract/load receipts (observability); "
+            "meta/manifest.json is the authority for landed partitions. "
             "dlt is extraction only — never suggest dlt.pipeline for landing."
         ),
     )
@@ -109,7 +111,12 @@ def create_server():
         lake_path: str | None = None,
         skip_dbt: bool = False,
     ) -> dict[str, Any]:
-        """Preview init-pipeline actions without writing files."""
+        """
+        Preview init-pipeline actions without writing files.
+
+        For postgres, ``connection`` is the env var name holding the DSN
+        (e.g. DET_POSTGRES_DSN) — never paste a DSN with a password.
+        """
         return t.init_pipeline_dry_run(
             name,
             source_type,
@@ -292,6 +299,42 @@ def create_server():
             from_raw=from_raw,
             validate_limit=validate_limit,
             wire_version=wire_version,
+        )
+
+    @mcp.tool()
+    def list_runs(
+        pipeline: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        status: str | None = None,
+        command: str | None = None,
+        limit: int = t.DEFAULT_LIST_LIMIT,
+    ) -> dict[str, Any]:
+        """List extract/load run receipts (observability; manifest is the data authority)."""
+        return t.list_runs(
+            pipeline,
+            since=since,
+            until=until,
+            status=status,
+            command=command,
+            limit=limit,
+        )
+
+    @mcp.tool()
+    def summarize_runs(
+        pipeline: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        status: str | None = None,
+        command: str | None = None,
+    ) -> dict[str, Any]:
+        """Summarize extract/load receipts: attempts, errors, p50/p95 duration, rows."""
+        return t.summarize_runs(
+            pipeline,
+            since=since,
+            until=until,
+            status=status,
+            command=command,
         )
 
     @mcp.resource("det://pipelines/{name}")

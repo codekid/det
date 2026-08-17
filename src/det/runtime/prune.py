@@ -5,7 +5,12 @@ from pathlib import Path
 
 import duckdb
 
-from det.destinations.models import bronze_dataset_dir, duckdb_connection_path, lake_root
+from det.destinations.models import (
+    bronze_dataset_dir,
+    duckdb_connection_path,
+    lake_root,
+    postgres_dsn,
+)
 from det.ingestion.sql_replace import delete_extract_run_sql
 from det.logging import bound_run_context, get_logger, sanitize_lake_uri
 from det.runtime.config import PipelineConfig
@@ -245,9 +250,7 @@ class BronzePruner:
                 'Postgres prune requires the optional extra: pip install -e ".[postgres]"'
             ) from exc
 
-        dsn = config.destination.connection
-        if not dsn:
-            return PrunePlan(keep=keep)
+        dsn = postgres_dsn(config.destination)
         schema, table = sql_names_for_config(config)
         qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
         with psycopg.connect(dsn) as conn:
@@ -328,9 +331,7 @@ class BronzePruner:
                 'Postgres prune requires the optional extra: pip install -e ".[postgres]"'
             ) from exc
 
-        dsn = config.destination.connection
-        if not dsn:
-            raise ValueError("destination.connection is required for postgres prune")
+        dsn = postgres_dsn(config.destination)
         schema, table = sql_names_for_config(config)
         qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
         deleted_groups = 0

@@ -16,6 +16,7 @@ from det.runtime.ids import (
     validate_canonical_id,
 )
 from det.runtime.naming import BronzeConfig
+from det.runtime.secrets import looks_like_secret_name
 
 _STG_COL_ID = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -53,16 +54,40 @@ class DestinationConfig(BaseModel):
     # duckdb: database file path (required). postgres: DSN. iceberg: unused
     # (Hadoop catalog is the lake root).
     connection: str | None = None
+    # postgres only: name of the env var holding the DSN, mirroring auth_env on a
+    # source. Preferred over connection so credentials never live in committed YAML.
+    connection_env: str | None = None
 
     @model_validator(mode="after")
     def connection_required_for_db_destinations(self) -> DestinationConfig:
-        if self.type in {"duckdb", "postgres"} and not (
-            self.connection and str(self.connection).strip()
-        ):
-            kind = "DuckDB file path" if self.type == "duckdb" else "Postgres DSN"
+        connection = (self.connection or "").strip()
+        connection_env = (self.connection_env or "").strip()
+        if connection_env:
+            if self.type != "postgres":
+                raise ValueError(
+                    "destination.connection_env is only supported when "
+                    f"destination.type is postgres, got {self.type}"
+                )
+            if connection:
+                raise ValueError(
+                    "set destination.connection or destination.connection_env, "
+                    "not both (ambiguous which one holds the DSN)"
+                )
+            if not looks_like_secret_name(connection_env):
+                raise ValueError(
+                    "destination.connection_env must be an env var name like "
+                    f"DET_POSTGRES_DSN, got {connection_env!r}"
+                )
+            return self
+        if self.type in {"duckdb", "postgres"} and not connection:
+            if self.type == "duckdb":
+                raise ValueError(
+                    "destination.connection is required when destination.type is "
+                    "duckdb (DuckDB file path)"
+                )
             raise ValueError(
-                f"destination.connection is required when destination.type is "
-                f"{self.type} ({kind})"
+                "destination.connection_env (env var name holding the DSN) is "
+                "required when destination.type is postgres"
             )
         return self
 

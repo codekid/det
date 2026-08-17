@@ -140,6 +140,15 @@ def list_mappers_tool(*, root: Path | None = None) -> dict[str, Any]:
     }
 
 
+def _connection_display(destination: Any) -> str | None:
+    """Never echo a Postgres DSN — report the secret name (DuckDB is a file path)."""
+    if destination.type != "postgres":
+        return destination.connection
+    if destination.connection_env:
+        return f"env:{destination.connection_env}"
+    return "(postgres DSN in destination.connection — move it to connection_env)"
+
+
 def describe_pipeline(pipeline: str, *, root: Path | None = None) -> dict[str, Any]:
     _prepare_tool()
     from det.runtime.ids import sql_names_for_config
@@ -158,7 +167,8 @@ def describe_pipeline(pipeline: str, *, root: Path | None = None) -> dict[str, A
             "path": config.destination.path,
             "dataset": config.destination.dataset,
             "medallion_prefix": config.destination.dataset or "bronze",
-            "connection": config.destination.connection,
+            "connection": _connection_display(config.destination),
+            "connection_env": config.destination.connection_env,
             "sql_schema": sql_schema,
             "sql_table": sql_table,
         },
@@ -293,7 +303,7 @@ def list_bronze_partitions(
             hint["schema"] = sql_schema
             hint["table"] = sql_table
         elif dest.type == "postgres":
-            hint["connection"] = "(postgres DSN)"
+            hint["connection"] = _connection_display(dest)
             hint["schema"] = sql_schema
             hint["table"] = sql_table
         return hint
@@ -727,3 +737,137 @@ def migrate_dry_run(
         "after user confirms."
     )
     return out
+
+
+_RECEIPT_SECRET_KEYS = frozenset(
+    {
+        "connection",
+        "password",
+        "dsn",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+    }
+)
+_RECEIPT_NOTE = (
+    "Receipts are observability for extract/load attempts. "
+    "meta/manifest.json is the authority for landed partitions."
+)
+
+
+def _runs_lake(pipeline: str | None, root: Path):
+    from det.destinations.models import lake_root
+    from det.logging import sanitize_lake_uri
+    from det.runtime.config import load_pipeline_config
+    from det.runtime.lake import open_lake, pick_lake_spec
+    from det.runtime.pipelines import resolve_pipeline_ref
+
+    if pipeline:
+        resolved = resolve_pipeline_ref(pipeline, project_root=root)
+        resolve_under_root(resolved.path, root=root)
+        config = load_pipeline_config(resolved.path)
+        lake = lake_root(config.destination, root)
+        return lake, config.name, sanitize_lake_uri(str(lake))
+    spec = pick_lake_spec(destination_path=None)
+    lake = open_lake(spec, root)
+    return lake, None, sanitize_lake_uri(str(lake))
+
+
+def _public_receipt(row: dict[str, Any], *, root: Path) -> dict[str, Any]:
+    from det.logging import sanitize_lake_uri
+
+    out = {
+        key: value
+        for key, value in row.items()
+        if key.lower() not in _RECEIPT_SECRET_KEYS
+        and not key.lower().endswith(
+            ("_password", "_secret", "_token", "_dsn", "_connection")
+        )
+    }
+    path = out.get("path")
+    if isinstance(path, str):
+        if "://" in path:
+            out["path"] = sanitize_lake_uri(path)
+        else:
+            try:
+                out["path"] = _rel(Path(path), root)
+            except Exception:
+                out["path"] = path
+    return out
+
+
+def list_runs(
+    pipeline: str | None = None,
+    *,
+    since: str | None = None,
+    until: str | None = None,
+    status: str | None = None,
+    command: str | None = None,
+    limit: int = DEFAULT_LIST_LIMIT,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """
+    List extract/load run receipts (observability).
+
+    Manifest remains the authority for landed partitions. Never returns a
+    destination connection.
+    """
+    _prepare_tool()
+    from det.mcp.inspect import clamp_list_limit
+    from det.runtime.receipts import list_receipts
+
+    base = _root(root)
+    lake, pipe_id, lake_display = _runs_lake(pipeline, base)
+    capped = clamp_list_limit(limit)
+    rows = list_receipts(
+        lake,
+        pipeline=pipe_id,
+        since=since,
+        until=until,
+        status=status,
+        command=command,
+        limit=capped,
+    )
+    public = [_public_receipt(row, root=base) for row in rows]
+    return {
+        "pipeline": pipe_id,
+        "lake": lake_display,
+        "limit": capped,
+        "truncated": len(rows) >= capped,
+        "note": _RECEIPT_NOTE,
+        "runs": public,
+    }
+
+
+def summarize_runs(
+    pipeline: str | None = None,
+    *,
+    since: str | None = None,
+    until: str | None = None,
+    status: str | None = None,
+    command: str | None = None,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """
+    Summarize extract/load run receipts (counts, error codes, p50/p95).
+
+    Numbers only — no SLO thresholds. Manifest remains the data authority.
+    """
+    _prepare_tool()
+    from det.runtime.receipts import summarize_receipts
+
+    base = _root(root)
+    lake, pipe_id, lake_display = _runs_lake(pipeline, base)
+    payload = summarize_receipts(
+        lake,
+        pipeline=pipe_id,
+        since=since,
+        until=until,
+        status=status,
+        command=command,
+    )
+    payload["pipeline"] = pipe_id
+    payload["lake"] = lake_display
+    payload["note"] = _RECEIPT_NOTE
+    return payload

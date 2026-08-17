@@ -16,6 +16,7 @@ plans, or scaffold/dbt previews.
 `diagnose_pipeline`, `schema_from_sample_dry_run`, `mapper_from_diff_dry_run`,
 `airflow_health`, `list_airflow_dags`, `list_airflow_dag_runs`,
 `describe_airflow_det_env`, `preview_backfill_conf`, `migrate_dry_run`,
+`list_runs`, `summarize_runs`,
 `prune_dry_run`, `dbt_dry_run`, `scaffold_dbt_dry_run`, `init_pipeline_dry_run`,
 and `det://` resources.
 
@@ -40,6 +41,7 @@ Paths are sandboxed under `DET_PROJECT_ROOT` (default cwd / project root).
 | --- | --- |
 | List pipelines / describe config | MCP `list_pipelines` / `describe_pipeline` |
 | Debug missing raw / bronze / schema | MCP `diagnose_pipeline` (or `diff_partitions` / `sample_raw` / `validate_sample`) |
+| Debug a failed or slow extract/load | MCP `list_runs` / `summarize_runs` (or `det runs`) — observability, not landed-data truth |
 | Sample bronze rows | MCP `sample_bronze` (filesystem JSONL or DuckDB/Postgres `LIMIT`) |
 | Draft schema from sample | MCP `schema_from_sample_dry_run` then write after confirm |
 | Draft migrate mapper | MCP `mapper_from_diff_dry_run` then register + `det migrate` |

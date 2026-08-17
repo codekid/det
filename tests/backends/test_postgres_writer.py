@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from det.ingestion.det_backend import DetBackend
@@ -17,6 +18,7 @@ from det.runtime.config import (
     PipelineConfig,
     SourceConfig,
 )
+from det.runtime.secrets import SecretNotSetError
 
 _EVENT_SCHEMA = {
     "type": "object",
@@ -92,8 +94,102 @@ def _install_fake_pg(monkeypatch, calls: list):
 
 
 def test_postgres_destination_requires_connection():
-    with pytest.raises(ValidationError, match="destination.connection is required"):
+    with pytest.raises(ValidationError, match="destination.connection_env"):
         DestinationConfig(type="postgres", path="./data/lake")
+
+
+def test_connection_and_connection_env_together_are_rejected():
+    with pytest.raises(ValidationError, match="not both"):
+        DestinationConfig(
+            type="postgres",
+            connection="postgresql://db/det",
+            connection_env="DET_POSTGRES_DSN",
+        )
+
+
+def test_connection_env_is_postgres_only():
+    with pytest.raises(ValidationError, match="only supported"):
+        DestinationConfig(type="duckdb", connection_env="DET_POSTGRES_DSN")
+
+
+def test_connection_env_must_be_a_name_not_a_dsn():
+    with pytest.raises(ValidationError, match="env var name"):
+        DestinationConfig(
+            type="postgres", connection_env="postgresql://det:pw@db/det"
+        )
+
+
+def test_backend_resolves_dsn_from_connection_env(monkeypatch, tmp_path: Path):
+    dsn = "postgresql://det:hunter2pw@db.internal/det"
+    monkeypatch.setenv("DET_POSTGRES_DSN", dsn)
+    dest = DestinationConfig(
+        type="postgres",
+        path=str(tmp_path / "lake"),
+        connection_env="DET_POSTGRES_DSN",
+        dataset="bronze",
+    )
+    schema_file = tmp_path / "event.schema.yaml"
+    schema_file.write_text(
+        "type: object\nproperties:\n  event_id: {type: integer}\n", encoding="utf-8"
+    )
+    config = PipelineConfig(
+        name="noaa.storm_events",
+        source=SourceConfig(type="noaa.storm_events"),
+        schema_path="event.schema.yaml",
+        ingestion=IngestionConfig(library="det"),
+        destination=dest,
+        medallion=MedallionConfig(),
+    )
+    records = [
+        {
+            "event_id": 1,
+            "__row_hash": "abc",
+            "__extract_run_datetime": "2026-08-06T15:04:05+00:00",
+            "__interval_start_datetime": "2026-08-06T00:00:00+00:00",
+            "__interval_end_datetime": "2026-08-07T00:00:00+00:00",
+        }
+    ]
+    with patch("det.ingestion.det_backend.write_postgres_table") as write:
+        out = DetBackend().write(
+            records,
+            config=config,
+            project_root=tmp_path,
+            partition_dir=tmp_path / "unused",
+            destination=dest,
+        )
+    assert write.call_args.kwargs["dsn"] == dsn
+    # Identity is logical, never the DSN.
+    assert str(out) == "postgres/bronze_noaa/storm_events_v1"
+
+
+def test_unset_connection_env_fails_the_write(monkeypatch, tmp_path: Path):
+    monkeypatch.delenv("DET_POSTGRES_DSN", raising=False)
+    dest = DestinationConfig(
+        type="postgres",
+        path=str(tmp_path / "lake"),
+        connection_env="DET_POSTGRES_DSN",
+        dataset="bronze",
+    )
+    schema_file = tmp_path / "event.schema.yaml"
+    schema_file.write_text(
+        "type: object\nproperties:\n  event_id: {type: integer}\n", encoding="utf-8"
+    )
+    config = PipelineConfig(
+        name="noaa.storm_events",
+        source=SourceConfig(type="noaa.storm_events"),
+        schema_path="event.schema.yaml",
+        ingestion=IngestionConfig(library="det"),
+        destination=dest,
+        medallion=MedallionConfig(),
+    )
+    with pytest.raises(SecretNotSetError, match="DET_POSTGRES_DSN"):
+        DetBackend().write(
+            [],
+            config=config,
+            project_root=tmp_path,
+            partition_dir=tmp_path / "unused",
+            destination=dest,
+        )
 
 
 def test_det_backend_writes_postgres_via_helper(tmp_path: Path):
@@ -138,6 +234,65 @@ def test_det_backend_writes_postgres_via_helper(tmp_path: Path):
     assert write.call_args.kwargs["schema"] == "bronze_noaa"
     assert write.call_args.kwargs["table"] == "storm_events_v1"
     assert out == Path("postgres") / "bronze_noaa" / "storm_events_v1"
+
+
+def test_postgres_run_leaves_no_dsn_in_the_lake(
+    monkeypatch, project_root: Path, tmp_path: Path
+):
+    """Raw bytes and DET sidecars must never carry the resolved credential."""
+    from det.runtime.runner import PipelineRunner
+
+    dsn = "postgresql://det:hunter2pw@db.internal/det"
+    monkeypatch.setenv("DET_POSTGRES_DSN", dsn)
+    schema_rel = "schemas/example_api/events/events.schema.yaml"
+    schema_dst = tmp_path / schema_rel
+    schema_dst.parent.mkdir(parents=True)
+    schema_dst.write_text(
+        (project_root / schema_rel).read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    lake = tmp_path / "lake"
+    pipe = tmp_path / "configs/pipelines/example_api/events.yaml"
+    pipe.parent.mkdir(parents=True)
+    pipe.write_text(
+        yaml.safe_dump(
+            {
+                "name": "example_api.events",
+                "source": {
+                    "type": "example_api.events",
+                    "overrides": {
+                        "fixture_records": [
+                            {
+                                "id": "e1",
+                                "occurred_at": "2026-08-06T12:00:00Z",
+                                "severity": "low",
+                                "state": "TX",
+                                "status": "1",
+                            }
+                        ]
+                    },
+                },
+                "schema": schema_rel,
+                "destination": {
+                    "type": "postgres",
+                    "path": str(lake),
+                    "connection_env": "DET_POSTGRES_DSN",
+                    "dataset": "bronze",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("det.ingestion.det_backend.write_postgres_table") as write:
+        PipelineRunner(tmp_path).run(
+            pipe, interval_start="2026-08-06", interval_end="2026-08-07"
+        )
+    assert write.call_args.kwargs["dsn"] == dsn
+
+    landed = [p for p in lake.rglob("*") if p.is_file()]
+    assert landed, "expected raw artifacts in the lake"
+    for path in landed:
+        assert "hunter2pw" not in path.read_text(encoding="utf-8", errors="ignore")
 
 
 def test_write_postgres_table_import_error_message():

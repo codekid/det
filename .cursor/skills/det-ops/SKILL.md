@@ -1,9 +1,9 @@
 ---
 name: det-ops
 description: >-
-  DET agent workflows: debug missing raw partitions, schema validation / contract
-  drift, preview bronze prune, and scaffold/init from pipeline configs using MCP
-  dry-run tools (or det CLI).
+  DET agent workflows: debug missing raw partitions, failed or slow extract/load
+  runs, schema validation / contract drift, preview bronze prune, and
+  scaffold/init from pipeline configs using MCP dry-run tools (or det CLI).
 ---
 
 # DET ops workflows
@@ -27,6 +27,7 @@ Install: `uv pip install -e ".[mcp]"`.
      nested/noisy APIs so rare extra fields show up)
    - `sample_bronze` — landed rows (FS / Iceberg / DuckDB / Postgres); inspection only
    - `read_manifest` on a raw run path
+   - `list_runs` / `summarize_runs` — extract/load attempts (failures included)
 5. If raw is empty: check extract interval (`-s`/`-e`), source plugin, and lake
    (`DET_LAKE_PATH` / default `./data/lake` — not a per-pipeline `destination.path`).
    Airflow/CI logs are JSON (`DET_LOG_FORMAT=json`); grep `pipeline` /
@@ -35,8 +36,26 @@ Install: `uv pip install -e ".[mcp]"`.
    Kill that worker, then `det lock-release -p … -s … --force` (or DAG `det_clear_lock`).
    Do not force-clear while the job is still running. TTL: `--lock-ttl-sec` / `DET_LOCK_TTL_SEC`.
    `DET_LOCK=0` disables the lake lease (unsafe; tests only). MCP must not delete locks.
-   Bronze without raw usually means load/migrate was pointed at the wrong interval.
+   For a failed or slow run, prefer `list_runs` / `summarize_runs` (or `det runs`)
+   over grepping task logs: receipts survive a failed extract's partition rmtree
+   and carry `status`, `duration_ms`, `error_code`, and `owner`. Manifest remains
+   the authority for what landed. Bronze without raw usually means load/migrate was
+   pointed at the wrong interval.
    Rebuild bronze from raw via `det migrate`, not from a bronze payload column.
+
+## Debug a failed or slow run
+
+Receipts under `{lake}/runs/` are observability (what happened). `meta/manifest.json`
+is still the authority for what landed.
+
+1. `summarize_runs` (optional `-p`, attempt-date `since`/`until`, default last 7 days)
+   — attempts, ok/error, `error_codes`, p50/p95 `duration_ms`.
+2. `list_runs` with `status=error` (or `command=extract|load`) for the failing
+   `error_code` / scrubbed `error_message` / `owner`.
+3. CLI equivalent: `det runs -p … --status error` or `det runs --summary`.
+4. Airflow: `owner` is `airflow:{dag_id}:{run_id}` when the DAG set `DET_LOCK_OWNER`.
+5. Do not treat a missing receipt as a missing partition; `DET_RUN_RECEIPTS=0`
+   disables writing. A write failure never fails extract/load.
 
 ## Schema invalid / contract drift
 
@@ -58,6 +77,25 @@ Successful `det load` / migrate also stamps the raw partition
 `meta/manifest.json` with `validation.ok` + `schema_sha256` (and row count). That is a
 **receipt** for inspectability — missing `validation` is normal for fresh extract and
 does **not** fail load. Failures are not stamped (CLI/Airflow exit stays the alert).
+Extract/load attempts (including those failures) are in `{lake}/runs/` — `list_runs`
+/ `det runs --status error` for `error_code=schema_invalid`.
+
+## Secrets are unset / auth failures
+
+`SecretNotSetError: secret is not set: tried …` names every candidate it tried.
+Config carries names only (`auth_env`, `destination.connection_env`); export the
+value, do not paste it into YAML.
+
+1. `describe_pipeline` shows `connection_env` (the **name**). MCP resolves names
+   from process env only and never returns a value.
+2. Export the provider secret (`DET_EXAMPLE_API`, `DET_POSTGRES_DSN`) or, for
+   local debugging, set `DET_SECRETS_BACKEND=file` + `DET_SECRETS_FILE` pointing
+   at a gitignored `NAME=value` file. Env always wins over the file.
+3. A source that declares auth fails the run when it cannot resolve; it never
+   falls back to an unauthenticated request. After a rotation, a 401/403 is
+   re-resolved and retried once, and cached values expire (`DET_SECRETS_TTL_SEC`).
+4. `det check` code `secret_in_config` = a credential landed in YAML (passwordful
+   DSN, userinfo in `destination.path`, credential literal in `source.overrides`).
 
 ## Preview prune
 

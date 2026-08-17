@@ -16,7 +16,7 @@ Implement a `SourcePlugin` under `src/det/sources/<provider>/` (see
 `src/det/sources/base.py`):
 
 1. `name` — canonical `provider.source`
-2. `defaults()` — url, auth env, filters, fixture knobs
+2. `defaults()` — url, auth env **name**, filters, fixture knobs
 3. `extract_to_raw(...)` — write bytes under `data_dir`, return artifact descriptors
 4. `records_from_raw(...)` — yield `SourceRow` (source-native; no naming/meta)
 5. Register in `src/det/plugins.py` via `register_source`
@@ -25,11 +25,32 @@ Implement a `SourcePlugin` under `src/det/sources/<provider>/` (see
 dlt may help HTTP (`RESTClient`, `@dlt.resource` as iterator). **Never**
 `dlt.pipeline` / `pipeline.run` for bronze landing.
 
+## Credentials
+
+Config holds names, the environment holds values.
+
+- Authenticated source: call `source_bearer_token(config, source_name=self.name)`
+  from `det.sources.http_json`. It tries `auth_env`, then `DET_<PROVIDER>`, then
+  `<PROVIDER>`, and raises `SecretNotSetError` when unresolved — never fetch
+  unauthenticated as a fallback.
+- Public source: declare `"auth_env": None` in `defaults()` so the plugin says so
+  out loud and no lookup happens.
+- Skip the lookup entirely when `fixture_records` is set (offline demos stay
+  runnable with nothing exported).
+- Using `det.sources.http.http_get` / `http_get_file`? Pass `refresh_headers=`
+  (a callable that calls `invalidate_secret` then re-resolves) so a rotation
+  mid-backfill retries once on 401/403 instead of failing the run.
+- Postgres destinations use `destination.connection_env: DET_POSTGRES_DSN`; never
+  a DSN literal. `det check` fails a passwordful DSN or a credential literal in
+  `source.overrides`. See the README Secrets section.
+
 ## Workflow
 
 1. `list_sources` — ensure the id is free / match existing plugins.
 2. `init_pipeline_dry_run` with `name` == `source_type` == `provider.source`,
-   destination knobs (`filesystem` / `duckdb` / `postgres`).
+   destination knobs (`filesystem` / `duckdb` / `postgres`). For postgres pass
+   `connection` as the **env var name** (e.g. `DET_POSTGRES_DSN`); a DSN with a
+   password is refused.
 3. After user confirms, CLI: `det init-pipeline --name … --source-type …` (omit
    `--dry-run`). Or apply the dry-run actions manually.
 4. Draft a real schema from fixtures/raw:

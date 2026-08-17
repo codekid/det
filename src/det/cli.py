@@ -429,7 +429,10 @@ def init_pipeline_cmd(
     connection: str | None = typer.Option(
         None,
         "--connection",
-        help="DuckDB file path or Postgres DSN (required for duckdb/postgres)",
+        help=(
+            "DuckDB file path, or for postgres the env var name holding the DSN "
+            "(e.g. DET_POSTGRES_DSN). Required for duckdb/postgres"
+        ),
     ),
     lake_path: str | None = typer.Option(
         None,
@@ -589,6 +592,110 @@ def prune_bronze(
     typer.echo(
         f"OK prune pipeline={config.name} keep={keep} removed={removed}"
     )
+
+
+@app.command("runs")
+def runs_cmd(
+    pipeline: str | None = typer.Option(None, "--pipeline", "-p", help=_PIPELINE_HELP),
+    interval_start: str | None = typer.Option(
+        None,
+        "--interval-start",
+        "-s",
+        help="Attempt-date window start (default: 7 days ago). Not the data interval.",
+    ),
+    interval_end: str | None = typer.Option(
+        None,
+        "--interval-end",
+        "-e",
+        help="Attempt-date window end, exclusive (default: tomorrow UTC).",
+    ),
+    status: str | None = typer.Option(None, "--status", help="ok or error"),
+    command: str | None = typer.Option(None, "--command", help="extract or load"),
+    limit: int = typer.Option(50, "--limit", help="Max receipts to print"),
+    summary: bool = typer.Option(False, "--summary", help="Per pipeline+command counts"),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON"),
+    lake_path: str | None = typer.Option(None, "--lake-path"),
+    project_root: Path | None = typer.Option(
+        None, "--project-root", help=_PROJECT_ROOT_HELP
+    ),
+) -> None:
+    """List extract/load run receipts (observability). Manifest stays the data authority."""
+    import json
+
+    from det.destinations.models import lake_root
+    from det.runtime.config import load_pipeline_config
+    from det.runtime.lake import open_lake, pick_lake_spec
+    from det.runtime.receipts import list_receipts, summarize_receipts
+
+    root = _project_root(project_root)
+    if pipeline:
+        resolved = _resolve_pipeline(pipeline, root)
+        config = load_pipeline_config(resolved.path)
+        lake = lake_root(config.destination, root, cli_lake_path=lake_path)
+        pipe_id = config.name
+    else:
+        spec = pick_lake_spec(cli_lake_path=lake_path, destination_path=None)
+        lake = open_lake(spec, root)
+        pipe_id = None
+    try:
+        if summary:
+            payload = summarize_receipts(
+                lake,
+                pipeline=pipe_id,
+                since=interval_start,
+                until=interval_end,
+                status=status,
+                command=command,
+            )
+        else:
+            payload = list_receipts(
+                lake,
+                pipeline=pipe_id,
+                since=interval_start,
+                until=interval_end,
+                status=status,
+                command=command,
+                limit=limit,
+            )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if as_json:
+        typer.echo(json.dumps(payload, indent=2, default=str))
+        return
+    if summary:
+        groups = payload.get("groups") or []
+        if not groups:
+            typer.echo(
+                f"(no receipts in {payload.get('since')}..{payload.get('until')})"
+            )
+            return
+        typer.echo(f"since={payload['since']} until={payload['until']}")
+        for group in groups:
+            typer.echo(
+                f"pipeline={group['pipeline']} command={group['command']} "
+                f"attempts={group['attempts']} ok={group['ok']} error={group['error']} "
+                f"p50_ms={group['p50_ms']} p95_ms={group['p95_ms']} rows={group['rows']}"
+            )
+            codes = group.get("error_codes") or {}
+            if codes:
+                coded = " ".join(f"{k}={v}" for k, v in codes.items())
+                typer.echo(f"  error_codes: {coded}")
+        return
+    if not payload:
+        typer.echo("(no receipts)")
+        return
+    for row in payload:
+        parts = [
+            f"pipeline={row.get('pipeline')}",
+            f"command={row.get('command')}",
+            f"status={row.get('status')}",
+            f"duration_ms={row.get('duration_ms')}",
+        ]
+        if row.get("error_code"):
+            parts.append(f"error_code={row['error_code']}")
+        if row.get("started_at"):
+            parts.append(f"started_at={row['started_at']}")
+        typer.echo(" ".join(parts))
 
 
 @app.command("lock-show")

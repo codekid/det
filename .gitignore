@@ -19,6 +19,8 @@ dbt/logs/
 .astro/
 airflow_settings.yaml
 .env
+.env.secrets
+*.secrets.env
 airflow/.env
 airflow/logs/*
 !airflow/logs/.gitkeep

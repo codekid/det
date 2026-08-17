@@ -13,6 +13,7 @@ from urllib.parse import urljoin
 
 import requests
 
+from det.logging import redact_uri_credentials
 from det.mcp.context import project_root
 from det.mcp.inspect import clamp_sample_limit
 
@@ -368,7 +369,8 @@ def describe_airflow_det_env(*, root: Path | None = None) -> dict[str, Any]:
         if key in redact_keys or key.endswith("_PASSWORD") or "SECRET" in key:
             public[key] = "***"
         else:
-            public[key] = val
+            # DET_PIPELINE_OVERRIDES can carry --set destination.connection=<DSN>.
+            public[key] = redact_uri_credentials(val)
 
     det_keys = {k: v for k, v in public.items() if k.startswith("DET_")}
     analytics = raw.get("DET_ANALYTICS_DUCKDB", "")

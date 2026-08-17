@@ -12,6 +12,7 @@ from jsonschema import Draft202012Validator
 from det.destinations.models import (
     bronze_dataset_dir,
     duckdb_connection_path,
+    postgres_dsn,
     raw_dataset_dir,
 )
 from det.mcp.context import PathSandboxError, project_root, resolve_under_root
@@ -32,6 +33,7 @@ from det.runtime.meta import (
 from det.runtime.naming import apply_naming
 from det.runtime.pipelines import resolve_pipeline_ref
 from det.runtime.registry import get_source
+from det.runtime.secrets import SecretError
 from det.sources.base import merge_source_config
 from det.validation.jsonschema_validator import load_json_schema
 
@@ -240,9 +242,10 @@ def _list_bronze_sql_runs(
             return [], (
                 'Postgres inspect requires the optional extra: pip install -e ".[postgres]"'
             )
-        dsn = dest.connection
-        if not dsn:
-            return [], "destination.connection (Postgres DSN) is missing"
+        try:
+            dsn = postgres_dsn(dest, backend="env")
+        except (SecretError, ValueError) as exc:
+            return [], str(exc)
         with psycopg.connect(dsn) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -1039,12 +1042,13 @@ def _sample_bronze_postgres(
             ],
             "truncated": False,
         }
-    dsn = config.destination.connection
-    if not dsn:
+    try:
+        dsn = postgres_dsn(config.destination, backend="env")
+    except (SecretError, ValueError) as exc:
         return {
             **base_out,
             "rows": [],
-            "errors": [{"message": "destination.connection (Postgres DSN) is missing"}],
+            "errors": [{"message": str(exc)}],
             "truncated": False,
         }
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -32,6 +33,18 @@ _SECRET_KEYS = frozenset(
         "api_key",
         "apikey",
     }
+)
+
+# Resolved secret values seeded by det.runtime.secrets. Key-based scrubbing cannot
+# reach a DSN quoted inside exception text, so the renderer output is scrubbed too.
+_REDACT_VALUES: set[str] = set()
+_REDACTED = "***"
+# Short values collide with ordinary words; scrubbing them would corrupt logs.
+_MIN_REDACT_LEN = 8
+
+_URI_USERINFO_RE = re.compile(r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)[^/\s@\"']+@")
+_URI_SECRET_QUERY_RE = re.compile(
+    r"(?i)([?&](?:password|token|api_key|secret)=)[^&\s\"']+"
 )
 
 
@@ -73,6 +86,19 @@ def sanitize_lake_uri(spec: str) -> str:
     return urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))
 
 
+def redact_uri_credentials(text: str) -> str:
+    """
+    Mask userinfo and credential query params anywhere inside *text*.
+
+    Unlike ``sanitize_lake_uri`` this works on compound strings such as
+    ``destination.connection=postgresql://user:pass@host/db,foo=bar``.
+    """
+    if not text or "://" not in text:
+        return text
+    masked = _URI_USERINFO_RE.sub(lambda m: f"{m.group('scheme')}{_REDACTED}@", text)
+    return _URI_SECRET_QUERY_RE.sub(rf"\1{_REDACTED}", masked)
+
+
 def drop_secrets(
     _logger: Any, _method: str, event_dict: dict[str, Any]
 ) -> dict[str, Any]:
@@ -84,6 +110,49 @@ def drop_secrets(
         ):
             event_dict.pop(key, None)
     return event_dict
+
+
+def register_secret_value(value: str | None) -> None:
+    """Remember a resolved secret so rendered lines never echo it."""
+    text = (value or "").strip()
+    if len(text) < _MIN_REDACT_LEN:
+        return
+    _REDACT_VALUES.add(text)
+    # A DSN usually fails inside a driver message that quotes only the password.
+    if "://" in text:
+        try:
+            password = urlsplit(text).password
+        except ValueError:
+            password = None
+        if password and len(password) >= _MIN_REDACT_LEN:
+            _REDACT_VALUES.add(password)
+
+
+def clear_secret_values() -> None:
+    _REDACT_VALUES.clear()
+
+
+def scrub_secrets(text: str) -> str:
+    """Replace registered secret values, then mask URI userinfo / credential params."""
+    if not text:
+        return text
+    out = text
+    for secret in _REDACT_VALUES:
+        if secret in out:
+            out = out.replace(secret, _REDACTED)
+    return redact_uri_credentials(out)
+
+
+def scrub_rendered(_logger: Any, _method: str, event: Any) -> Any:
+    """
+    Final processor: scrub secrets from the rendered line.
+
+    Key-based ``drop_secrets`` cannot reach a DSN quoted inside exception text,
+    which ``dict_tracebacks`` renders verbatim.
+    """
+    if not isinstance(event, str):
+        return event
+    return scrub_secrets(event)
 
 
 def configure_logging(
@@ -126,6 +195,7 @@ def configure_logging(
         )
     else:
         processors.append(structlog.dev.ConsoleRenderer())
+    processors.append(scrub_rendered)
     structlog.configure(
         processors=processors,
         wrapper_class=structlog.make_filtering_bound_logger(log_level),

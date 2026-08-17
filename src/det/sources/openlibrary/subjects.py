@@ -64,6 +64,8 @@ class OpenLibrarySubjectsSource:
     def defaults(self) -> dict[str, Any]:
         return {
             "base_url": "https://openlibrary.org",
+            # Public API: declared so no credential is looked up or required.
+            "auth_env": None,
             "subject": "love",
             "record_path": "works",
             "page_size": 50,

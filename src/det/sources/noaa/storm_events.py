@@ -101,6 +101,8 @@ class NoaaStormEventsSource:
     def defaults(self) -> dict[str, Any]:
         return {
             "url": DEFAULT_URL,
+            # Public bulk files: declared so no credential is looked up or required.
+            "auth_env": None,
             "filename_substr": DEFAULT_FILENAME_SUBSTR,
             "filenames": None,
             "local_csv_dir": None,

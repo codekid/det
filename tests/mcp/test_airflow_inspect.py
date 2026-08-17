@@ -132,6 +132,19 @@ def test_describe_env_redacts_password(tmp_path: Path):
     assert "_AIRFLOW_WWW_USER_PASSWORD" not in out.get("det", {})
 
 
+def test_describe_env_redacts_dsn_inside_pipeline_overrides(tmp_path: Path):
+    env_dir = tmp_path / "airflow"
+    env_dir.mkdir()
+    (env_dir / ".env").write_text(
+        "DET_PIPELINE_OVERRIDES=destination.connection=postgresql://det:hunter2pw@db/det\n",
+        encoding="utf-8",
+    )
+    out = describe_airflow_det_env(root=tmp_path)
+    overrides = out["det"]["DET_PIPELINE_OVERRIDES"]
+    assert "hunter2pw" not in overrides
+    assert "destination.connection=postgresql://" in overrides
+
+
 def test_preview_backfill_conf():
     out = preview_backfill_conf("2026-08-01", "2026-08-03")
     assert out["ok"] is True
