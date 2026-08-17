@@ -28,8 +28,8 @@ x-airflow-common: &airflow-common
     DET_ANALYTICS_DUCKDB: /opt/det/data/analytics.duckdb
     DET_OPS_DUCKDB: /opt/det/data/det_ops.duckdb
     DET_DBT_PROJECT: /opt/det/dbt
-    # Defaults for noaa.storm_events filesystem bronze; DAG may refine from pipeline YAML.
-    DET_BRONZE_SOURCE: ${DET_BRONZE_SOURCE:-filesystem}
+    # Defaults for noaa.storm_events Iceberg bronze; DAG may refine from pipeline YAML.
+    DET_BRONZE_SOURCE: ${DET_BRONZE_SOURCE:-iceberg}
     DET_BRONZE_SCHEMA: ${DET_BRONZE_SCHEMA:-bronze_noaa}
     DET_PIPELINE_OVERRIDES: ${DET_PIPELINE_OVERRIDES:-}
     DET_PRUNE: ${DET_PRUNE:-}

@@ -12,19 +12,11 @@ sources:
       - name: events_v1
         description: Bronze contract for example_api events. Wire-faithful typed landing; analytics renames/coalesce live in dbt.stg.
         meta:
-          # Schema-aware columns avoid read_json_auto promoting mixed
-          # partitions to JSON (values that look like "48" / "").
-          # formatter=template: columns={...} braces must not go through
-          # str.format_map (dbt-duckdb default newstyle).
-          # hive_partitioning=false: partition keys are also payload cols.
+          # Iceberg bronze: DuckDB iceberg_scan of the table location
+          # (Hadoop catalog on the lake). Not a JSONL hive glob.
           formatter: template
           external_location: >-
-            read_json(
-              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/example_api/events_v1/**/data.jsonl',
-              columns={'id': 'VARCHAR', 'occurred_at': 'VARCHAR', 'severity': 'VARCHAR', 'level': 'VARCHAR', 'severity_level': 'VARCHAR', 'state': 'VARCHAR', 'status': 'VARCHAR', 'debug_info': 'VARCHAR', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
-              union_by_name=true,
-              hive_partitioning=false
-            )
+            iceberg_scan('{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/example_api/events_v1')
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.
@@ -53,19 +45,11 @@ sources:
       - name: orders_v1
         description: DET bronze example_api.orders_v1
         meta:
-          # Schema-aware columns avoid read_json_auto promoting mixed
-          # partitions to JSON (values that look like "48" / "").
-          # formatter=template: columns={...} braces must not go through
-          # str.format_map (dbt-duckdb default newstyle).
-          # hive_partitioning=false: partition keys are also payload cols.
+          # Iceberg bronze: DuckDB iceberg_scan of the table location
+          # (Hadoop catalog on the lake). Not a JSONL hive glob.
           formatter: template
           external_location: >-
-            read_json(
-              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/example_api/orders_v1/**/data.jsonl',
-              columns={'id': 'VARCHAR', 'email': 'VARCHAR', 'currency': 'VARCHAR', 'status': 'VARCHAR', 'customer': 'JSON', 'shipping_address': 'JSON', 'discount_codes': 'JSON', 'line_items': 'JSON', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
-              union_by_name=true,
-              hive_partitioning=false
-            )
+            iceberg_scan('{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/example_api/orders_v1')
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.
@@ -85,19 +69,11 @@ sources:
       - name: storm_events_v1
         description: 'NOAA Storm Events details (StormEvents_details CSV). Bronze contract: snake_case names and typed values. DET coerces source strings to these types before validation. Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.'
         meta:
-          # Schema-aware columns avoid read_json_auto promoting mixed
-          # partitions to JSON (values that look like "48" / "").
-          # formatter=template: columns={...} braces must not go through
-          # str.format_map (dbt-duckdb default newstyle).
-          # hive_partitioning=false: partition keys are also payload cols.
+          # Iceberg bronze: DuckDB iceberg_scan of the table location
+          # (Hadoop catalog on the lake). Not a JSONL hive glob.
           formatter: template
           external_location: >-
-            read_json(
-              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/storm_events_v1/**/data.jsonl',
-              columns={'begin_yearmonth': 'INTEGER', 'begin_day': 'INTEGER', 'begin_time': 'INTEGER', 'end_yearmonth': 'INTEGER', 'end_day': 'INTEGER', 'end_time': 'INTEGER', 'episode_id': 'INTEGER', 'event_id': 'INTEGER', 'state': 'VARCHAR', 'state_fips': 'INTEGER', 'year': 'INTEGER', 'month_name': 'VARCHAR', 'event_type': 'VARCHAR', 'cz_type': 'VARCHAR', 'cz_fips': 'INTEGER', 'cz_name': 'VARCHAR', 'wfo': 'VARCHAR', 'begin_date_time': 'VARCHAR', 'cz_timezone': 'VARCHAR', 'end_date_time': 'VARCHAR', 'injuries_direct': 'INTEGER', 'injuries_indirect': 'INTEGER', 'deaths_direct': 'INTEGER', 'deaths_indirect': 'INTEGER', 'damage_property': 'VARCHAR', 'damage_crops': 'VARCHAR', 'source': 'VARCHAR', 'magnitude': 'DOUBLE', 'magnitude_type': 'VARCHAR', 'flood_cause': 'VARCHAR', 'category': 'VARCHAR', 'tor_f_scale': 'VARCHAR', 'tor_length': 'DOUBLE', 'tor_width': 'INTEGER', 'tor_other_wfo': 'VARCHAR', 'tor_other_cz_state': 'VARCHAR', 'tor_other_cz_fips': 'VARCHAR', 'tor_other_cz_name': 'VARCHAR', 'begin_range': 'DOUBLE', 'begin_azimuth': 'VARCHAR', 'begin_location': 'VARCHAR', 'end_range': 'DOUBLE', 'end_azimuth': 'VARCHAR', 'end_location': 'VARCHAR', 'begin_lat': 'DOUBLE', 'begin_lon': 'DOUBLE', 'end_lat': 'DOUBLE', 'end_lon': 'DOUBLE', 'episode_narrative': 'VARCHAR', 'event_narrative': 'VARCHAR', 'data_source': 'VARCHAR', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
-              union_by_name=true,
-              hive_partitioning=false
-            )
+            iceberg_scan('{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/storm_events_v1')
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.
@@ -214,19 +190,11 @@ sources:
       - name: fatalities_v1
         description: 'NOAA Storm Events fatalities (StormEvents_fatalities CSV). Bronze contract: snake_case names and typed values. DET coerces source strings to these types before validation. Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.'
         meta:
-          # Schema-aware columns avoid read_json_auto promoting mixed
-          # partitions to JSON (values that look like "48" / "").
-          # formatter=template: columns={...} braces must not go through
-          # str.format_map (dbt-duckdb default newstyle).
-          # hive_partitioning=false: partition keys are also payload cols.
+          # Iceberg bronze: DuckDB iceberg_scan of the table location
+          # (Hadoop catalog on the lake). Not a JSONL hive glob.
           formatter: template
           external_location: >-
-            read_json(
-              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/fatalities_v1/**/data.jsonl',
-              columns={'fat_yearmonth': 'INTEGER', 'fat_day': 'INTEGER', 'fat_time': 'INTEGER', 'fatality_id': 'INTEGER', 'event_id': 'INTEGER', 'fatality_type': 'VARCHAR', 'fatality_date': 'VARCHAR', 'fatality_age': 'INTEGER', 'fatality_sex': 'VARCHAR', 'fatality_location': 'VARCHAR', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
-              union_by_name=true,
-              hive_partitioning=false
-            )
+            iceberg_scan('{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/fatalities_v1')
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.
@@ -259,19 +227,11 @@ sources:
       - name: locations_v1
         description: 'NOAA Storm Events locations (StormEvents_locations CSV). Bronze contract: snake_case names and typed values. DET coerces source strings to these types before validation. Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.'
         meta:
-          # Schema-aware columns avoid read_json_auto promoting mixed
-          # partitions to JSON (values that look like "48" / "").
-          # formatter=template: columns={...} braces must not go through
-          # str.format_map (dbt-duckdb default newstyle).
-          # hive_partitioning=false: partition keys are also payload cols.
+          # Iceberg bronze: DuckDB iceberg_scan of the table location
+          # (Hadoop catalog on the lake). Not a JSONL hive glob.
           formatter: template
           external_location: >-
-            read_json(
-              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/locations_v1/**/data.jsonl',
-              columns={'yearmonth': 'INTEGER', 'episode_id': 'INTEGER', 'event_id': 'INTEGER', 'location_index': 'INTEGER', 'range': 'DOUBLE', 'azimuth': 'VARCHAR', 'location': 'VARCHAR', 'latitude': 'DOUBLE', 'longitude': 'DOUBLE', 'lat2': 'INTEGER', 'lon2': 'INTEGER', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
-              union_by_name=true,
-              hive_partitioning=false
-            )
+            iceberg_scan('{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/locations_v1')
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.

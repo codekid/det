@@ -132,7 +132,10 @@ def test_scaffold_creates_and_skips_without_force(tmp_path: Path):
     assert 'env_var("DET_LAKE_PATH"' in sources_text or "env_var('DET_LAKE_PATH'" in sources_text
 
     second = scaffold_dbt(config, project_root=tmp_path, dbt_models_dir=models)
-    assert all(a.action == "skip" for a in second.actions)
+    seed_actions = [a for a in second.actions if a.path.name == "ops_slo_expected.csv"]
+    other = [a for a in second.actions if a.path.name != "ops_slo_expected.csv"]
+    assert other and all(a.action == "skip" for a in other)
+    assert seed_actions and seed_actions[0].action == "write"
 
 
 def test_scaffold_force_refreshes_stg_when_schema_gains_property(tmp_path: Path):
@@ -161,7 +164,9 @@ def test_scaffold_dry_run_writes_nothing(tmp_path: Path):
         config, project_root=tmp_path, dry_run=True, dbt_models_dir=models
     )
     assert all(a.action.startswith("would_") for a in result.actions)
+    assert any(a.path.name == "ops_slo_expected.csv" for a in result.actions)
     assert not models.exists()
+    assert not (tmp_path / "dbt" / "seeds" / "ops_slo_expected.csv").exists()
 
 
 def test_widen_read_json_includes_coalesce_aliases():

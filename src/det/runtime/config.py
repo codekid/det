@@ -17,6 +17,7 @@ from det.runtime.ids import (
 )
 from det.runtime.naming import BronzeConfig
 from det.runtime.secrets import looks_like_secret_name
+from det.runtime.slo import SloConfig
 
 _STG_COL_ID = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -44,7 +45,8 @@ class IngestionConfig(BaseModel):
 
 
 class DestinationConfig(BaseModel):
-    type: Literal["filesystem", "duckdb", "postgres", "iceberg"] = "filesystem"
+    # Lake bronze default. ``filesystem`` is explicit JSONL (thin/dev).
+    type: Literal["filesystem", "duckdb", "postgres", "iceberg"] = "iceberg"
     # Rare per-pipeline lake override. Omit in YAML; DET resolves
     # --lake-path > path > DET_LAKE_PATH > ./data/lake.
     path: str | None = None
@@ -598,6 +600,8 @@ class PipelineConfig(BaseModel):
     medallion: MedallionConfig = Field(default_factory=MedallionConfig)
     bronze: BronzeConfig = Field(default_factory=BronzeConfig)
     dbt: DbtConfig = Field(default_factory=DbtConfig)
+    # Opt-in fleet SLOs (dbt tests). Omit → pipeline is not in ops_slo_expected.
+    slo: SloConfig | None = None
     # Rejected if set: lake ids are always ``{name}_v{wire_version}``. Use
     # ``wire_version`` (and ``det migrate``) for cutovers.
     dataset: str | None = None

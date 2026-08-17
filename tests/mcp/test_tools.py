@@ -147,6 +147,7 @@ def test_scaffold_and_init_dry_run(tmp_path: Path):
     assert scaffold["dry_run"] is True
     assert scaffold["dataset"] == "example_api.events_v1"
     assert scaffold["actions"]
+    assert any(a["path"].endswith("ops_slo_expected.csv") for a in scaffold["actions"])
     assert not (
         tmp_path / "dbt" / "models" / "silver" / "stg_example_api__events.sql"
     ).exists()

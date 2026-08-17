@@ -71,7 +71,7 @@ def init_pipeline(
     force: bool = False,
     dry_run: bool = False,
     skip_dbt: bool = False,
-    destination_type: str = "filesystem",
+    destination_type: str = "iceberg",
     lake_path: str | None = None,
     connection: str | None = None,
 ) -> InitPipelineResult:

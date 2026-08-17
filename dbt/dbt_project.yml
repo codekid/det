@@ -27,3 +27,17 @@ models:
       +schema: ops
       # Table (not view): Iceberg scan is cwd-sensitive; persist rows in DET_OPS_DUCKDB.
       +materialized: table
+
+seeds:
+  disaster_analytics:
+    ops_slo_expected:
+      +schema: ops
+      +tags: [ops]
+      +column_types:
+        pipeline: varchar
+        command: varchar
+        cadence: varchar
+        recency_hours: integer
+        score_hours: integer
+        max_error_rate: double
+        p95_ms: integer

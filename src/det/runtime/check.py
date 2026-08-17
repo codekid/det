@@ -272,7 +272,8 @@ def check_project(
     """
     Check all pipelines (or one) under the project.
 
-    Errors: load / schema / registered source.
+    Errors: load / schema / registered source; ``slo_seed_stale`` when the ops SLO
+    seed does not match pipeline YAML (full-project check only).
     Warnings: missing dbt stg/silver when ``dbt/`` exists.
     """
     root = resolve_project_root(project_root)
@@ -298,7 +299,28 @@ def check_project(
 
     for path in paths:
         findings.extend(check_pipeline_config(path, project_root=root))
+    findings.extend(_slo_seed_findings(root))
     return findings
+
+
+def _slo_seed_findings(root: Path) -> list[Finding]:
+    from det.runtime.slo import SLO_SEED_RELPATH, slo_seed_is_stale
+
+    if not slo_seed_is_stale(root):
+        return []
+    return [
+        Finding(
+            severity="error",
+            code="slo_seed_stale",
+            pipeline="*",
+            path=str(SLO_SEED_RELPATH),
+            detail=(
+                "dbt/seeds/ops_slo_expected.csv does not match pipeline YAML slo: "
+                "rows. Regenerate with `det scaffold-dbt` (any pipeline; seed is "
+                "always rewritten from all pipelines)."
+            ),
+        )
+    ]
 
 
 def has_errors(findings: Sequence[Finding]) -> bool:

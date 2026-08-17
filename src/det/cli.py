@@ -436,9 +436,9 @@ def init_pipeline_cmd(
         help="Registered source plugin, e.g. noaa.storm_events",
     ),
     destination_type: str = typer.Option(
-        "filesystem",
+        "iceberg",
         "--destination-type",
-        help="filesystem | duckdb | postgres | iceberg",
+        help="iceberg (default lake) | filesystem (JSONL) | duckdb | postgres",
     ),
     connection: str | None = typer.Option(
         None,

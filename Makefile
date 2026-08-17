@@ -8,7 +8,7 @@ INTERVAL_END ?=
 export DET_LAKE_PATH ?= $(CURDIR)/data/lake
 
 install:
-	uv pip install -e ".[dev,dbt,mcp,postgres]"
+	uv pip install -e ".[dev,dbt,mcp,postgres,iceberg]"
 	@$(MAKE) --no-print-directory unhide
 
 # Python 3.12+ silently ignores .pth files carrying the macOS UF_HIDDEN flag, which
@@ -25,15 +25,17 @@ lint:
 	uv run ruff check .
 
 # Same pipeline config as production, pointed at local fixtures via --set.
+# thin cannot Iceberg — opt in to JSONL for this smoke path.
 run-local:
 	uv run det run \
 		--pipeline noaa.storm_events \
 		--interval-start $(INTERVAL_START) $(if $(INTERVAL_END),--interval-end $(INTERVAL_END)) \
 		--set source.overrides.local_csv_dir=fixtures/storm_events \
 		--set source.overrides.filename_substr=details \
-		--set ingestion.library=thin
+		--set ingestion.library=thin \
+		--set destination.type=filesystem
 
-# dbt reads the bronze JSONL in place; det dbt sets DET_LAKE_PATH.
+# dbt reads bronze in place; det dbt sets DET_LAKE_PATH.
 dbt:
 	uv run det dbt
 

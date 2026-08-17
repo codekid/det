@@ -2,7 +2,8 @@
 name: det-dbt
 description: >-
   DET silver/gold dbt workflows: scaffold dry-run, dbt_dry_run select/env,
-  dbt.silver / dbt.stg knobs, and bronze source env. Gold models are hand-written.
+  dbt.silver / dbt.stg knobs, bronze source env, and ops SLOs (pipeline slo:
+  → seed → tag:ops tests). Gold models are hand-written.
 ---
 
 # DET dbt (silver / gold)
@@ -131,7 +132,7 @@ Bronze recreate after renames: identity migrate (no growing Python normalize map
 | Var | Role |
 | --- | --- |
 | `DET_LAKE_PATH` | Lake root for schema-aware `read_json` or `iceberg_scan` (default `./data/lake`; `s3://`/`gs://` for DET I/O — dbt JSONL globs stay local) |
-| `DET_BRONZE_SOURCE` | `filesystem` (default), `iceberg`, or `duckdb` |
+| `DET_BRONZE_SOURCE` | `iceberg` (default lake), `filesystem` (JSONL opt-in), or `duckdb` |
 | `DET_BRONZE_SCHEMA` | SQL schema when bronze is DuckDB/Postgres |
 | `DET_ANALYTICS_DUCKDB` | Absolute analytics DB path (prefer in Airflow/Compose) |
 | `DET_OPS_DUCKDB` | Absolute ops DB path for `--target ops` (separate from analytics) |
@@ -156,6 +157,16 @@ not a DET destination.
   `analytics.duckdb`). Do not name the DuckDB file `ops.duckdb` — catalog stem
   `ops` collides with schema `ops`. Raw `dbt` from repo root must set **absolute**
   `DET_LAKE_PATH`.
+- **This run vs the fleet:** receipts answer “did this extract/load break?”;
+  ops dbt answers “have opted-in pipelines been running often/well enough?”
+  Declare policy with pipeline `slo:` (opt-in; omit → not in the expected set).
+  Shared defaults on `slo:`; sparse `extract` / `load` overlays; `false` skips a
+  command. Cadence hours are not inferred from `interval_*` or `dbt.silver.lookback`.
+  `det scaffold-dbt` always regenerates `dbt/seeds/ops_slo_expected.csv` from **all**
+  pipelines. `det check` errors `slo_seed_stale` on drift. Walk-through: DAG
+  `det_ops_receipts` (`dbt build --select tag:ops --target ops`) — mart
+  `det__ops_run_daily` plus recency / error-rate / p95 / fail-closed tests.
+  Extract/load never read SLOs. Do not add `ops_slo_*` lists to `dbt_project.yml`.
 
 ## Hard rules
 

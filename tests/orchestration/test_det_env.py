@@ -47,7 +47,7 @@ def test_dbt_select_and_env_for_pipeline(project_root: Path, monkeypatch):
     assert det_env.dbt_select() is None
     env = det_env.dbt_env_for_pipeline()
     assert env["DET_BRONZE_SCHEMA"] == "bronze_noaa"
-    assert env["DET_BRONZE_SOURCE"] == "filesystem"
+    assert env["DET_BRONZE_SOURCE"] == "iceberg"
     assert env["DET_LAKE_PATH"] == str(project_root / "data" / "lake")
     assert env["DET_ANALYTICS_DUCKDB"] == str(
         (project_root / "data" / "analytics.duckdb").resolve()

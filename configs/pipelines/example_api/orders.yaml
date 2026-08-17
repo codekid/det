@@ -11,7 +11,7 @@ validation:
 ingestion:
   library: det
 destination:
-  type: filesystem
+  type: iceberg
 medallion:
   bronze_prefix: bronze
   raw_prefix: raw

@@ -123,6 +123,7 @@ models:
   description: Cleaned, deduped example_api__orders (silver)
   columns:
   - name: __row_hash
+    description: DET content hash used for silver dedupe.
     tests:
     - unique
     - not_null

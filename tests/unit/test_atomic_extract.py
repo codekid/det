@@ -127,6 +127,7 @@ def test_extract_refuses_overwrite_of_committed_run(
         )
     assert is_committed_raw_dir(first.raw_dir)
     assert read_manifest(first.raw_dir)["extract_run_datetime"] == stamp
+    assert read_manifest(first.raw_dir)["lake_layout"] == 1
 
 
 def test_extract_retries_incomplete_same_run_id(project_root: Path, tmp_path: Path):

@@ -152,6 +152,7 @@ def test_write_receipt_memory_lake_one_object():
     assert path is not None
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["receipt_version"] == 1
+    assert payload["lake_layout"] == 1
     assert payload["status"] == "ok"
     assert payload["artifacts"] == 2
     assert payload["raw_bytes"] == 40
