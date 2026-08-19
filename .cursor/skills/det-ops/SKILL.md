@@ -65,6 +65,17 @@ is still the authority for what landed.
    Iceberg `{lake}/ops/run_receipts`; dbt `tag:ops` / `--target ops` reads it into
    `DET_OPS_DUCKDB`. JSON under `runs/` remains the attempt log.
 
+## Fleet metrics (ops DuckDB / Cube)
+
+Ops marts are in `DET_OPS_DUCKDB` (`data/det_ops.duckdb`, schema `ops`), not analytics.
+
+1. Certified fleet metrics: MCP `cube_load` on `run_daily` (`make cube-up`).
+   Grain is `attempt_date`, `pipeline`, `command`. Do not re-sum `p50_ms` / `p95_ms`.
+2. Row detail: MCP `query_analytics` with `warehouse=ops` (capped SELECT on `ops.*`).
+3. Catalog: `list_models` / `describe_model` for `det__ops_run_daily` and
+   `stg_det__run_receipts`.
+4. This run (single attempt): still `list_runs` / `summarize_runs` on `{lake}/runs/`.
+
 ## This run vs the fleet
 
 Receipts / `det runs` answer **this run** (did extract or load break?). Ops dbt
@@ -139,8 +150,9 @@ value, do not paste it into YAML.
 2. Greenfield: `init_pipeline_dry_run` with `name`, `source_type`, destination knobs.
 3. Write with CLI: `det scaffold-dbt -p …` or `det init-pipeline …` (omit `--dry-run`).
 4. Preview dbt select/env: `dbt_dry_run` with the pipeline path/name.
-5. After editing pipelines/schemas: `det check` (or rely on the Cursor
-   `afterFileEdit` hook / CI). Fix errors before extract/load.
+5. After editing pipelines/schemas: MCP `check` (optional `pipeline`), or
+   `det check`. The Cursor `afterFileEdit` hook / CI also run this. Fix errors
+   before extract/load.
 
 ## Related skills
 

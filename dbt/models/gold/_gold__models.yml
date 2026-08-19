@@ -1,0 +1,23 @@
+version: 2
+
+models:
+  - name: gold_yearly_damage
+    description: >
+      NOAA storm events property damage rolled up by event year and state.
+      Damage is parsed from silver damage_property strings (numeric plus optional
+      H/K/M/B suffix). Certified metric queries should use Cube cube_load on
+      yearly_damage, not ad-hoc SQL.
+    config:
+      meta:
+        grain: [event_year, state]
+        warehouse: analytics
+    columns:
+      - name: event_year
+        description: Four-digit year from begin_yearmonth (UTC NOAA storm yearmonth).
+      - name: state
+        description: State name as stored on silver NOAA storm events.
+      - name: total_property_damage
+        description: >
+          Sum of parsed property damage. NOAA damage_property is a number plus an
+          optional suffix: H=100, K=1e3, M=1e6, B=1e9; other/missing suffix is
+          the raw number. Parsing lives in gold_yearly_damage.sql.

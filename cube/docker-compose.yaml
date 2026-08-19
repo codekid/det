@@ -1,0 +1,29 @@
+# DET local Cube Core (semantic layer over analytics + ops DuckDB). Dev only.
+#
+# Usage (from repo root):
+#   make cube-up
+#   open http://localhost:4000
+#   make cube-down
+#
+# Env: copy cube/.env.example → cube/.env
+# DuckDB files: data/analytics.duckdb (gold/silver) and data/det_ops.duckdb (ops).
+# Do not run `det dbt` against a file Cube currently has open.
+
+services:
+  cube:
+    image: cubejs/cube:latest
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env
+    environment:
+      CUBEJS_DEV_MODE: "true"
+      CUBEJS_DB_TYPE: duckdb
+      CUBEJS_DATASOURCES: default,ops
+      CUBEJS_DB_DUCKDB_DATABASE_PATH: /data/analytics.duckdb
+      CUBEJS_DS_OPS_DB_TYPE: duckdb
+      CUBEJS_DS_OPS_DB_DUCKDB_DATABASE_PATH: /data/det_ops.duckdb
+      CUBEJS_SCHEMA_PATH: model
+    volumes:
+      - .:/cube/conf
+      - ../data:/data

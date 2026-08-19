@@ -159,5 +159,5 @@ receipt JSON      lake_layout, receipt_version, wire_version, status, duration_m
 pipeline YAML     wire_version (default 1) — not lake_layout
 ```
 
-See also: README [Lake layout](../README.md#lake-layout), `det-migrate` skill
+See also: README [Destinations](../README.md#destinations), `det-migrate` skill
 (`wire_version` vs layout), `src/det/runtime/layout.py`.

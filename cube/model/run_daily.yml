@@ -1,0 +1,40 @@
+cubes:
+  - name: run_daily
+    data_source: ops
+    sql_table: ops.det__ops_run_daily
+    description: >
+      Fleet daily extract/load rollup. Grain is attempt_date, pipeline, command.
+      p50_ms and p95_ms are already daily quantiles — Cube exposes them as avg
+      so a multi-day rollup is not a true p50/p95. Prefer filtering to one day
+      or grouping by attempt_date.
+    dimensions:
+      - name: attempt_date
+        sql: attempt_date
+        type: time
+      - name: pipeline
+        sql: pipeline
+        type: string
+      - name: command
+        sql: command
+        type: string
+    measures:
+      - name: attempts
+        sql: attempts
+        type: sum
+      - name: ok
+        sql: ok
+        type: sum
+      - name: error
+        sql: error
+        type: sum
+      - name: p50_ms
+        sql: p50_ms
+        type: avg
+        description: Average of daily p50_ms (not a re-computed median).
+      - name: p95_ms
+        sql: p95_ms
+        type: avg
+        description: Average of daily p95_ms (not a re-computed p95).
+      - name: rows
+        sql: rows
+        type: sum
