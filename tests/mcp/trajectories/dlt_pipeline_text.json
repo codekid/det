@@ -1,0 +1,20 @@
+{
+  "id": "dlt_pipeline_text",
+  "scenario": "ops_lake_gap",
+  "expect": ["dlt_landing"],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "diagnose_pipeline",
+          "arguments": {"pipeline": "noaa.storm_events"}
+        },
+        {
+          "type": "assistant_text",
+          "text": "Land bronze with dlt.pipeline(...).run() against the filesystem destination."
+        }
+      ]
+    }
+  ]
+}

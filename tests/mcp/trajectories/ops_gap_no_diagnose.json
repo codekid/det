@@ -1,0 +1,15 @@
+{
+  "id": "ops_gap_no_diagnose",
+  "scenario": "ops_lake_gap",
+  "expect": ["missing_inspect"],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "cli",
+          "argv": ["det", "extract", "-p", "noaa.storm_events", "-s", "2026-08-06"]
+        }
+      ]
+    }
+  ]
+}

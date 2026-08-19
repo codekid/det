@@ -38,6 +38,12 @@ def _root(root: Path | None = None) -> Path:
     return root.resolve() if root is not None else project_root()
 
 
+def _approval_plan(command: str, argv: list[str]) -> dict[str, Any]:
+    from det.runtime.approval import make_plan
+
+    return make_plan(command, argv).to_dict()
+
+
 def _pipeline_path(pipeline: str, root: Path) -> Path:
     """Resolve a pipeline name (``noaa.storm_events``), path, or nested stem."""
     from det.runtime.pipelines import resolve_pipeline_ref
@@ -357,9 +363,20 @@ def prune_dry_run(
         interval_end=interval_end,
         keep=keep,
     )
+    from det.runtime.approval import prune_write_argv
+
     return {
         "pipeline": config.name,
         "keep": keep,
+        "approval_plan": _approval_plan(
+            "prune",
+            prune_write_argv(
+                config.name,
+                interval_start,
+                interval_end=interval_end,
+                keep=keep,
+            ),
+        ),
         "remove_count": plan.remove_count,
         "to_remove": [
             {
@@ -404,6 +421,8 @@ def dbt_dry_run(
         pipeline=pipeline_arg,
         dry_run=True,
     )
+    from det.runtime.approval import dbt_write_argv
+
     return {
         "dry_run": True,
         "command": result.command,
@@ -411,6 +430,10 @@ def dbt_dry_run(
         "project_dir": _rel(result.project_dir, base),
         "lake_path": result.lake_path,
         "bronze_source": result.bronze_source,
+        "approval_plan": _approval_plan(
+            "dbt",
+            dbt_write_argv(pipeline, command=command, select=select),
+        ),
     }
 
 
@@ -425,10 +448,16 @@ def scaffold_dbt_dry_run(
 
     base = _root(root)
     config, _ = _load_pipeline(pipeline, base)
+    from det.runtime.approval import scaffold_dbt_write_argv
+
     result = scaffold_dbt(config, project_root=base, force=force, dry_run=True)
     return {
         "dry_run": True,
         "dataset": result.dataset,
+        "approval_plan": _approval_plan(
+            "scaffold-dbt",
+            scaffold_dbt_write_argv(config.name, force=force),
+        ),
         "actions": [
             {
                 "action": a.action,
@@ -464,11 +493,24 @@ def init_pipeline_dry_run(
         lake_path=lake_path,
         connection=connection,
     )
+    from det.runtime.approval import init_pipeline_write_argv
+
     return {
         "dry_run": True,
         "name": result.name,
         "pipeline_path": _rel(result.pipeline_path, base),
         "schema_path": _rel(result.schema_path, base),
+        "approval_plan": _approval_plan(
+            "init-pipeline",
+            init_pipeline_write_argv(
+                name,
+                source_type,
+                destination_type=destination_type,
+                connection=connection,
+                lake_path=lake_path,
+                skip_dbt=skip_dbt,
+            ),
+        ),
         "actions": [
             {
                 "action": a.action,
@@ -695,6 +737,7 @@ def migrate_dry_run(
     """Preview det migrate: parse/map/validate raw partitions; never writes bronze."""
     _prepare_tool()
     from det.mcp.inspect import clamp_sample_limit
+    from det.runtime.approval import migrate_write_argv
     from det.runtime.migrate import BronzeMigrator, MigratePlan
     from det.runtime.pipelines import resolve_pipeline_ref
 
@@ -720,6 +763,19 @@ def migrate_dry_run(
     out = plan.to_dict()
     out["validate_limit"] = capped
     out["pipeline"] = resolved.canonical_id
+    out["approval_plan"] = _approval_plan(
+        "migrate",
+        migrate_write_argv(
+            resolved.canonical_id,
+            to_bronze,
+            schema,
+            mapper,
+            interval_start,
+            interval_end=interval_end,
+            from_raw=from_raw,
+            wire_version=wire_version,
+        ),
+    )
     out["note"] = (
         "Dry-run only — no bronze written. Apply with "
         f"`det migrate -p {resolved.canonical_id} --to-bronze {to_bronze} "
@@ -911,6 +967,31 @@ def check(
     base = _root(root)
     findings = check_project(base, pipeline=pipeline)
     return findings_payload(findings)
+
+
+def list_approvals(*, root: Path | None = None) -> dict[str, Any]:
+    """Unused, unexpired approval records (MCP never creates these files)."""
+    _prepare_tool()
+    from det.runtime.approval import list_unused_approvals
+
+    base = _root(root)
+    return {"project_root": str(base), "approvals": list_unused_approvals(base)}
+
+
+def describe_approval(approval_id: str, *, root: Path | None = None) -> dict[str, Any]:
+    """Load one approval record; expired is derived at read time."""
+    _prepare_tool()
+    from det.runtime.approval import ApprovalError, effective_status, load_approval
+
+    base = _root(root)
+    try:
+        record = dict(load_approval(base, approval_id))
+    except ApprovalError as exc:
+        if exc.code == "approval_not_found":
+            raise FileNotFoundError(str(exc)) from exc
+        raise
+    record["status"] = effective_status(record)
+    return record
 
 
 def summarize_runs(

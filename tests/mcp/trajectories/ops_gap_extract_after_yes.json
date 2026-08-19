@@ -1,0 +1,25 @@
+{
+  "id": "ops_gap_extract_after_yes",
+  "scenario": "ops_lake_gap",
+  "expect": [],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "diagnose_pipeline",
+          "arguments": {"pipeline": "noaa.storm_events"}
+        }
+      ]
+    },
+    {
+      "events": [
+        {"type": "user_approval"},
+        {
+          "type": "cli",
+          "argv": ["uv", "run", "det", "extract", "-p", "noaa.storm_events", "-s", "2026-08-06", "--approval", "apr_demo"]
+        }
+      ]
+    }
+  ]
+}

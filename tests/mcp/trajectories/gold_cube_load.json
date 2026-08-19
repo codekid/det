@@ -1,0 +1,20 @@
+{
+  "id": "gold_cube_load",
+  "scenario": "gold_metrics",
+  "expect": [],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "cube_meta"
+        },
+        {
+          "type": "mcp",
+          "name": "cube_load",
+          "arguments": {"cube": "yearly_damage"}
+        }
+      ]
+    }
+  ]
+}

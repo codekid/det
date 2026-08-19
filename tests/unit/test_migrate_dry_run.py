@@ -173,6 +173,9 @@ def test_mcp_migrate_dry_run_tool(project_root: Path, tmp_path: Path, monkeypatc
     assert out["ok"] is True
     assert out["rows_checked"] == 1
     assert out["validate_limit"] == 50
+    ap = out["approval_plan"]
+    assert ap["command"] == "migrate"
+    assert "--to-bronze" in ap["argv"]
     bronze_v2 = tmp_path / "lake" / "bronze" / "example_api" / "events_level"
     assert not bronze_v2.exists() or not any(bronze_v2.rglob("data.jsonl"))
 

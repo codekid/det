@@ -1,0 +1,34 @@
+{
+  "id": "migrate_chain_write",
+  "scenario": "migrate",
+  "expect": ["dry_run_then_write"],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "migrate_dry_run",
+          "arguments": {
+            "pipeline": "example_api.events",
+            "mapper": "identity"
+          }
+        },
+        {
+          "type": "cli",
+          "argv": [
+            "det",
+            "migrate",
+            "-p",
+            "example_api.events",
+            "--to-bronze",
+            "example_api.events_v1",
+            "--mapper",
+            "identity",
+            "-s",
+            "2026-08-06"
+          ]
+        }
+      ]
+    }
+  ]
+}

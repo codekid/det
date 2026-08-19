@@ -25,3 +25,4 @@ airflow/.env
 airflow/logs/*
 !airflow/logs/.gitkeep
 cube/.env
+.det/

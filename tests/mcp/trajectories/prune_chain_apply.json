@@ -1,0 +1,20 @@
+{
+  "id": "prune_chain_apply",
+  "scenario": "prune",
+  "expect": ["dry_run_then_write"],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "prune_dry_run",
+          "arguments": {"pipeline": "example_api.events", "keep": 1}
+        },
+        {
+          "type": "cli",
+          "argv": ["det", "prune", "-p", "example_api.events", "-s", "2026-08-06", "--keep", "1", "--apply"]
+        }
+      ]
+    }
+  ]
+}

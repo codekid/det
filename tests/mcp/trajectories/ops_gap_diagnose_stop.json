@@ -1,0 +1,16 @@
+{
+  "id": "ops_gap_diagnose_stop",
+  "scenario": "ops_lake_gap",
+  "expect": [],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "diagnose_pipeline",
+          "arguments": {"pipeline": "noaa.storm_events"}
+        }
+      ]
+    }
+  ]
+}
