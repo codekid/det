@@ -11,7 +11,7 @@ from dlt.sources.helpers.rest_client.paginators import JSONLinkPaginator
 
 from det.logging import get_logger
 from det.runtime.lake import LakeRef
-from det.sources.base import Interval, SourceRow
+from det.sources.base import Interval, SourceRow, mapper
 from det.sources.http_json import (
     dig,
     nest_under_path,
@@ -121,6 +121,7 @@ class ExampleApiSource:
                     yield SourceRow(data=dict(row), filename=Path(art["path"]).name)
 
 
+@mapper("example_api_v1_to_v2")
 def example_api_v1_to_v2(row: dict[str, Any]) -> dict[str, Any]:
     """Contract change for example_api: rename severity to level."""
     out = dict(row)

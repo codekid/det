@@ -47,8 +47,8 @@ CLI after the user confirms. Install: `uv pip install -e ".[mcp]"`.
 4. If drafting a new mapper from two schemas:
    - `mapper_from_diff_dry_run(from_schema, to_schema, mapper_name)`
    - Show `ops` + `code` + `register_hint` to the user
-   - After confirm: add the function next to the source plugin, `register_mapper` in
-     `src/det/plugins.py` (MCP never writes these files)
+   - After confirm: add the function next to the source plugin with `@mapper("…")`
+     (MCP never writes these files). Do not edit `plugins.py`.
 5. New target schema file: write under `schemas/…` (from
    `schema_from_sample_dry_run` or hand-authored), point pipeline / `--schema` at it.
 6. Preview loadability: `validate_sample` and/or **`migrate_dry_run`** with

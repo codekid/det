@@ -345,9 +345,12 @@ def _mapper_code(mapper_name: str, ops: list[dict[str, Any]]) -> str:
         "",
         "from typing import Any",
         "",
+        "from det.sources.base import mapper",
         "",
+        "",
+        f"@mapper({mapper_name!r})",
         f"def {mapper_name}(row: dict[str, Any]) -> dict[str, Any]:",
-        '    """Generated mapper stub — review before registering."""',
+        '    """Generated mapper stub — review before using with det migrate."""',
         "    out = dict(row)",
     ]
     for op in renames:
@@ -392,7 +395,7 @@ def mapper_from_diff_dry_run(
     ops = diff_schema_properties(from_doc, to_doc)
     code = _mapper_code(name, ops)
     register_hint = (
-        f'register_mapper("{name}", {name})  # in src/det/plugins.py after import'
+        f'@mapper("{name}")  # on the function in src/det/sources/<provider>/<source>.py'
     )
     return {
         "dry_run": True,
@@ -404,7 +407,7 @@ def mapper_from_diff_dry_run(
         "register_hint": register_hint,
         "note": (
             "Dry-run only — no file written. Review ops/code, add the function next to "
-            "the source plugin, register in plugins.py, then det migrate with --mapper "
+            "the source plugin with @mapper, then det migrate with --mapper "
             f"{name}."
         ),
     }

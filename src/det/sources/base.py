@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 from det.runtime.lake import LakeRef
+
+MAPPER_ATTR = "__det_mapper__"
+
+_F = TypeVar("_F", bound=Callable[..., Any])
 
 
 @dataclass
@@ -57,6 +61,18 @@ class SourcePlugin(Protocol):
     ) -> Iterator[SourceRow]:
         """Parse data/ artifacts into source-native rows (no naming; runtime coerces)."""
         ...
+
+
+def mapper(name: str) -> Callable[[_F], _F]:
+    """Mark a migrate function for discovery (same module as the source plugin)."""
+    if not name or not isinstance(name, str):
+        raise ValueError(f"mapper name must be a non-empty string, got {name!r}")
+
+    def deco(fn: _F) -> _F:
+        setattr(fn, MAPPER_ATTR, name)
+        return fn
+
+    return deco
 
 
 def merge_source_config(defaults: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
