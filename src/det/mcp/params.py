@@ -255,3 +255,7 @@ CubeFiltersOpt = Annotated[
     list[dict[str, Any]] | None,
     Field(description="Optional Cube REST filters list (member, operator, values)"),
 ]
+ApprovalId = Annotated[
+    str,
+    Field(description="Approval id from `det approve` (apr_ + 16 hex chars)"),
+]

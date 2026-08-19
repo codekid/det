@@ -1,0 +1,20 @@
+{
+  "id": "new_source_list_then_init_dry_run",
+  "scenario": "new_source",
+  "expect": [],
+  "turns": [
+    {
+      "events": [
+        {"type": "mcp", "name": "list_sources"},
+        {
+          "type": "mcp",
+          "name": "init_pipeline_dry_run",
+          "arguments": {
+            "name": "demo.echo",
+            "source_type": "demo.echo"
+          }
+        }
+      ]
+    }
+  ]
+}

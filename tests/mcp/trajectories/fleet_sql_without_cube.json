@@ -1,0 +1,19 @@
+{
+  "id": "fleet_sql_without_cube",
+  "scenario": "fleet_metrics",
+  "expect": ["metrics_without_cube"],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "query_analytics",
+          "arguments": {
+            "warehouse": "ops",
+            "sql": "SELECT pipeline, avg(duration_ms) AS p95_ms FROM ops.det__ops_run_daily GROUP BY 1"
+          }
+        }
+      ]
+    }
+  ]
+}

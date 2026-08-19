@@ -1,0 +1,16 @@
+{
+  "id": "fleet_cube_load",
+  "scenario": "fleet_metrics",
+  "expect": [],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "cube_load",
+          "arguments": {"cube": "run_daily"}
+        }
+      ]
+    }
+  ]
+}

@@ -19,12 +19,14 @@ app = typer.Typer(
 logger = get_logger(__name__)
 
 _PIPELINE_HELP = (
-    "Pipeline ref: canonical id (noaa.storm_events), slash form, "
-    "or YAML path under the project"
+    "Pipeline ref: canonical id (noaa.storm_events), slash form, or YAML path under the project"
 )
-_PROJECT_ROOT_HELP = (
-    "Project root (default: DET_PROJECT_ROOT env, else cwd)"
+_PROJECT_ROOT_HELP = "Project root (default: DET_PROJECT_ROOT env, else cwd)"
+_APPROVAL_HELP = (
+    "Id from `det approve` (apr_…). Validated whenever passed; required when "
+    "DET_REQUIRE_APPROVAL=1 or --require-approval"
 )
+_REQUIRE_APPROVAL_HELP = "Fail unless --approval is set (same as DET_REQUIRE_APPROVAL=1)"
 
 
 @app.callback()
@@ -102,6 +104,40 @@ def _analytics_exclude(select: list[str] | None) -> list[str] | None:
     return analytics_exclude(select)
 
 
+def _gate_approval(
+    root: Path,
+    command: str,
+    argv: list[str],
+    approval: str | None,
+    require_approval: bool,
+) -> None:
+    from det.runtime.approval import ApprovalError, check_approval, require_approvals_enabled
+
+    try:
+        check_approval(
+            root,
+            command,
+            argv,
+            approval,
+            require=require_approval or require_approvals_enabled(),
+        )
+    except ApprovalError as exc:
+        typer.echo(f"{exc.code}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+def _consume_approval(root: Path, approval: str | None) -> None:
+    if not approval:
+        return
+    from det.runtime.approval import ApprovalError, consume_approval
+
+    try:
+        consume_approval(root, approval)
+    except ApprovalError as exc:
+        typer.echo(f"{exc.code}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
 @app.command("extract")
 def extract_raw(
     pipeline: str = typer.Option(..., "--pipeline", "-p", help=_PIPELINE_HELP),
@@ -114,12 +150,22 @@ def extract_raw(
         "--lock-ttl-sec",
         help="Lake lease TTL in seconds (default: DET_LOCK_TTL_SEC or 7200)",
     ),
+    approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Source → raw data/ + format check + meta/manifest.json."""
+    from det.runtime.approval import extract_write_argv
     from det.runtime.lease import LeaseHeldError
     from det.runtime.runner import PipelineRunner
 
     root = _project_root(project_root)
+    _gate_approval(
+        root,
+        "extract",
+        extract_write_argv(pipeline, interval_start, interval_end),
+        approval,
+        require_approval,
+    )
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
     try:
@@ -133,9 +179,9 @@ def extract_raw(
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
+    _consume_approval(root, approval)
     typer.echo(
-        f"OK extract pipeline={result.pipeline} artifacts={result.artifacts} "
-        f"raw={result.raw_dir}"
+        f"OK extract pipeline={result.pipeline} artifacts={result.artifacts} raw={result.raw_dir}"
     )
 
 
@@ -156,12 +202,22 @@ def load_bronze(
         "--lock-ttl-sec",
         help="Lake lease TTL in seconds (default: DET_LOCK_TTL_SEC or 7200)",
     ),
+    approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Raw data/ → snake_case naming → JSON Schema → bronze."""
+    from det.runtime.approval import load_write_argv
     from det.runtime.lease import LeaseHeldError
     from det.runtime.runner import PipelineRunner
 
     root = _project_root(project_root)
+    _gate_approval(
+        root,
+        "load",
+        load_write_argv(pipeline, interval_start, interval_end, extract_run_datetime),
+        approval,
+        require_approval,
+    )
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
     try:
@@ -176,9 +232,9 @@ def load_bronze(
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
+    _consume_approval(root, approval)
     typer.echo(
-        f"OK load pipeline={result.pipeline} rows={result.rows} "
-        f"partition={result.partition_dir}"
+        f"OK load pipeline={result.pipeline} rows={result.rows} partition={result.partition_dir}"
     )
 
 
@@ -194,12 +250,22 @@ def run_pipeline(
         "--lock-ttl-sec",
         help="Lake lease TTL in seconds (default: DET_LOCK_TTL_SEC or 7200)",
     ),
+    approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """extract then load with one shared run-start stamp."""
+    from det.runtime.approval import run_write_argv
     from det.runtime.lease import LeaseHeldError
     from det.runtime.runner import PipelineRunner
 
     root = _project_root(project_root)
+    _gate_approval(
+        root,
+        "run",
+        run_write_argv(pipeline, interval_start, interval_end),
+        approval,
+        require_approval,
+    )
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
     print("det: run starting…", file=sys.stderr, flush=True)
@@ -214,10 +280,8 @@ def run_pipeline(
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
-    typer.echo(
-        f"OK pipeline={result.pipeline} rows={result.rows} "
-        f"partition={result.partition_dir}"
-    )
+    _consume_approval(root, approval)
+    typer.echo(f"OK pipeline={result.pipeline} rows={result.rows} partition={result.partition_dir}")
 
 
 @app.command("migrate")
@@ -257,13 +321,33 @@ def migrate_bronze(
         "--lock-ttl-sec",
         help="Lake lease TTL in seconds (default: DET_LOCK_TTL_SEC or 7200)",
     ),
+    approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Rebuild bronze from raw data/ for an interval."""
+    from det.runtime.approval import migrate_write_argv
     from det.runtime.lease import LeaseHeldError
     from det.runtime.migrate import BronzeMigrator, MigratePlan
 
     start, end = _resolve_interval(interval_start, interval_end)
     root = _project_root(project_root)
+    if not dry_run:
+        _gate_approval(
+            root,
+            "migrate",
+            migrate_write_argv(
+                pipeline,
+                to_bronze,
+                str(schema),
+                mapper,
+                interval_start,
+                interval_end=interval_end,
+                from_raw=from_raw,
+                wire_version=wire_version,
+            ),
+            approval,
+            require_approval,
+        )
     resolved = _resolve_pipeline(pipeline, root)
     if validate_limit is not None and not dry_run:
         raise typer.BadParameter(
@@ -313,6 +397,7 @@ def migrate_bronze(
         if not result.ok:
             raise typer.Exit(code=1)
         return
+    _consume_approval(root, approval)
     typer.echo(
         f"OK migrate {result.from_raw} -> {result.to_bronze} "
         f"partitions={result.partitions} rows={result.rows}"
@@ -362,8 +447,11 @@ def dbt_cmd(
     ),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     set_: list[str] = typer.Option([], "--set"),
+    approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Run dbt (build/run/test) for local testing. Requires the optional [dbt] extra."""
+    from det.runtime.approval import dbt_write_argv
     from det.runtime.dbt_runner import DbtNotInstalledError, run_dbt
 
     if command not in {"build", "run", "test"}:
@@ -373,6 +461,14 @@ def dbt_cmd(
         )
 
     root = _project_root(project_root)
+    if not dry_run:
+        _gate_approval(
+            root,
+            "dbt",
+            dbt_write_argv(pipeline, command=command, select=select or None),
+            approval,
+            require_approval,
+        )
     pipe = None
     if pipeline is not None:
         pipe = _resolve_pipeline(pipeline, root).path
@@ -419,6 +515,7 @@ def dbt_cmd(
         return
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
+    _consume_approval(root, approval)
     typer.echo(f"OK dbt finished exit={result.returncode}")
 
 
@@ -457,8 +554,11 @@ def init_pipeline_cmd(
     force: bool = typer.Option(False, "--force"),
     dry_run: bool = typer.Option(False, "--dry-run"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+    approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Create pipeline YAML + minimal schema + scaffold-dbt models."""
+    from det.runtime.approval import init_pipeline_write_argv
     from det.scaffold.init_pipeline import init_pipeline
 
     if destination_type not in {"filesystem", "duckdb", "postgres", "iceberg"}:
@@ -467,6 +567,21 @@ def init_pipeline_cmd(
             param_hint="--destination-type",
         )
     root = _project_root(project_root)
+    if not dry_run:
+        _gate_approval(
+            root,
+            "init-pipeline",
+            init_pipeline_write_argv(
+                name,
+                source_type,
+                destination_type=destination_type,
+                connection=connection,
+                lake_path=lake_path,
+                skip_dbt=skip_dbt,
+            ),
+            approval,
+            require_approval,
+        )
     try:
         result = init_pipeline(
             name=name,
@@ -483,6 +598,8 @@ def init_pipeline_cmd(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
+    if not dry_run:
+        _consume_approval(root, approval)
     mode = "DRY-RUN" if dry_run else "OK"
     typer.echo(f"{mode} init-pipeline name={result.name}")
     for action in result.actions:
@@ -509,19 +626,30 @@ def scaffold_dbt_cmd(
     ),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     set_: list[str] = typer.Option([], "--set"),
+    approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Generate dbt source + stg + silver from a pipeline schema (gold is hand-written)."""
+    from det.runtime.approval import scaffold_dbt_write_argv
     from det.runtime.config import load_pipeline_config
     from det.scaffold.dbt import scaffold_dbt
 
     root = _project_root(project_root)
+    if not dry_run:
+        _gate_approval(
+            root,
+            "scaffold-dbt",
+            scaffold_dbt_write_argv(pipeline, force=force),
+            approval,
+            require_approval,
+        )
     resolved = _resolve_pipeline(pipeline, root)
     config = load_pipeline_config(resolved.path, overrides=set_)
     from det.scaffold.view_warn import collect_view_size_warnings
 
-    result = scaffold_dbt(
-        config, project_root=root, force=force, dry_run=dry_run, warn=False
-    )
+    result = scaffold_dbt(config, project_root=root, force=force, dry_run=dry_run, warn=False)
+    if not dry_run:
+        _consume_approval(root, approval)
     mode = "DRY-RUN" if dry_run else "OK"
     typer.echo(f"{mode} scaffold-dbt dataset={result.dataset}")
     for action in result.actions:
@@ -554,8 +682,11 @@ def prune_bronze(
         "--lock-ttl-sec",
         help="Lake lease TTL in seconds (default: DET_LOCK_TTL_SEC or 7200)",
     ),
+    approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Delete old bronze extract runs. Never touches raw/. Requires --dry-run or --apply."""
+    from det.runtime.approval import prune_write_argv
     from det.runtime.config import load_pipeline_config
     from det.runtime.lease import LeaseHeldError
     from det.runtime.prune import BronzePruner
@@ -569,6 +700,19 @@ def prune_bronze(
         raise typer.BadParameter("--keep must be >= 1", param_hint="--keep")
 
     root = _project_root(project_root)
+    if apply:
+        _gate_approval(
+            root,
+            "prune",
+            prune_write_argv(
+                pipeline,
+                interval_start,
+                interval_end=interval_end,
+                keep=keep,
+            ),
+            approval,
+            require_approval,
+        )
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
     config = load_pipeline_config(resolved.path, overrides=set_)
@@ -581,8 +725,7 @@ def prune_bronze(
     )
     if dry_run:
         typer.echo(
-            f"DRY-RUN prune pipeline={config.name} keep={keep} "
-            f"would_remove={plan.remove_count}"
+            f"DRY-RUN prune pipeline={config.name} keep={keep} would_remove={plan.remove_count}"
         )
         for ref in plan.to_remove:
             loc = str(ref.path) if ref.path is not None else "duckdb"
@@ -603,9 +746,8 @@ def prune_bronze(
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
-    typer.echo(
-        f"OK prune pipeline={config.name} keep={keep} removed={removed}"
-    )
+    _consume_approval(root, approval)
+    typer.echo(f"OK prune pipeline={config.name} keep={keep} removed={removed}")
 
 
 def _format_duration(value: object) -> str:
@@ -648,12 +790,9 @@ def _truncate(value: object, width: int) -> str:
     return text[: max(1, width - 1)] + "…"
 
 
-def _table_widths(
-    headers: tuple[str, ...], rows: list[tuple[str, ...]]
-) -> tuple[int, ...]:
+def _table_widths(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> tuple[int, ...]:
     return tuple(
-        max(len(header), *(len(row[index]) for row in rows))
-        for index, header in enumerate(headers)
+        max(len(header), *(len(row[index]) for row in rows)) for index, header in enumerate(headers)
     )
 
 
@@ -750,15 +889,9 @@ def _print_run_summary(
         error_codes = group.get("error_codes")
         codes = ""
         if isinstance(error_codes, dict):
-            codes = ", ".join(
-                f"{name}×{count}" for name, count in sorted(error_codes.items())
-            )
+            codes = ", ".join(f"{name}×{count}" for name, count in sorted(error_codes.items()))
         rows_value = group.get("rows")
-        shown_rows = (
-            "-"
-            if group.get("command") == "extract"
-            else f"{int(rows_value or 0):,}"
-        )
+        shown_rows = "-" if group.get("command") == "extract" else f"{int(rows_value or 0):,}"
         values += (
             f"{int(group.get('attempts') or 0):,}",
             f"{int(group.get('ok') or 0):,}",
@@ -803,9 +936,7 @@ def runs_cmd(
     ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON"),
     lake_path: str | None = typer.Option(None, "--lake-path"),
-    project_root: Path | None = typer.Option(
-        None, "--project-root", help=_PROJECT_ROOT_HELP
-    ),
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
 ) -> None:
     """List extract/load run receipts (observability). Manifest stays the data authority."""
     import json
@@ -853,9 +984,7 @@ def runs_cmd(
     if summary:
         groups = payload.get("groups") or []
         if not groups:
-            typer.echo(
-                f"(no receipts in {payload.get('since')}..{payload.get('until')})"
-            )
+            typer.echo(f"(no receipts in {payload.get('since')}..{payload.get('until')})")
             return
         _print_run_summary(payload, include_pipeline=pipe_id is None)
         return
@@ -880,9 +1009,7 @@ def runs_materialize_cmd(
         help="Attempt-date window end, exclusive (default: tomorrow UTC).",
     ),
     lake_path: str | None = typer.Option(None, "--lake-path"),
-    project_root: Path | None = typer.Option(
-        None, "--project-root", help=_PROJECT_ROOT_HELP
-    ),
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
 ) -> None:
     """Project ``{lake}/runs/`` JSON into Iceberg ``ops.run_receipts`` (replace-by-day)."""
     from det.runtime.lake import open_lake, pick_lake_spec
@@ -958,9 +1085,12 @@ def lock_release(
     force: bool = typer.Option(False, "--force", help="Required to delete a live lease"),
     lake_path: str | None = typer.Option(None, "--lake-path"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+    approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Force-delete a lake lease. Kill the worker first or you can dual-insert."""
     from det.destinations.models import lake_root
+    from det.runtime.approval import lock_release_write_argv
     from det.runtime.config import load_pipeline_config
     from det.runtime.lease import force_release_lock, lock_path, read_lock
 
@@ -968,6 +1098,13 @@ def lock_release(
         raise typer.BadParameter("--force is required to delete a lock", param_hint="--force")
 
     root = _project_root(project_root)
+    _gate_approval(
+        root,
+        "lock-release",
+        lock_release_write_argv(pipeline, interval_start, interval_end),
+        approval,
+        require_approval,
+    )
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
     config = load_pipeline_config(resolved.path)
@@ -979,6 +1116,7 @@ def lock_release(
     )
     held = read_lock(path)
     if held is None:
+        _consume_approval(root, approval)
         typer.echo(f"no lock path={path}")
         return
     typer.echo(
@@ -986,7 +1124,124 @@ def lock_release(
         err=True,
     )
     force_release_lock(path)
+    _consume_approval(root, approval)
     typer.echo(f"OK lock-release path={path}")
+
+
+@app.command("approve")
+def approve_cmd(
+    plan: Path | None = typer.Option(
+        None,
+        "--plan",
+        help="JSON file from MCP approval_plan or a dry-run payload containing it",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    command: str | None = typer.Option(
+        None, "--command", help="Writing verb (extract, prune, migrate, …)"
+    ),
+    argv_json: str | None = typer.Option(
+        None,
+        "--argv-json",
+        help="JSON list of canonical argv after `det` (no --approval)",
+    ),
+    approved_by: str | None = typer.Option(
+        None,
+        "--approved-by",
+        help="Who approved (or set DET_APPROVED_BY); required, not inferred from git",
+    ),
+    ttl_sec: int | None = typer.Option(
+        None,
+        "--ttl-sec",
+        help="Override DET_APPROVAL_TTL_SEC (default 3600)",
+    ),
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+) -> None:
+    """Create a single-use approval record for a later writing CLI command."""
+    import json
+
+    from det.runtime.approval import (
+        ApprovalError,
+        approved_by_from_env,
+        create_approval,
+        make_plan,
+        plan_from_mapping,
+    )
+
+    root = _project_root(project_root)
+    who = (approved_by or approved_by_from_env() or "").strip()
+    try:
+        if plan is not None:
+            if command is not None or argv_json is not None:
+                raise typer.BadParameter(
+                    "use --plan or --command/--argv-json, not both",
+                    param_hint="--plan",
+                )
+            doc = json.loads(plan.read_text(encoding="utf-8"))
+            if not isinstance(doc, dict):
+                raise typer.BadParameter("--plan must be a JSON object", param_hint="--plan")
+            stub = plan_from_mapping(doc)
+        else:
+            if not command or argv_json is None:
+                raise typer.BadParameter(
+                    "need --plan or both --command and --argv-json",
+                    param_hint="--command",
+                )
+            parsed = json.loads(argv_json)
+            if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+                raise typer.BadParameter(
+                    "--argv-json must be a JSON list of strings",
+                    param_hint="--argv-json",
+                )
+            stub = make_plan(command, parsed)
+        record = create_approval(
+            root,
+            command=stub.command,
+            argv=stub.argv,
+            approved_by=who,
+            ttl_sec=ttl_sec,
+        )
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(f"invalid JSON: {exc}") from exc
+    except ApprovalError as exc:
+        typer.echo(f"{exc.code}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(json.dumps(record, indent=2))
+
+
+@app.command("approval-show")
+def approval_show_cmd(
+    approval_id: str = typer.Argument(..., help="Approval id (apr_…)"),
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+) -> None:
+    """Print one approval record (expired status is derived at read time)."""
+    import json
+
+    from det.runtime.approval import ApprovalError, effective_status, load_approval
+
+    root = _project_root(project_root)
+    try:
+        record = dict(load_approval(root, approval_id))
+        record["status"] = effective_status(record)
+    except ApprovalError as exc:
+        typer.echo(f"{exc.code}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(json.dumps(record, indent=2))
+
+
+@app.command("list-approvals")
+def list_approvals_cmd(
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+) -> None:
+    """List unused, unexpired approvals under .det/approvals/."""
+    import json
+
+    from det.runtime.approval import list_unused_approvals
+
+    root = _project_root(project_root)
+    records = list_unused_approvals(root)
+    typer.echo(json.dumps({"approvals": records}, indent=2))
 
 
 @app.command("check")
@@ -1010,6 +1265,7 @@ def check_cmd(
 
     from det.runtime.check import (
         check_project,
+        findings_payload,
         format_findings,
         has_errors,
         has_warnings,
@@ -1018,19 +1274,7 @@ def check_cmd(
     root = _project_root(project_root)
     findings = check_project(root, pipeline=pipeline)
     if as_json:
-        typer.echo(
-            json.dumps(
-                {
-                    "ok": not has_errors(findings),
-                    "error_count": sum(1 for f in findings if f.severity == "error"),
-                    "warning_count": sum(
-                        1 for f in findings if f.severity == "warning"
-                    ),
-                    "findings": [f.to_dict() for f in findings],
-                },
-                indent=2,
-            )
-        )
+        typer.echo(json.dumps(findings_payload(findings), indent=2))
     else:
         typer.echo(format_findings(findings))
     if has_errors(findings):

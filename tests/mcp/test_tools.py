@@ -11,6 +11,7 @@ from det.mcp.tools import (
     check,
     describe_pipeline,
     init_pipeline_dry_run,
+    list_approvals,
     list_bronze_partitions,
     list_pipelines,
     list_raw_partitions,
@@ -138,6 +139,12 @@ def test_prune_dry_run_smoke(tmp_path: Path):
     )
     assert plan["remove_count"] == 2
     assert all(d.exists() for d in dirs)
+    ap = plan["approval_plan"]
+    assert ap["command"] == "prune"
+    assert ap["argv"][:3] == ["prune", "-p", "example_api.events"]
+    assert "--apply" in ap["argv"]
+    assert len(ap["plan_digest"]) == 64
+    assert "det approve" in ap["note"]
 
 
 def test_scaffold_and_init_dry_run(tmp_path: Path):
@@ -151,6 +158,7 @@ def test_scaffold_and_init_dry_run(tmp_path: Path):
     assert scaffold["actions"]
     assert any(a["path"].endswith("ops_slo_expected.csv") for a in scaffold["actions"])
     assert not (tmp_path / "dbt" / "models" / "silver" / "stg_example_api__events.sql").exists()
+    assert scaffold["approval_plan"]["command"] == "scaffold-dbt"
 
     init = init_pipeline_dry_run(
         "example_api.events",
@@ -160,6 +168,8 @@ def test_scaffold_and_init_dry_run(tmp_path: Path):
     )
     assert init["dry_run"] is True
     assert init["name"] == "example_api.events"
+    assert init["approval_plan"]["command"] == "init-pipeline"
+    assert "--skip-dbt" in init["approval_plan"]["argv"]
 
 
 def test_read_manifest_rejects_escape(tmp_path: Path):
@@ -275,3 +285,9 @@ def test_check_missing_schema(tmp_path: Path):
     payload = check("example_api.events", root=tmp_path)
     assert payload["ok"] is False
     assert any(f["code"] == "missing_schema" for f in payload["findings"])
+
+
+def test_list_approvals_empty_on_tmp_root(tmp_path: Path):
+    listed = list_approvals(root=tmp_path)
+    assert listed["approvals"] == []
+    assert listed["project_root"] == str(tmp_path.resolve())

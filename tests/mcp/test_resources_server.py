@@ -56,6 +56,8 @@ def test_create_server_registers_tools():
         "query_analytics",
         "cube_meta",
         "cube_load",
+        "list_approvals",
+        "describe_approval",
     ):
         assert expected in names
 

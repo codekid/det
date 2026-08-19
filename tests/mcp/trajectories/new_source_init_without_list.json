@@ -1,0 +1,19 @@
+{
+  "id": "new_source_init_without_list",
+  "scenario": "new_source",
+  "expect": ["missing_inspect"],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "init_pipeline_dry_run",
+          "arguments": {
+            "name": "demo.echo",
+            "source_type": "demo.echo"
+          }
+        }
+      ]
+    }
+  ]
+}

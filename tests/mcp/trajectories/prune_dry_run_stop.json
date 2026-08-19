@@ -1,0 +1,16 @@
+{
+  "id": "prune_dry_run_stop",
+  "scenario": "prune",
+  "expect": [],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "prune_dry_run",
+          "arguments": {"pipeline": "example_api.events", "keep": 1}
+        }
+      ]
+    }
+  ]
+}

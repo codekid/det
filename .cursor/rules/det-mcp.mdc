@@ -20,8 +20,12 @@ plans, or scaffold/dbt previews.
 `describe_airflow_det_env`, `preview_backfill_conf`, `migrate_dry_run`,
 `list_runs`, `summarize_runs`,
 `prune_dry_run`, `dbt_dry_run`, `scaffold_dbt_dry_run`, `init_pipeline_dry_run`,
+`list_approvals`, `describe_approval`,
 `det://` resources, and prompts `det_ops` / `det_new_source` / `det_migrate` /
 `det_dbt` / `det_airflow` (skill playbooks).
+
+Dry-runs that preview a write include `approval_plan` (`command`, `argv`,
+`plan_digest`). MCP never creates `.det/approvals/` files — that is `det approve`.
 
 Sample size for `sample_*` / `validate_sample` / `schema_from_sample_dry_run` is
 `limit` (default **5** for sample/validate, up to **50**). `diagnose_pipeline`
@@ -58,13 +62,14 @@ Paths are sandboxed under `DET_PROJECT_ROOT` (default cwd / project root).
 | Draft migrate mapper | MCP `mapper_from_diff_dry_run` then register + `det migrate` |
 | Airflow health / DAG runs | MCP `airflow_health` / `list_airflow_dags` / `list_airflow_dag_runs` |
 | Preview backfill conf | MCP `preview_backfill_conf` then Compose/CLI trigger if approved |
-| Preview migrate | MCP `migrate_dry_run` then **ask user**; only then CLI `det migrate` (no `--dry-run`) |
-| Preview prune | MCP `prune_dry_run` then **ask user**; only then CLI `--apply` |
-| Preview dbt/scaffold | MCP `*_dry_run` then **ask user**; only then CLI without `--dry-run` |
+| Preview migrate | MCP `migrate_dry_run` then **ask user**; `det approve`; later CLI `det migrate --approval` |
+| Preview prune | MCP `prune_dry_run` then **ask user**; `det approve`; later CLI `--apply --approval` |
+| Preview dbt/scaffold | MCP `*_dry_run` then **ask user**; `det approve`; later CLI `--approval` without `--dry-run` |
 | Mutating extract/load / DagRun trigger | CLI / Airflow UI only — after explicit user approval |
 
 **Agent rule:** never chain a dry-run preview into a writing CLI command in the same
-turn. Show the plan/result and wait for the user to approve the apply.
+turn. Show the plan/result and wait for the user to approve. Operator: `det approve`.
+Agent write (later turn): `--approval <id>` when required.
 
 Source plugins are discovered from `src/det/sources/<provider>/<source>.py` (`name`
 must match). Do not register them in `plugins.py`. Migrate mappers use `@mapper` on

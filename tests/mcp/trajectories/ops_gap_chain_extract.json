@@ -1,0 +1,20 @@
+{
+  "id": "ops_gap_chain_extract",
+  "scenario": "ops_lake_gap",
+  "expect": ["dry_run_then_write"],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "diagnose_pipeline",
+          "arguments": {"pipeline": "noaa.storm_events"}
+        },
+        {
+          "type": "cli",
+          "argv": ["det", "extract", "-p", "noaa.storm_events", "-s", "2026-08-06"]
+        }
+      ]
+    }
+  ]
+}

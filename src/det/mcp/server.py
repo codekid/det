@@ -39,6 +39,9 @@ def create_server():
             "Certified metrics: cube_meta / cube_load (Cube Core; make cube-up). "
             "This-run receipts: list_runs; fleet: cube_load run_daily or "
             "query_analytics warehouse=ops. "
+            "Dry-runs that preview a write include approval_plan (command, argv, "
+            "plan_digest). Operator: det approve --plan; agent writes later with "
+            "--approval. Inspect unused records: list_approvals / describe_approval. "
             "Prompts det_ops / det_new_source / det_migrate / det_dbt / det_airflow "
             "load .cursor/skills playbooks. "
             "dlt is extraction only — never suggest dlt.pipeline for landing."
@@ -423,6 +426,16 @@ def create_server():
         Use after editing configs/pipelines or schemas. Never writes; not extract/load.
         """
         return t.check(pipeline)
+
+    @mcp.tool()
+    def list_approvals() -> dict[str, Any]:
+        """List unused, unexpired approval files under .det/approvals/. Never creates them."""
+        return t.list_approvals()
+
+    @mcp.tool()
+    def describe_approval(approval_id: p.ApprovalId) -> dict[str, Any]:
+        """Read one approval record by id (apr_…). Expired status is derived at read time."""
+        return t.describe_approval(approval_id)
 
     pr.register_skill_prompts(mcp)
 

@@ -1,0 +1,19 @@
+{
+  "id": "gold_invented_sql",
+  "scenario": "gold_metrics",
+  "expect": ["metrics_without_cube"],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "query_analytics",
+          "arguments": {
+            "warehouse": "analytics",
+            "sql": "SELECT event_year, sum(property_damage) FROM gold.gold_yearly_damage GROUP BY 1"
+          }
+        }
+      ]
+    }
+  ]
+}

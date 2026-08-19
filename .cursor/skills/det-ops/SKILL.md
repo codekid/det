@@ -10,8 +10,9 @@ description: >-
 # DET ops workflows
 
 Prefer the **det** MCP server (read-only + dry-run). Mutating steps use the `det` CLI
-**only after the user explicitly confirms.** Never chain dry-run → apply/write in the
-same turn (migrate, prune `--apply`, non-dry-run scaffold/init, extract/load/run).
+**only after the user explicitly confirms**, then `det approve`, then a later turn
+with `--approval <id>`. Never chain dry-run → apply/write in the same turn (migrate,
+prune `--apply`, non-dry-run scaffold/init, extract/load/run).
 Install: `uv pip install -e ".[mcp]"`.
 
 ## Debug missing raw / bronze gaps
@@ -142,7 +143,10 @@ value, do not paste it into YAML.
    Iceberg bronze (`type: iceberg`) is a Hadoop-style catalog on `DET_LAKE_PATH`
    (install `.[iceberg]`). BigQuery can register that table later as a reader;
    it is not a DET destination.
-4. Apply only via CLI when approved: `det prune -p … -s … --keep N --apply`.
+4. Dry-run payloads include `approval_plan`. After the user confirms, they run
+   `det approve --plan <json> --approved-by <id>` (or `--command` / `--argv-json`).
+   Apply in a **later** turn: `det prune -p … -s … --keep N --apply --approval apr_…`.
+   `DET_REQUIRE_APPROVAL=1` (or `--require-approval`) makes `--approval` mandatory.
 
 ## Scaffold / init from pipeline
 
@@ -173,3 +177,5 @@ value, do not paste it into YAML.
 
 - Do not call extract/load/prune-apply through MCP (not exposed in v1).
 - Do not suggest `dlt.pipeline` for landing.
+- After a dry-run, wait for the operator to `det approve`. Writing CLI belongs in a
+  later turn and must pass `--approval` when `DET_REQUIRE_APPROVAL=1`.

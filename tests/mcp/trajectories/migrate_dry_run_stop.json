@@ -1,0 +1,19 @@
+{
+  "id": "migrate_dry_run_stop",
+  "scenario": "migrate",
+  "expect": [],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "migrate_dry_run",
+          "arguments": {
+            "pipeline": "example_api.events",
+            "mapper": "example_api_v1_to_v2"
+          }
+        }
+      ]
+    }
+  ]
+}
