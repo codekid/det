@@ -8,6 +8,7 @@ import yaml
 from det.logging import get_logger
 from det.plugins import load_plugins
 from det.runtime.config import load_pipeline_config
+from det.runtime.discovery import PluginLoadError
 from det.runtime.ids import (
     default_schema_path,
     fs_dataset_parts,
@@ -15,7 +16,7 @@ from det.runtime.ids import (
     validate_canonical_id,
 )
 from det.runtime.lake import DEFAULT_LAKE_REL
-from det.runtime.registry import list_sources
+from det.runtime.registry import get_source, list_sources
 from det.runtime.secrets import looks_like_passwordful_uri, looks_like_secret_name
 from det.scaffold.dbt import ScaffoldAction, ScaffoldResult, scaffold_dbt
 
@@ -93,6 +94,10 @@ def init_pipeline(
         raise ValueError(
             f"Unknown source type {source_type!r}. Registered: {sorted(known)}"
         )
+    try:
+        get_source(source_type)
+    except PluginLoadError as exc:
+        raise ValueError(str(exc)) from exc
 
     root = project_root.resolve()
     provider, source_name = parse_canonical_id(name)

@@ -50,6 +50,12 @@ mcp = [
 det = "det.cli:app"
 det-mcp = "det.mcp.server:main"
 
+# In-tree sources/mappers are discovered from det.sources.<provider>.<source>.
+# Out-of-tree packages only — do not list in-tree plugins here.
+[project.entry-points."det.sources"]
+
+[project.entry-points."det.mappers"]
+
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"

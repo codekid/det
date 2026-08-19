@@ -23,3 +23,15 @@ def test_refresh_reloads_manifest_and_reregisters_plugins():
     assert callable(stamp_validation_success)
     assert BronzeMigrator is not None
     assert "example_api.events" in list_sources()
+
+
+def test_refresh_evicts_plugin_modules_not_helpers():
+    import det.sources.http  # noqa: F401
+    from det.runtime.registry import get_source
+
+    get_source("example_api.events")
+    assert "det.sources.example_api.events" in sys.modules
+    refresh_det_runtime()
+    assert "det.sources.example_api.events" not in sys.modules
+    assert "det.sources.http" in sys.modules
+    assert "example_api.events" in list_sources()

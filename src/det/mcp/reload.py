@@ -20,16 +20,17 @@ _RELOAD_MODULES: Final[tuple[str, ...]] = (
 
 def refresh_det_runtime() -> None:
     """
-    Clear plugin registries, reload hot modules, and re-register plugins.
+    Evict discovered source modules, clear registries, reload hot modules,
+    and re-register builtins.
 
     Safe to call at the start of each MCP tool. Keeps registry / plugins /
     config class identity stable for in-process callers.
     """
-    reg = sys.modules.get("det.runtime.registry")
-    if reg is not None:
-        getattr(reg, "_SOURCE_REGISTRY").clear()
-        getattr(reg, "_INGESTION_REGISTRY").clear()
-        getattr(reg, "_MAPPER_REGISTRY").clear()
+    from det.runtime.discovery import evict_in_tree_plugin_modules
+    from det.runtime.registry import clear_registries
+
+    evict_in_tree_plugin_modules()
+    clear_registries()
 
     plugs = sys.modules.get("det.plugins")
     if plugs is not None:

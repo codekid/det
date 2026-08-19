@@ -177,7 +177,9 @@ def test_mapper_from_diff_rename(tmp_path: Path):
     assert ops_by["rename"]["to"] == "level"
     assert "def example_api_v1_to_v2" in out["code"]
     assert "severity" in out["code"] and "level" in out["code"]
-    assert "register_mapper" in out["register_hint"]
+    assert "@mapper" in out["register_hint"]
+    assert "register_mapper" not in out["register_hint"]
+    assert "@mapper" in out["code"]
     assert not (tmp_path / "src").exists()
 
 

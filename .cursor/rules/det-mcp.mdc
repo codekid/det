@@ -55,6 +55,10 @@ Paths are sandboxed under `DET_PROJECT_ROOT` (default cwd / project root).
 **Agent rule:** never chain a dry-run preview into a writing CLI command in the same
 turn. Show the plan/result and wait for the user to approve the apply.
 
+Source plugins are discovered from `src/det/sources/<provider>/<source>.py` (`name`
+must match). Do not register them in `plugins.py`. Migrate mappers use `@mapper` on
+the function in that module.
+
 ## dlt boundaries
 
 dlt is extraction tooling only. Never suggest `dlt.pipeline` / `pipeline.run` for

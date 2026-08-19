@@ -11,13 +11,14 @@ from typing import Any, Literal
 
 from det.plugins import load_plugins
 from det.runtime.config import load_pipeline_config, resolve_path
+from det.runtime.discovery import PluginLoadError
 from det.runtime.ids import dbt_model_slug
 from det.runtime.pipelines import (
     discover_pipeline_files,
     resolve_pipeline_ref,
     resolve_project_root,
 )
-from det.runtime.registry import list_sources
+from det.runtime.registry import get_source, list_sources
 from det.runtime.secrets import looks_like_passwordful_uri, uri_has_userinfo
 from det.validation.jsonschema_validator import load_json_schema
 
@@ -141,6 +142,19 @@ def check_pipeline_config(
                 ),
             )
         )
+    else:
+        try:
+            get_source(config.source.type)
+        except PluginLoadError as exc:
+            findings.append(
+                Finding(
+                    severity="error",
+                    code="plugin_load_error",
+                    pipeline=pipeline_id,
+                    path=_rel(config_path, root),
+                    detail=str(exc),
+                )
+            )
 
     findings.extend(
         _secret_findings(
@@ -272,7 +286,7 @@ def check_project(
     """
     Check all pipelines (or one) under the project.
 
-    Errors: load / schema / registered source; ``slo_seed_stale`` when the ops SLO
+    Errors: load / schema / discovered source; ``slo_seed_stale`` when the ops SLO
     seed does not match pipeline YAML (full-project check only).
     Warnings: missing dbt stg/silver when ``dbt/`` exists.
     """
@@ -331,6 +345,16 @@ def has_warnings(findings: Sequence[Finding]) -> bool:
     return any(f.severity == "warning" for f in findings)
 
 
+def findings_payload(findings: Sequence[Finding]) -> dict[str, Any]:
+    """JSON shape for ``det check --json`` and the MCP ``check`` tool."""
+    return {
+        "ok": not has_errors(findings),
+        "error_count": sum(1 for f in findings if f.severity == "error"),
+        "warning_count": sum(1 for f in findings if f.severity == "warning"),
+        "findings": [f.to_dict() for f in findings],
+    }
+
+
 def format_findings(findings: Sequence[Finding]) -> str:
     if not findings:
         return "OK: no structure findings"
@@ -354,14 +378,7 @@ def main(argv: list[str] | None = None) -> int:
 
     findings = check_project(args.project_root, pipeline=args.pipeline)
     if args.json:
-        # Avoid listing all pipelines from cwd when project-root set
-        payload = {
-            "ok": not has_errors(findings),
-            "error_count": sum(1 for f in findings if f.severity == "error"),
-            "warning_count": sum(1 for f in findings if f.severity == "warning"),
-            "findings": [f.to_dict() for f in findings],
-        }
-        print(json.dumps(payload, indent=2))
+        print(json.dumps(findings_payload(findings), indent=2))
     else:
         print(format_findings(findings))
 

@@ -12,15 +12,23 @@ file edits). Install: `uv pip install -e ".[mcp]"`.
 
 ## Plugin checklist
 
-Implement a `SourcePlugin` under `src/det/sources/<provider>/` (see
-`src/det/sources/base.py`):
+Implement a `SourcePlugin` under `src/det/sources/<provider>/<source>.py` (see
+`src/det/sources/base.py`). The file path **is** the registration:
 
-1. `name` — canonical `provider.source`
-2. `defaults()` — url, auth env **name**, filters, fixture knobs
-3. `extract_to_raw(...)` — write bytes under `data_dir`, return artifact descriptors
-4. `records_from_raw(...)` — yield `SourceRow` (source-native; no naming/meta)
-5. Register in `src/det/plugins.py` via `register_source`
-6. Optional migrate mapper → `register_mapper`
+1. Path `src/det/sources/<provider>/<source>.py` → id `provider.source`
+2. `name` — must equal `{provider}.{source}` (exactly one dot)
+3. `defaults()` — url, auth env **name**, filters, fixture knobs
+4. `extract_to_raw(...)` — write bytes under `data_dir`, return artifact descriptors
+5. `records_from_raw(...)` — yield `SourceRow` (source-native; no naming/meta)
+6. Optional migrate mapper: `@mapper("…")` on a function in the **same module**
+   (do not edit `plugins.py`)
+
+Provider-local helpers belong in `_`-prefixed sibling modules (e.g.
+`src/det/sources/noaa/_csv.py`); they are not discovered. Shared HTTP helpers stay
+at `src/det/sources/http.py` / `http_json.py`.
+
+Do not list in-tree plugins in `pyproject.toml` entry points (`det.sources` /
+`det.mappers` are for out-of-tree packages only).
 
 dlt may help HTTP (`RESTClient`, `@dlt.resource` as iterator). **Never**
 `dlt.pipeline` / `pipeline.run` for bronze landing.

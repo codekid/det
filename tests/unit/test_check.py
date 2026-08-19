@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 
 from det.runtime.check import check_pipeline_config, check_project, has_errors, has_warnings
+from det.runtime.discovery import PluginLoadError
 
 
 def _write_pipeline(
@@ -96,6 +97,22 @@ def test_unknown_source_error(tmp_path: Path):
     findings = check_project(tmp_path, pipeline="fake.source")
     assert has_errors(findings)
     assert any(f.code == "unknown_source" for f in findings)
+
+
+def test_plugin_load_error(tmp_path: Path, monkeypatch):
+    _write_pipeline(tmp_path)
+
+    def boom(_name: str):
+        raise PluginLoadError(
+            "failed to import source 'example_api.events' from "
+            "det.sources.example_api.events: boom",
+            module="det.sources.example_api.events",
+        )
+
+    monkeypatch.setattr("det.runtime.check.get_source", boom)
+    findings = check_project(tmp_path)
+    assert has_errors(findings)
+    assert any(f.code == "plugin_load_error" for f in findings)
 
 
 def test_missing_dbt_models_warning(tmp_path: Path):
