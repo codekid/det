@@ -50,5 +50,69 @@ def test_create_server_registers_tools():
         "migrate_dry_run",
         "list_runs",
         "summarize_runs",
+        "check",
+        "list_models",
+        "describe_model",
+        "query_analytics",
+        "cube_meta",
+        "cube_load",
     ):
         assert expected in names
+
+
+def test_create_server_registers_skill_prompts():
+    server = create_server()
+    names = server._prompt_manager._prompts
+    for expected in (
+        "det_ops",
+        "det_new_source",
+        "det_migrate",
+        "det_dbt",
+        "det_airflow",
+    ):
+        assert expected in names
+
+
+def _schema_types(prop: dict) -> set[str]:
+    types: set[str] = set()
+    raw = prop.get("type")
+    if isinstance(raw, str):
+        types.add(raw)
+    elif isinstance(raw, list):
+        types.update(raw)
+    for alt in prop.get("anyOf") or prop.get("oneOf") or []:
+        alt_type = alt.get("type")
+        if isinstance(alt_type, str):
+            types.add(alt_type)
+        elif isinstance(alt_type, list):
+            types.update(alt_type)
+    return types
+
+
+def _param_description(prop: dict) -> str:
+    desc = prop.get("description")
+    if isinstance(desc, str) and desc.strip():
+        return desc
+    for alt in prop.get("anyOf") or prop.get("oneOf") or []:
+        alt_desc = alt.get("description")
+        if (
+            isinstance(alt_desc, str)
+            and alt_desc.strip()
+            and alt.get("type") in {"string", "integer"}
+        ):
+            return alt_desc
+    return ""
+
+
+def test_tool_string_int_params_have_descriptions():
+    server = create_server()
+    missing: list[str] = []
+    for name, tool in server._tool_manager._tools.items():
+        props = (tool.parameters or {}).get("properties") or {}
+        for pname, prop in props.items():
+            types = _schema_types(prop)
+            if not types.intersection({"string", "integer"}):
+                continue
+            if not _param_description(prop).strip():
+                missing.append(f"{name}.{pname}")
+    assert missing == []

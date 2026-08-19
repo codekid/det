@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from det.mcp import params as p
+from det.mcp import prompts as pr
 from det.mcp import resources as res
 from det.mcp import tools as t
 
@@ -20,8 +22,9 @@ def create_server():
         "det",
         instructions=(
             "DET (Data Extract Tool) MCP v1: read-only inspect and dry-run tools. "
-            "Inspect: diff_partitions, sample_raw, validate_sample, sample_bronze, "
-            "diagnose_pipeline (sample size via limit/sample_limit, default 5, max 50). "
+            "Inspect: check, diff_partitions, sample_raw, validate_sample, "
+            "sample_bronze, diagnose_pipeline (sample size via limit/sample_limit, "
+            "default 5, max 50). "
             "Generate (dry-run): schema_from_sample_dry_run, mapper_from_diff_dry_run. "
             "Airflow inspect (read-only): airflow_health, list_airflow_dags, "
             "list_airflow_dag_runs, describe_airflow_det_env, preview_backfill_conf. "
@@ -30,6 +33,14 @@ def create_server():
             "Never trigger DagRuns or extract/load/prune-apply/migrate-write via MCP. "
             "list_runs / summarize_runs read extract/load receipts (observability); "
             "meta/manifest.json is the authority for landed partitions. "
+            "check is structure validation (same as det check --json); never writes. "
+            "Catalog: list_models / describe_model (dbt YAML). "
+            "query_analytics is capped SELECT on gold/silver_* or ops DuckDB. "
+            "Certified metrics: cube_meta / cube_load (Cube Core; make cube-up). "
+            "This-run receipts: list_runs; fleet: cube_load run_daily or "
+            "query_analytics warehouse=ops. "
+            "Prompts det_ops / det_new_source / det_migrate / det_dbt / det_airflow "
+            "load .cursor/skills playbooks. "
             "dlt is extraction only — never suggest dlt.pipeline for landing."
         ),
     )
@@ -41,7 +52,7 @@ def create_server():
 
     @mcp.tool()
     def list_sources() -> dict[str, Any]:
-        """List registered DET source plugins."""
+        """List discovered DET source plugins (path convention + entry points)."""
         return t.list_sources_tool()
 
     @mcp.tool()
@@ -50,35 +61,35 @@ def create_server():
         return t.list_mappers_tool()
 
     @mcp.tool()
-    def describe_pipeline(pipeline: str) -> dict[str, Any]:
+    def describe_pipeline(pipeline: p.PipelineRef) -> dict[str, Any]:
         """Summarize a pipeline config (name, source, schema, destination, dbt.silver)."""
         return t.describe_pipeline(pipeline)
 
     @mcp.tool()
     def list_raw_partitions(
-        pipeline: str, limit: int = t.DEFAULT_LIST_LIMIT
+        pipeline: p.PipelineRef, limit: p.ListLimit = t.DEFAULT_LIST_LIMIT
     ) -> dict[str, Any]:
         """Walk raw/<dataset>/ hive interval + extract-run partitions (capped)."""
         return t.list_raw_partitions(pipeline, limit=limit)
 
     @mcp.tool()
     def list_bronze_partitions(
-        pipeline: str, limit: int = t.DEFAULT_LIST_LIMIT
+        pipeline: p.PipelineRef, limit: p.ListLimit = t.DEFAULT_LIST_LIMIT
     ) -> dict[str, Any]:
         """Walk filesystem bronze hive dirs, Iceberg extract-runs, or a SQL dest hint."""
         return t.list_bronze_partitions(pipeline, limit=limit)
 
     @mcp.tool()
-    def read_manifest(run_path: str) -> dict[str, Any]:
+    def read_manifest(run_path: p.RunPath) -> dict[str, Any]:
         """Read meta/manifest.json for a raw extract-run path under the lake."""
         return t.read_manifest(run_path)
 
     @mcp.tool()
     def prune_dry_run(
-        pipeline: str,
-        interval_start: str,
-        interval_end: str | None = None,
-        keep: int = 1,
+        pipeline: p.PipelineRef,
+        interval_start: p.IntervalStart,
+        interval_end: p.IntervalEndOpt = None,
+        keep: p.Keep = 1,
     ) -> dict[str, Any]:
         """Preview bronze prune candidates (BronzePruner.plan only; never deletes)."""
         return t.prune_dry_run(
@@ -90,26 +101,26 @@ def create_server():
 
     @mcp.tool()
     def dbt_dry_run(
-        pipeline: str | None = None,
-        command: str = "build",
-        select: list[str] | None = None,
+        pipeline: p.PipelineRefOpt = None,
+        command: p.DbtCommand = "build",
+        select: p.DbtSelectOpt = None,
     ) -> dict[str, Any]:
         """Preview the dbt CLI argv DET would run (dry_run=True)."""
         return t.dbt_dry_run(pipeline, command=command, select=select)
 
     @mcp.tool()
-    def scaffold_dbt_dry_run(pipeline: str, force: bool = False) -> dict[str, Any]:
+    def scaffold_dbt_dry_run(pipeline: p.PipelineRef, force: p.Force = False) -> dict[str, Any]:
         """Preview scaffold-dbt file actions without writing."""
         return t.scaffold_dbt_dry_run(pipeline, force=force)
 
     @mcp.tool()
     def init_pipeline_dry_run(
-        name: str,
-        source_type: str,
-        destination_type: str = "iceberg",
-        connection: str | None = None,
-        lake_path: str | None = None,
-        skip_dbt: bool = False,
+        name: p.PipelineName,
+        source_type: p.SourceType,
+        destination_type: p.DestinationType = "iceberg",
+        connection: p.ConnectionEnv = None,
+        lake_path: p.LakePathOpt = None,
+        skip_dbt: p.SkipDbt = False,
     ) -> dict[str, Any]:
         """
         Preview init-pipeline actions without writing files.
@@ -128,10 +139,10 @@ def create_server():
 
     @mcp.tool()
     def diff_partitions(
-        pipeline: str,
-        interval_start: str | None = None,
-        interval_end: str | None = None,
-        limit: int = t.DEFAULT_LIST_LIMIT,
+        pipeline: p.PipelineRef,
+        interval_start: p.IntervalStartOpt = None,
+        interval_end: p.IntervalEndOpt = None,
+        limit: p.ListLimit = t.DEFAULT_LIST_LIMIT,
     ) -> dict[str, Any]:
         """Compare raw vs bronze extract-run keys (hive and/or SQL meta columns)."""
         return t.diff_partitions(
@@ -143,13 +154,13 @@ def create_server():
 
     @mcp.tool()
     def sample_raw(
-        pipeline: str,
-        stage: str = "named",
-        limit: int = t.DEFAULT_SAMPLE_LIMIT,
-        run_path: str | None = None,
-        interval_start: str | None = None,
-        interval_end: str | None = None,
-        extract_run_datetime: str | None = None,
+        pipeline: p.PipelineRef,
+        stage: p.Stage = "named",
+        limit: p.SampleLimit = t.DEFAULT_SAMPLE_LIMIT,
+        run_path: p.RunPathOpt = None,
+        interval_start: p.IntervalStartOpt = None,
+        interval_end: p.IntervalEndOpt = None,
+        extract_run_datetime: p.ExtractRunOpt = None,
     ) -> dict[str, Any]:
         """Sample raw at stage wire|rows|named|coerced (limit default 5, max 50)."""
         return t.sample_raw(
@@ -164,15 +175,20 @@ def create_server():
 
     @mcp.tool()
     def validate_sample(
-        pipeline: str,
-        limit: int = t.DEFAULT_SAMPLE_LIMIT,
-        max_errors: int = 20,
-        run_path: str | None = None,
-        interval_start: str | None = None,
-        interval_end: str | None = None,
-        extract_run_datetime: str | None = None,
+        pipeline: p.PipelineRef,
+        limit: p.SampleLimit = t.DEFAULT_SAMPLE_LIMIT,
+        max_errors: p.MaxErrors = 20,
+        run_path: p.RunPathOpt = None,
+        interval_start: p.IntervalStartOpt = None,
+        interval_end: p.IntervalEndOpt = None,
+        extract_run_datetime: p.ExtractRunOpt = None,
     ) -> dict[str, Any]:
-        """Coerce + JSON Schema validate a capped raw sample; errors returned as data."""
+        """
+        Coerce + JSON Schema validate a capped raw sample; errors returned as data.
+
+        Use when load failed with schema_invalid or diagnose_pipeline flagged drift.
+        Raise limit toward 50 for nested APIs so rare extra fields show up.
+        """
         return t.validate_sample(
             pipeline,
             limit=limit,
@@ -185,12 +201,12 @@ def create_server():
 
     @mcp.tool()
     def sample_bronze(
-        pipeline: str,
-        limit: int = t.DEFAULT_SAMPLE_LIMIT,
-        run_path: str | None = None,
-        interval_start: str | None = None,
-        interval_end: str | None = None,
-        extract_run_datetime: str | None = None,
+        pipeline: p.PipelineRef,
+        limit: p.SampleLimit = t.DEFAULT_SAMPLE_LIMIT,
+        run_path: p.RunPathOpt = None,
+        interval_start: p.IntervalStartOpt = None,
+        interval_end: p.IntervalEndOpt = None,
+        extract_run_datetime: p.ExtractRunOpt = None,
     ) -> dict[str, Any]:
         """Sample bronze rows (filesystem JSONL or DuckDB/Postgres LIMIT). Inspection only."""
         return t.sample_bronze(
@@ -204,12 +220,17 @@ def create_server():
 
     @mcp.tool()
     def diagnose_pipeline(
-        pipeline: str,
-        interval_start: str | None = None,
-        interval_end: str | None = None,
-        sample_limit: int = t.DEFAULT_SAMPLE_LIMIT,
+        pipeline: p.PipelineRef,
+        interval_start: p.IntervalStartOpt = None,
+        interval_end: p.IntervalEndOpt = None,
+        sample_limit: p.SampleLimit = t.DEFAULT_SAMPLE_LIMIT,
     ) -> dict[str, Any]:
-        """Coverage diagnose + optional validate; returns findings and suggested CLI."""
+        """
+        First stop for missing raw/bronze or schema drift.
+
+        Coverage diagnose plus optional validate_sample; returns findings codes
+        and suggested CLI (do not run until the user confirms).
+        """
         return t.diagnose_pipeline(
             pipeline,
             interval_start=interval_start,
@@ -219,14 +240,14 @@ def create_server():
 
     @mcp.tool()
     def schema_from_sample_dry_run(
-        pipeline: str | None = None,
-        run_path: str | None = None,
-        interval_start: str | None = None,
-        interval_end: str | None = None,
-        extract_run_datetime: str | None = None,
-        records: list[dict[str, Any]] | None = None,
-        limit: int = t.MAX_SAMPLE_LIMIT,
-        schema_out: str | None = None,
+        pipeline: p.PipelineRefOpt = None,
+        run_path: p.RunPathOpt = None,
+        interval_start: p.IntervalStartOpt = None,
+        interval_end: p.IntervalEndOpt = None,
+        extract_run_datetime: p.ExtractRunOpt = None,
+        records: p.RecordsOpt = None,
+        limit: p.SampleLimit = t.MAX_SAMPLE_LIMIT,
+        schema_out: p.SchemaOutOpt = None,
     ) -> dict[str, Any]:
         """Infer bronze JSON Schema from sample rows or inline records (never writes)."""
         return t.schema_from_sample_dry_run(
@@ -242,9 +263,9 @@ def create_server():
 
     @mcp.tool()
     def mapper_from_diff_dry_run(
-        from_schema: str,
-        to_schema: str,
-        mapper_name: str,
+        from_schema: p.SchemaPath,
+        to_schema: p.SchemaPath,
+        mapper_name: p.MapperName,
     ) -> dict[str, Any]:
         """Diff two schema files and draft a mapper stub (never writes)."""
         return t.mapper_from_diff_dry_run(from_schema, to_schema, mapper_name)
@@ -260,7 +281,7 @@ def create_server():
         return t.list_airflow_dags()
 
     @mcp.tool()
-    def list_airflow_dag_runs(dag_id: str, limit: int = 10) -> dict[str, Any]:
+    def list_airflow_dag_runs(dag_id: p.DagId, limit: p.DagRunLimit = 10) -> dict[str, Any]:
         """Recent DagRuns for one DAG (limit default 10, max 50). Read-only."""
         return t.list_airflow_dag_runs(dag_id, limit=limit)
 
@@ -271,22 +292,22 @@ def create_server():
 
     @mcp.tool()
     def preview_backfill_conf(
-        interval_start: str, interval_end: str
+        interval_start: p.IntervalStart, interval_end: p.IntervalEnd
     ) -> dict[str, Any]:
         """Preview backfill conf + trigger command strings; never triggers."""
         return t.preview_backfill_conf(interval_start, interval_end)
 
     @mcp.tool()
     def migrate_dry_run(
-        pipeline: str,
-        to_bronze: str,
-        schema: str,
-        mapper: str,
-        interval_start: str,
-        interval_end: str | None = None,
-        from_raw: str | None = None,
-        validate_limit: int = t.MAX_SAMPLE_LIMIT,
-        wire_version: int | None = None,
+        pipeline: p.PipelineRef,
+        to_bronze: p.ToBronze,
+        schema: p.SchemaPath,
+        mapper: p.MapperName,
+        interval_start: p.IntervalStart,
+        interval_end: p.IntervalEndOpt = None,
+        from_raw: p.FromRawOpt = None,
+        validate_limit: p.ValidateLimit = t.MAX_SAMPLE_LIMIT,
+        wire_version: p.WireVersionOpt = None,
     ) -> dict[str, Any]:
         """Preview migrate (name/map/validate); never writes bronze."""
         return t.migrate_dry_run(
@@ -303,14 +324,18 @@ def create_server():
 
     @mcp.tool()
     def list_runs(
-        pipeline: str | None = None,
-        since: str | None = None,
-        until: str | None = None,
-        status: str | None = None,
-        command: str | None = None,
-        limit: int = t.DEFAULT_LIST_LIMIT,
+        pipeline: p.PipelineRefOpt = None,
+        since: p.ReceiptSinceOpt = None,
+        until: p.ReceiptUntilOpt = None,
+        status: p.ReceiptStatusOpt = None,
+        command: p.ReceiptCommandOpt = None,
+        limit: p.ListLimit = t.DEFAULT_LIST_LIMIT,
     ) -> dict[str, Any]:
-        """List extract/load run receipts (observability; manifest is the data authority)."""
+        """
+        List extract/load run receipts after a failed or slow job.
+
+        Observability only — meta/manifest.json is the authority for landed data.
+        """
         return t.list_runs(
             pipeline,
             since=since,
@@ -322,11 +347,11 @@ def create_server():
 
     @mcp.tool()
     def summarize_runs(
-        pipeline: str | None = None,
-        since: str | None = None,
-        until: str | None = None,
-        status: str | None = None,
-        command: str | None = None,
+        pipeline: p.PipelineRefOpt = None,
+        since: p.ReceiptSinceOpt = None,
+        until: p.ReceiptUntilOpt = None,
+        status: p.ReceiptStatusOpt = None,
+        command: p.ReceiptCommandOpt = None,
     ) -> dict[str, Any]:
         """Summarize extract/load receipts: attempts, errors, p50/p95 duration, rows."""
         return t.summarize_runs(
@@ -336,6 +361,70 @@ def create_server():
             status=status,
             command=command,
         )
+
+    @mcp.tool()
+    def list_models() -> dict[str, Any]:
+        """List dbt models (stg/silver/gold/ops) with schema, layer, warehouse, grain."""
+        return t.list_models()
+
+    @mcp.tool()
+    def describe_model(name: p.ModelName) -> dict[str, Any]:
+        """Describe one dbt model including YAML columns and grain."""
+        return t.describe_model(name)
+
+    @mcp.tool()
+    def query_analytics(
+        sql: p.AnalyticsSql,
+        warehouse: p.Warehouse = "analytics",
+        limit: p.SampleLimit = t.DEFAULT_SAMPLE_LIMIT,
+    ) -> dict[str, Any]:
+        """
+        Capped read-only SELECT for silver/ops row detail.
+
+        warehouse=analytics → gold + silver_*; warehouse=ops → ops only.
+        Certified gold/ops metrics should use cube_load, not this tool.
+        """
+        return t.query_analytics(sql, warehouse=warehouse, limit=limit)
+
+    @mcp.tool()
+    def cube_meta() -> dict[str, Any]:
+        """
+        Cube Core semantic meta (cubes, measures, dimensions).
+
+        Requires `make cube-up`. yearly_damage is gold; run_daily is ops.
+        """
+        return t.cube_meta()
+
+    @mcp.tool()
+    def cube_load(
+        measures: p.CubeMeasures,
+        dimensions: p.CubeDimensionsOpt = None,
+        filters: p.CubeFiltersOpt = None,
+        limit: p.SampleLimit = t.DEFAULT_SAMPLE_LIMIT,
+    ) -> dict[str, Any]:
+        """
+        Run a certified Cube metric query (REST /load).
+
+        Gold metrics: yearly_damage.*; fleet ops: run_daily.* .
+        If Cube is down, start it with make cube-up — do not invent metric SQL.
+        """
+        return t.cube_load(
+            measures,
+            dimensions=dimensions,
+            filters=filters,
+            limit=limit,
+        )
+
+    @mcp.tool()
+    def check(pipeline: p.PipelineRefOpt = None) -> dict[str, Any]:
+        """
+        Structure-check pipeline YAML and schemas (same payload as det check --json).
+
+        Use after editing configs/pipelines or schemas. Never writes; not extract/load.
+        """
+        return t.check(pipeline)
+
+    pr.register_skill_prompts(mcp)
 
     @mcp.resource("det://pipelines/{name}")
     def resource_pipeline(name: str) -> str:

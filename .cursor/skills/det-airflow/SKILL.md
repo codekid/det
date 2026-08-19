@@ -65,7 +65,7 @@ each dbt DAG is one task.
 | `DET_PIPELINE_OVERRIDES` | Comma-separated `dotted.key=value` (same as `det --set`); leave empty for live NOAA |
 | `DET_DBT_SELECT` | Optional dbt `--select`; unset = entire analytics project (still excludes `tag:ops`) |
 | `DET_BRONZE_SOURCE` / `DET_BRONZE_SCHEMA` | dbt bronze reader (Compose default `iceberg`; DAG derives from pipeline type). Thin fixture runs need `destination.type=filesystem`. |
-| `DET_ANALYTICS_DUCKDB` | Prefer **absolute** path in Compose |
+| `DET_ANALYTICS_DUCKDB` | Prefer **absolute** path in Compose. Do not `det dbt` while Cube (`make cube-up`) has the file open. |
 | `DET_OPS_DUCKDB` | Prefer **absolute** path for ops dbt target (Compose default `/opt/det/data/det_ops.duckdb`). File stem must not be `ops` (catalog/schema clash). |
 | `DET_LOG_FORMAT` | Compose sets `json` so task logs are greppable (`pipeline`, `extract_run_datetime`) |
 | `DET_PRUNE` / `DET_PRUNE_APPLY` / `DET_PRUNE_KEEP` | Optional prune after load |

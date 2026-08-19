@@ -14,11 +14,17 @@ _README_POINTER = """\
 - `det://pipelines/{name}` — pipeline YAML (`noaa.storm_events` or nested path)
 - `det://schemas/{provider}/{source}/{filename}` — nested schema YAML
 - `det://schemas/{relative_path}` — same, with `/` as `%2F` in a single segment
-- Tools: lake inspect + generate dry-runs + Airflow inspect + prune/dbt/scaffold dry-runs (v1)
-- Run receipts: `list_runs` / `summarize_runs` (observability; manifest is landed-data truth)
+- Tools: lake inspect + `check` + catalog (`list_models`) + `query_analytics`
+  + Cube (`cube_meta` / `cube_load`) + generate dry-runs + Airflow inspect
+  + prune/dbt/scaffold dry-runs (v1)
+- Run receipts: `list_runs` / `summarize_runs` (this run); fleet: Cube `run_daily`
+  or `query_analytics` warehouse=ops
+- Structure: `check` (same payload as `det check --json`; never writes)
 - Sample size: `limit` / `sample_limit` (default 5, max 50)
+- Prompts: `det_ops` / `det_new_source` / `det_migrate` / `det_dbt` / `det_airflow`
 - Generate tools never write files — review drafts, then CLI/manual apply
 - Airflow: DET_AIRFLOW_* (Compose defaults); never trigger DagRuns via MCP
+- Cube: DET_CUBE_* (`make cube-up`); never invent certified metric SQL
 
 Canonical id is `provider.source`. Lake: `raw|bronze/{provider}/{source}/`.
 DuckDB/Postgres: `{medallion}_{provider}.{source}` (e.g. `bronze_noaa.storm_events`).

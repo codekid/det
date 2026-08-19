@@ -1,4 +1,4 @@
-.PHONY: install unhide test lint run-local dbt all clean airflow-up airflow-down airflow-logs airflow-ps
+.PHONY: install unhide test lint run-local dbt all clean airflow-up airflow-down airflow-logs airflow-ps cube-up cube-down cube-logs
 
 INTERVAL_START ?= 2026-08-06
 INTERVAL_END ?=
@@ -57,3 +57,16 @@ airflow-logs:
 
 airflow-ps:
 	cd airflow && docker compose ps
+
+# Local Cube Core (semantic layer). http://localhost:4000
+# Needs data/analytics.duckdb and/or data/det_ops.duckdb from det dbt.
+cube-up:
+	@test -f cube/.env || cp cube/.env.example cube/.env
+	mkdir -p data
+	cd cube && docker compose up -d
+
+cube-down:
+	cd cube && docker compose down
+
+cube-logs:
+	cd cube && docker compose logs -f

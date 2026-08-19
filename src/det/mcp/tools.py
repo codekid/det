@@ -118,11 +118,12 @@ def list_pipelines(*, root: Path | None = None) -> dict[str, Any]:
 def list_sources_tool(*, root: Path | None = None) -> dict[str, Any]:
     _prepare_tool()
     from det.plugins import load_plugins
+    from det.runtime.discovery import probe_source_load_errors
     from det.runtime.registry import list_sources
 
     _ = _root(root)
     load_plugins()
-    return {"sources": list_sources()}
+    return {"sources": list_sources(), "errors": probe_source_load_errors()}
 
 
 def list_mappers_tool(*, root: Path | None = None) -> dict[str, Any]:
@@ -133,9 +134,7 @@ def list_mappers_tool(*, root: Path | None = None) -> dict[str, Any]:
     _ = _root(root)
     load_plugins()
     return {
-        "mappers": [
-            {"name": name, "summary": summary} for name, summary in describe_mappers()
-        ],
+        "mappers": [{"name": name, "summary": summary} for name, summary in describe_mappers()],
         "names": list_mappers(),
     }
 
@@ -186,15 +185,11 @@ def describe_pipeline(pipeline: str, *, root: Path | None = None) -> dict[str, A
                 "lookback": silver.lookback,
                 "not_null": list(silver.not_null),
                 "unique": list(silver.unique),
-                "accepted_values": {
-                    k: list(v) for k, v in silver.accepted_values.items()
-                },
+                "accepted_values": {k: list(v) for k, v in silver.accepted_values.items()},
             },
             "stg": {
                 "coalesce": {k: list(v) for k, v in config.dbt.stg.coalesce.items()},
-                "null_sentinels": {
-                    k: list(v) for k, v in config.dbt.stg.null_sentinels.items()
-                },
+                "null_sentinels": {k: list(v) for k, v in config.dbt.stg.null_sentinels.items()},
                 "rename": dict(config.dbt.stg.rename),
                 "exclude": list(config.dbt.stg.exclude),
                 "map": {k: dict(v) for k, v in config.dbt.stg.map.items()},
@@ -216,9 +211,7 @@ def list_raw_partitions(
     config, _ = _load_pipeline(pipeline, base)
     dataset_dir = raw_dataset_dir(config, base)
     capped = max(1, min(int(limit), DEFAULT_LIST_LIMIT))
-    runs = _walk_hive_runs(
-        dataset_dir, root=base, limit=capped, require_committed=True
-    )
+    runs = _walk_hive_runs(dataset_dir, root=base, limit=capped, require_committed=True)
     return {
         "pipeline": config.name,
         "dataset_dir": _rel(dataset_dir, base),
@@ -265,9 +258,7 @@ def list_bronze_partitions(
                 "runs": [],
                 "note": str(exc),
             }
-        runs_raw = (
-            list_iceberg_extract_runs(ice, limit=capped) if ice is not None else []
-        )
+        runs_raw = list_iceberg_extract_runs(ice, limit=capped) if ice is not None else []
         runs = [
             {
                 "interval_start": start,
@@ -685,9 +676,7 @@ def preview_backfill_conf(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Preview backfill conf + trigger command strings (never triggers)."""
-    return af.preview_backfill_conf(
-        interval_start, interval_end, root=root
-    )
+    return af.preview_backfill_conf(interval_start, interval_end, root=root)
 
 
 def migrate_dry_run(
@@ -782,9 +771,7 @@ def _public_receipt(row: dict[str, Any], *, root: Path) -> dict[str, Any]:
         key: value
         for key, value in row.items()
         if key.lower() not in _RECEIPT_SECRET_KEYS
-        and not key.lower().endswith(
-            ("_password", "_secret", "_token", "_dsn", "_connection")
-        )
+        and not key.lower().endswith(("_password", "_secret", "_token", "_dsn", "_connection"))
     }
     path = out.get("path")
     if isinstance(path, str):
@@ -839,6 +826,91 @@ def list_runs(
         "note": _RECEIPT_NOTE,
         "runs": public,
     }
+
+
+def list_models(*, root: Path | None = None) -> dict[str, Any]:
+    """List dbt models (stg/silver/gold/ops) from dbt/models YAML + SQL."""
+    _prepare_tool()
+    from det.mcp.catalog import list_dbt_models
+
+    return list_dbt_models(root=_root(root))
+
+
+def describe_model(name: str, *, root: Path | None = None) -> dict[str, Any]:
+    """Describe one dbt model: schema, grain, columns from YAML."""
+    _prepare_tool()
+    from det.mcp.catalog import describe_dbt_model
+
+    return describe_dbt_model(name, root=_root(root))
+
+
+def query_analytics(
+    sql: str,
+    *,
+    warehouse: str = "analytics",
+    limit: int = DEFAULT_SAMPLE_LIMIT,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Capped read-only SELECT on analytics or ops DuckDB (not certified metrics)."""
+    _prepare_tool()
+    from det.mcp.query_sql import query_analytics as run_query
+
+    if warehouse not in {"analytics", "ops"}:
+        return {
+            "ok": False,
+            "error": "invalid_warehouse",
+            "detail": "warehouse must be analytics or ops",
+            "rows": [],
+        }
+    return run_query(sql, warehouse=warehouse, limit=limit, root=_root(root))
+
+
+def cube_meta(*, root: Path | None = None) -> dict[str, Any]:
+    """Cube Core meta (cubes/measures/dimensions). Start Cube with make cube-up."""
+    _prepare_tool()
+    from det.mcp.cube_client import cube_meta as fetch_meta
+
+    return fetch_meta(root=_root(root))
+
+
+def cube_load(
+    measures: list[str],
+    *,
+    dimensions: list[str] | None = None,
+    filters: list[dict[str, Any]] | None = None,
+    limit: int = DEFAULT_SAMPLE_LIMIT,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Run a Cube REST load query (certified gold/ops metrics)."""
+    _prepare_tool()
+    from det.mcp.cube_client import cube_load as run_load
+
+    return run_load(
+        measures=measures,
+        dimensions=dimensions,
+        filters=filters,
+        limit=limit,
+        root=_root(root),
+    )
+
+
+def check(
+    pipeline: str | None = None,
+    *,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """
+    Pipeline structure check (schema file, source plugin, optional dbt models).
+
+    Same payload as ``det check --json``. Never writes; not a substitute for
+    extract/load.
+    """
+    _prepare_tool()
+    from det.runtime.check import check_project, findings_payload
+
+    base = _root(root)
+    findings = check_project(base, pipeline=pipeline)
+    return findings_payload(findings)
 
 
 def summarize_runs(

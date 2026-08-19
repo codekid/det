@@ -168,6 +168,16 @@ not a DET destination.
   `det__ops_run_daily` plus recency / error-rate / p95 / fail-closed tests.
   Extract/load never read SLOs. Do not add `ops_slo_*` lists to `dbt_project.yml`.
 
+## Agent catalog / Cube
+
+- Physical models: MCP `list_models` / `describe_model` (includes gold grain and ops).
+- Certified gold metrics: `cube_load` on `yearly_damage` (`make cube-up`).
+- Certified fleet metrics: `cube_load` on `run_daily` (ops DuckDB). p50/p95 are
+  already daily quantiles — do not re-sum them.
+- Silver or ops row detail: `query_analytics` with `warehouse=analytics` or `ops`.
+- This run (did extract/load break?): still `list_runs` / `summarize_runs`.
+  Do not run `det dbt` against a DuckDB file Cube has open.
+
 ## Hard rules
 
 - MCP `dbt_dry_run` / `scaffold_dbt_dry_run` never write or run mutating dbt builds.

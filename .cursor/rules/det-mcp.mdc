@@ -11,14 +11,17 @@ plans, or scaffold/dbt previews.
 
 ## v1 policy (dry-run / read-only)
 
-**Allowed via MCP:** `list_*`, `describe_pipeline`, `read_manifest`,
+**Allowed via MCP:** `list_*`, `describe_pipeline`, `describe_model`, `read_manifest`,
 `diff_partitions`, `sample_raw`, `validate_sample`, `sample_bronze`,
-`diagnose_pipeline`, `schema_from_sample_dry_run`, `mapper_from_diff_dry_run`,
+`diagnose_pipeline`, `check`, `query_analytics`, `cube_meta`, `cube_load`,
+`schema_from_sample_dry_run`,
+`mapper_from_diff_dry_run`,
 `airflow_health`, `list_airflow_dags`, `list_airflow_dag_runs`,
 `describe_airflow_det_env`, `preview_backfill_conf`, `migrate_dry_run`,
 `list_runs`, `summarize_runs`,
 `prune_dry_run`, `dbt_dry_run`, `scaffold_dbt_dry_run`, `init_pipeline_dry_run`,
-and `det://` resources.
+`det://` resources, and prompts `det_ops` / `det_new_source` / `det_migrate` /
+`det_dbt` / `det_airflow` (skill playbooks).
 
 Sample size for `sample_*` / `validate_sample` / `schema_from_sample_dry_run` is
 `limit` (default **5** for sample/validate, up to **50**). `diagnose_pipeline`
@@ -27,11 +30,15 @@ uses `sample_limit` the same way.
 **Not in MCP v1 — use CLI deliberately:** `det extract` / `load` / `run`,
 `det migrate` (write; use MCP `migrate_dry_run` to preview), `det prune --apply`,
 Airflow DagRun triggers, non-dry-run `scaffold-dbt` / `init-pipeline`, writing
-schema or mapper files from generate previews. Pipeline structure validation is
-CLI/CI (`det check`), not an MCP tool.
+schema or mapper files from generate previews. Structure check is MCP `check`
+(same payload as `det check --json`; CI still runs the CLI).
 
 Airflow inspect uses `DET_AIRFLOW_BASE_URL` / `USER` / `PASSWORD` (Compose
 defaults to `http://localhost:8080`). Never trigger DagRuns via MCP.
+
+Cube Core inspect uses `DET_CUBE_BASE_URL` / `DET_CUBE_API_SECRET` (Compose
+defaults to `http://localhost:4000` / `cube/.env`). Never invent gold/ops metric
+SQL when Cube is down — return the error and `make cube-up`.
 
 Paths are sandboxed under `DET_PROJECT_ROOT` (default cwd / project root).
 
@@ -40,6 +47,10 @@ Paths are sandboxed under `DET_PROJECT_ROOT` (default cwd / project root).
 | Goal | Prefer |
 | --- | --- |
 | List pipelines / describe config | MCP `list_pipelines` / `describe_pipeline` |
+| After YAML/schema edits | MCP `check` (same as `det check --json`) |
+| dbt catalog | MCP `list_models` / `describe_model` |
+| Gold / fleet metrics | MCP `cube_meta` / `cube_load` (`make cube-up`; Cube Core on :4000) |
+| Silver or ops row detail | MCP `query_analytics` (`warehouse=analytics` or `ops`, LIMIT cap) |
 | Debug missing raw / bronze / schema | MCP `diagnose_pipeline` (or `diff_partitions` / `sample_raw` / `validate_sample`) |
 | Debug a failed or slow extract/load | MCP `list_runs` / `summarize_runs` (or `det runs`) — observability, not landed-data truth |
 | Sample bronze rows | MCP `sample_bronze` (filesystem JSONL or DuckDB/Postgres `LIMIT`) |

@@ -8,6 +8,7 @@ import yaml
 
 from det.mcp.context import PathSandboxError
 from det.mcp.tools import (
+    check,
     describe_pipeline,
     init_pipeline_dry_run,
     list_bronze_partitions,
@@ -95,6 +96,7 @@ def test_list_sources_after_plugins(tmp_path: Path):
     sources = list_sources_tool(root=tmp_path)
     assert "example_api.events" in sources["sources"]
     assert "noaa.storm_events" in sources["sources"]
+    assert sources.get("errors") == []
 
 
 def test_raw_bronze_partitions_and_manifest(tmp_path: Path):
@@ -148,9 +150,7 @@ def test_scaffold_and_init_dry_run(tmp_path: Path):
     assert scaffold["dataset"] == "example_api.events_v1"
     assert scaffold["actions"]
     assert any(a["path"].endswith("ops_slo_expected.csv") for a in scaffold["actions"])
-    assert not (
-        tmp_path / "dbt" / "models" / "silver" / "stg_example_api__events.sql"
-    ).exists()
+    assert not (tmp_path / "dbt" / "models" / "silver" / "stg_example_api__events.sql").exists()
 
     init = init_pipeline_dry_run(
         "example_api.events",
@@ -222,9 +222,7 @@ def test_list_runs_and_summarize_never_return_connection(tmp_path: Path):
 
     _write_pipeline(tmp_path)
     dt = datetime.now(UTC).date().isoformat()
-    receipt_dir = (
-        tmp_path / "data" / "lake" / "runs" / f"dt={dt}" / "example_api.events"
-    )
+    receipt_dir = tmp_path / "data" / "lake" / "runs" / f"dt={dt}" / "example_api.events"
     receipt_dir.mkdir(parents=True)
     (receipt_dir / "extract__x__1.json").write_text(
         json.dumps(
@@ -260,3 +258,20 @@ def test_list_runs_rejects_escape(tmp_path: Path):
             list_runs(str(outside), root=tmp_path)
     finally:
         outside.unlink(missing_ok=True)
+
+
+def test_check_ok_on_valid_pipeline(tmp_path: Path):
+    _write_pipeline(tmp_path)
+    payload = check("example_api.events", root=tmp_path)
+    assert payload["ok"] is True
+    assert payload["error_count"] == 0
+    assert all(f["severity"] != "error" for f in payload["findings"])
+
+
+def test_check_missing_schema(tmp_path: Path):
+    _write_pipeline(tmp_path)
+    schema = tmp_path / "schemas" / "example_api" / "events" / "events.schema.yaml"
+    schema.unlink()
+    payload = check("example_api.events", root=tmp_path)
+    assert payload["ok"] is False
+    assert any(f["code"] == "missing_schema" for f in payload["findings"])

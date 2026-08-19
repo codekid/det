@@ -1,0 +1,18 @@
+cubes:
+  - name: yearly_damage
+    sql_table: gold.gold_yearly_damage
+    description: >
+      NOAA storm property damage by event year and state. total_property_damage
+      is already summed at that grain (parsed from NOAA H/K/M/B suffixes).
+    dimensions:
+      - name: event_year
+        sql: event_year
+        type: string
+      - name: state
+        sql: state
+        type: string
+    measures:
+      - name: total_property_damage
+        sql: total_property_damage
+        type: sum
+        description: Sum of parsed property damage (identity at year+state grain).

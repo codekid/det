@@ -24,3 +24,4 @@ airflow_settings.yaml
 airflow/.env
 airflow/logs/*
 !airflow/logs/.gitkeep
+cube/.env
