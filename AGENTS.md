@@ -22,7 +22,10 @@ inclusive, `-e` exclusive (default start + 1 day). Lake hive/SQL contract:
   `DET_REQUIRE_APPROVAL=1` in agent sessions. Airflow scheduled extract/load
   stay ungated; prune-**apply** on `det_extract_bronze` needs DagRun conf
   `"approval": "apr_…"` (same `.det/approvals/` files as CLI — not MCP triggers).
-  Do not set `DET_REQUIRE_APPROVAL=1` on Compose for the scheduler.
+  Manual `det_backfill_extract_bronze` likewise needs conf `"approval"` for the
+  backfill **window** (MCP `preview_backfill_conf` → `det approve`); spawned
+  daily extract runs stay ungated. Do not set `DET_REQUIRE_APPROVAL=1` on
+  Compose for the scheduler.
 - Never suggest `dlt.pipeline` / `pipeline.run` for landing.
 - Pipeline YAML holds secret **names** (`auth_env`, `connection_env`); values stay in env.
 - Source plugins are discovered from `src/det/sources/<provider>/<source>.py`

@@ -226,3 +226,45 @@ def consume_prune_approval(project_root: Path, approval_id: str) -> None:
         consume_approval(project_root, approval_id)
     except ApprovalError as exc:
         raise ValueError(f"{exc.code}: {exc}") from exc
+
+
+def gate_backfill_approval(
+    project_root: Path,
+    *,
+    interval_start: str,
+    interval_end: str,
+    approval_id: str | None,
+) -> None:
+    """
+    Require a valid unused approval matching the backfill window argv.
+
+    Always ``require=True`` — manual backfill never opens without an id.
+    Child ``det_extract_bronze`` runs stay approval-free.
+    """
+    from det.runtime.approval import (
+        ApprovalError,
+        backfill_write_argv,
+        check_approval,
+    )
+
+    argv = backfill_write_argv(interval_start, interval_end)
+    try:
+        check_approval(
+            project_root,
+            "backfill",
+            argv,
+            approval_id,
+            require=True,
+        )
+    except ApprovalError as exc:
+        raise ValueError(f"{exc.code}: {exc}") from exc
+
+
+def consume_backfill_approval(project_root: Path, approval_id: str) -> None:
+    """Mark backfill-window approval consumed after trigger specs are built."""
+    from det.runtime.approval import ApprovalError, consume_approval
+
+    try:
+        consume_approval(project_root, approval_id)
+    except ApprovalError as exc:
+        raise ValueError(f"{exc.code}: {exc}") from exc

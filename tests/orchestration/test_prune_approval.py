@@ -116,3 +116,62 @@ def test_gate_prune_apply_argv_mismatch(project_root: Path, tmp_path: Path):
             keep=2,
             approval_id=rec["id"],
         )
+
+
+def test_gate_backfill_requires_id(project_root: Path, tmp_path: Path):
+    det_env = _load_det_env(project_root)
+    with pytest.raises(ValueError, match="approval_required"):
+        det_env.gate_backfill_approval(
+            tmp_path,
+            interval_start="2026-08-01",
+            interval_end="2026-08-08",
+            approval_id=None,
+        )
+
+
+def test_gate_and_consume_backfill_approval(project_root: Path, tmp_path: Path):
+    from det.runtime.approval import backfill_write_argv
+
+    det_env = _load_det_env(project_root)
+    argv = backfill_write_argv("2026-08-01", "2026-08-08")
+    rec = create_approval(
+        tmp_path,
+        command="backfill",
+        argv=argv,
+        approved_by="tester",
+    )
+    det_env.gate_backfill_approval(
+        tmp_path,
+        interval_start="2026-08-01",
+        interval_end="2026-08-08",
+        approval_id=rec["id"],
+    )
+    det_env.consume_backfill_approval(tmp_path, rec["id"])
+    assert load_approval(tmp_path, rec["id"])["status"] == "consumed"
+    with pytest.raises(ValueError, match="approval_consumed"):
+        det_env.gate_backfill_approval(
+            tmp_path,
+            interval_start="2026-08-01",
+            interval_end="2026-08-08",
+            approval_id=rec["id"],
+        )
+
+
+def test_gate_backfill_argv_mismatch(project_root: Path, tmp_path: Path):
+    from det.runtime.approval import backfill_write_argv
+
+    det_env = _load_det_env(project_root)
+    argv = backfill_write_argv("2026-08-01", "2026-08-08")
+    rec = create_approval(
+        tmp_path,
+        command="backfill",
+        argv=argv,
+        approved_by="tester",
+    )
+    with pytest.raises(ValueError, match="approval_argv_mismatch"):
+        det_env.gate_backfill_approval(
+            tmp_path,
+            interval_start="2026-08-01",
+            interval_end="2026-08-09",
+            approval_id=rec["id"],
+        )

@@ -82,13 +82,17 @@ Wedged lock after a dead worker (TTL still in the future): confirm the DagRun/CL
 
 ## Backfill
 
-Preview first: MCP `preview_backfill_conf`. Apply only after user confirms:
+Preview first: MCP `preview_backfill_conf` (includes `approval_plan`). After the
+user confirms, `det approve --plan … --approved-by …`, then trigger with that
+`apr_…` in conf. MCP never triggers. Child `det_extract_bronze` runs stay
+approval-free.
 
 ```bash
 cd airflow && docker compose exec airflow-scheduler \
   airflow dags trigger det_backfill_extract_bronze --conf '{
     "interval_start": "2026-08-01",
-    "interval_end": "2026-08-08"
+    "interval_end": "2026-08-08",
+    "approval": "apr_…"
   }'
 ```
 
