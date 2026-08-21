@@ -151,3 +151,78 @@ def daily_logical_dates_for_interval(
         )
         day += timedelta(days=1)
     return out
+
+
+def merge_dag_conf(
+    conf: Mapping[str, object] | None = None,
+    params: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Params then dag_run.conf (conf wins), same order as backfill."""
+    merged: dict[str, object] = {}
+    if params:
+        merged.update(dict(params))
+    if conf:
+        merged.update(dict(conf))
+    return merged
+
+
+def approval_id_from_conf(conf: Mapping[str, object] | None) -> str | None:
+    """Read ``approval`` or ``approval_id`` from DagRun conf / params."""
+    if not conf:
+        return None
+    for key in ("approval", "approval_id"):
+        raw = conf.get(key)
+        if raw is None:
+            continue
+        text = str(raw).strip()
+        if text:
+            return text
+    return None
+
+
+def gate_prune_apply_approval(
+    project_root: Path,
+    *,
+    pipeline: str,
+    interval_start: str,
+    interval_end: str | None,
+    keep: int,
+    approval_id: str | None,
+) -> None:
+    """
+    Require a valid unused approval matching ``det prune … --apply`` argv.
+
+    Always ``require=True`` — prune-apply in Airflow never runs without an id.
+    """
+    from det.runtime.approval import (
+        ApprovalError,
+        check_approval,
+        prune_write_argv,
+    )
+
+    argv = prune_write_argv(
+        pipeline,
+        interval_start,
+        interval_end=interval_end,
+        keep=keep,
+    )
+    try:
+        check_approval(
+            project_root,
+            "prune",
+            argv,
+            approval_id,
+            require=True,
+        )
+    except ApprovalError as exc:
+        raise ValueError(f"{exc.code}: {exc}") from exc
+
+
+def consume_prune_approval(project_root: Path, approval_id: str) -> None:
+    """Mark prune-apply approval consumed after a successful apply."""
+    from det.runtime.approval import ApprovalError, consume_approval
+
+    try:
+        consume_approval(project_root, approval_id)
+    except ApprovalError as exc:
+        raise ValueError(f"{exc.code}: {exc}") from exc

@@ -68,11 +68,13 @@ each dbt DAG is one task.
 | `DET_ANALYTICS_DUCKDB` | Prefer **absolute** path in Compose. Do not `det dbt` while Cube (`make cube-up`) has the file open. |
 | `DET_OPS_DUCKDB` | Prefer **absolute** path for ops dbt target (Compose default `/opt/det/data/det_ops.duckdb`). File stem must not be `ops` (catalog/schema clash). |
 | `DET_LOG_FORMAT` | Compose sets `json` so task logs are greppable (`pipeline`, `extract_run_datetime`) |
-| `DET_PRUNE` / `DET_PRUNE_APPLY` / `DET_PRUNE_KEEP` | Optional prune after load |
+| `DET_PRUNE` / `DET_PRUNE_APPLY` / `DET_PRUNE_KEEP` | Optional prune after load. **Apply** requires DagRun conf `"approval": "apr_…"` (same file as CLI / MCP `prune_dry_run`). Plan-only does not. |
 | `DET_LOCK_TTL_SEC` | Lake lease TTL seconds (default 7200). Per-run: DAG conf `lock_ttl_sec` or `det --lock-ttl-sec` |
 | `DET_LOCK=0` | Disables the lake lease (unsafe; tests only) |
 | `DET_LOCK_OWNER` | Set by `set_lock_owner` to `airflow:{dag_id}:{run_id}`. Correlates lake leases **and** `{lake}/runs/` receipts to a DagRun. `list_runs` / `det runs` filter on `owner`. |
 | `DET_RUN_RECEIPTS=0` | Disables extract/load receipt writing (tests only) |
+
+Do **not** set `DET_REQUIRE_APPROVAL=1` on Compose. That env is for agent/CLI sessions so Cursor cannot write without `--approval`. Scheduled extract → load is always approval-free; only prune-**apply** is gated (via `conf.approval`, not the global env).
 
 Do **not** set `max_active_runs=1` on `det_extract_bronze` to “fix” locking — that serializes backfill of many days. The lake lease is per `(pipeline, interval)`; cap backfill with a pool / mapped TI limit later.
 

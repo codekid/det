@@ -18,7 +18,11 @@ inclusive, `-e` exclusive (default start + 1 day). Lake hive/SQL contract:
   runs `det approve --plan` (or `--command` / `--argv-json`) with `--approved-by`.
   A later turn may run writing CLI with `--approval <id>` — never in the same
   turn as the dry-run. `DET_REQUIRE_APPROVAL=1` (or `--require-approval`) makes
-  the id mandatory; default is off so local/CI extract is unchanged.
+  the id mandatory; default is off so local/CI extract is unchanged. Prefer
+  `DET_REQUIRE_APPROVAL=1` in agent sessions. Airflow scheduled extract/load
+  stay ungated; prune-**apply** on `det_extract_bronze` needs DagRun conf
+  `"approval": "apr_…"` (same `.det/approvals/` files as CLI — not MCP triggers).
+  Do not set `DET_REQUIRE_APPROVAL=1` on Compose for the scheduler.
 - Never suggest `dlt.pipeline` / `pipeline.run` for landing.
 - Pipeline YAML holds secret **names** (`auth_env`, `connection_env`); values stay in env.
 - Source plugins are discovered from `src/det/sources/<provider>/<source>.py`
