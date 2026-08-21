@@ -188,6 +188,33 @@ WireVersionOpt = Annotated[
     int | None,
     Field(description="Optional wire_version filter for mixed lake trees"),
 ]
+RecreateIceberg = Annotated[
+    bool,
+    Field(
+        description=(
+            "If true, dry-run/approval plan includes --recreate-iceberg "
+            "(purge target Iceberg bronze table before rewrite)"
+        )
+    ),
+]
+AllRaw = Annotated[
+    bool,
+    Field(
+        description=(
+            "With recreate_iceberg: rewrite every raw interval (no interval_start). "
+            "Latest extract per interval unless all_raw_runs"
+        )
+    ),
+]
+AllRawRuns = Annotated[
+    bool,
+    Field(
+        description=(
+            "Rematerialize every committed raw extract-run sibling "
+            "(default: latest only, matching det load)"
+        )
+    ),
+]
 SchemaOutOpt = Annotated[
     str | None,
     Field(description="Would-write schema path for the dry-run preview (never written)"),

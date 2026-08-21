@@ -119,7 +119,10 @@ do **not** require a layout bump.
   location under `{lake}/bronze/…` stays layout 1.
 - Iceberg **partition spec** (`destination.partition: extract_run` \| `none`) —
   create-time table property, not hive path keys. Changing it does not rename
-  raw/bronze directories; existing tables keep their live spec until wipe+reload.
+  raw/bronze directories. Live mismatch **hard-fails** load/migrate until
+  `det migrate … --recreate-iceberg` (purges the bronze table, then rewrites
+  latest raw per interval in `-s`/`-e`, or `--all-raw` for every interval) or a
+  manual wipe of the table location.
 - New optional manifest/receipt fields.
 - Bumping **`receipt_version`** only affects `{lake}/runs/` JSON consumers.
 

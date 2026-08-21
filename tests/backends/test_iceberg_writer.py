@@ -338,9 +338,7 @@ def test_iceberg_replace_works_when_unpartitioned(tmp_path: Path):
     assert {r["__row_hash"]: r["event_id"] for r in rows} == {"zzz": 99}
 
 
-def test_iceberg_keeps_live_spec_when_yaml_mismatches(tmp_path: Path):
-    from structlog.testing import capture_logs
-
+def test_iceberg_hard_fails_when_yaml_partition_mismatches(tmp_path: Path):
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     loc = lake / "bronze" / "noaa" / "storm_events_v1"
     schema = _json_schema()
@@ -353,7 +351,7 @@ def test_iceberg_keeps_live_spec_when_yaml_mismatches(tmp_path: Path):
         json_schema=schema,
         partition="extract_run",
     )
-    with capture_logs() as logs:
+    with pytest.raises(ValueError, match="does not match live table"):
         write_iceberg_table(
             _records(
                 event_id=2,
@@ -370,8 +368,42 @@ def test_iceberg_keeps_live_spec_when_yaml_mismatches(tmp_path: Path):
     ice = load_iceberg_table(
         lake=lake, namespace="bronze_noaa", table="storm_events_v1", table_location=loc
     )
+    assert ice is not None
     assert len(list(ice.spec().fields)) == 1
-    warnings = [e for e in logs if e.get("log_level") == "warning"]
-    assert any(
-        "partition YAML does not match" in str(e.get("event", "")) for e in warnings
+
+
+def test_purge_and_recreate_applies_yaml_partition(tmp_path: Path):
+    from det.ingestion.iceberg_writer import purge_iceberg_table
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    loc = lake / "bronze" / "noaa" / "storm_events_v1"
+    schema = _json_schema()
+    write_iceberg_table(
+        _records(),
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_noaa",
+        table="storm_events_v1",
+        json_schema=schema,
+        partition="extract_run",
     )
+    purge_iceberg_table(
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_noaa",
+        table="storm_events_v1",
+    )
+    write_iceberg_table(
+        _records(),
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_noaa",
+        table="storm_events_v1",
+        json_schema=schema,
+        partition="none",
+    )
+    ice = load_iceberg_table(
+        lake=lake, namespace="bronze_noaa", table="storm_events_v1", table_location=loc
+    )
+    assert ice is not None
+    assert list(ice.spec().fields) == []

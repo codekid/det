@@ -64,8 +64,8 @@ class DestinationConfig(BaseModel):
     # source. Preferred over connection so credentials never live in committed YAML.
     connection_env: str | None = None
     # Iceberg only: identity on ``__extract_run_datetime`` (ETL default) or
-    # unpartitioned. Applied on create_table; existing tables keep their live spec.
-    # Omit when type is iceberg → extract_run. Forbidden on other destination types.
+    # unpartitioned. Applied on create_table; live mismatch hard-fails until
+    # ``det migrate --recreate-iceberg`` or a manual wipe. Forbidden on other types.
     partition: IcebergPartition | None = None
 
     @model_validator(mode="after")

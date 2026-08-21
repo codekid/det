@@ -98,8 +98,9 @@ def format_extract_run_datetime(when: datetime | DateTime | None = None) -> str:
     """
     Run-start timestamp as ISO 8601 UTC (same shape as __interval_*_datetime).
 
-    Captured once per `det run` / `det migrate` and reused for every row and the
-    hive path, so the folder name and the column always describe one instant.
+    Captured once per `det run` / extract and reused for every row and the hive
+    path. Migrate stamps bronze ``__extract_run_datetime`` from the raw
+    manifest instead; this helper still sets ``bronze_loaded_at`` and log context.
     """
     if when is None:
         return pendulum.now("UTC").isoformat()

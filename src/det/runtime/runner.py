@@ -374,16 +374,9 @@ class PipelineRunner:
             return target
         if not base.exists():
             raise FileNotFoundError(f"No raw partitions under {base}")
-        runs = sorted(
-            (
-                p
-                for p in base.iterdir()
-                if p.is_dir()
-                and p.name.startswith("__extract_run_datetime=")
-                and is_committed_raw_dir(p)
-            ),
-            key=lambda p: p.name,
-        )
+        from det.runtime.manifest import committed_extract_run_dirs
+
+        runs = committed_extract_run_dirs(base)
         if not runs:
             raise FileNotFoundError(f"No committed extract runs under {base}")
         return runs[-1]

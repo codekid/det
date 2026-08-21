@@ -19,6 +19,7 @@ from det.runtime.approval import (
     list_unused_approvals,
     load_approval,
     make_plan,
+    migrate_write_argv,
     plan_from_mapping,
     prune_write_argv,
 )
@@ -268,3 +269,56 @@ def test_cli_require_approval_without_id(tmp_path: Path, monkeypatch):
     )
     assert result.exit_code != 0
     assert "approval_required" in result.output
+
+
+def test_migrate_write_argv_includes_recreate_iceberg():
+    base = migrate_write_argv(
+        "example_api.events",
+        "example_api.events_v1",
+        "schemas/example_api/events/events.schema.yaml",
+        "identity",
+        "2026-08-06",
+        interval_end="2026-08-07",
+    )
+    assert "--recreate-iceberg" not in base
+    with_flag = migrate_write_argv(
+        "example_api.events",
+        "example_api.events_v1",
+        "schemas/example_api/events/events.schema.yaml",
+        "identity",
+        "2026-08-06",
+        interval_end="2026-08-07",
+        recreate_iceberg=True,
+    )
+    assert with_flag[-1] == "--recreate-iceberg"
+    assert make_plan("migrate", with_flag).plan_digest != make_plan("migrate", base).plan_digest
+
+
+def test_migrate_write_argv_all_raw_and_all_raw_runs():
+    argv = migrate_write_argv(
+        "example_api.events",
+        "example_api.events_v1",
+        "schemas/example_api/events/events.schema.yaml",
+        "identity",
+        None,
+        recreate_iceberg=True,
+        all_raw=True,
+        all_raw_runs=True,
+    )
+    assert "--all-raw" in argv
+    assert "--all-raw-runs" in argv
+    assert "--recreate-iceberg" in argv
+    assert "-s" not in argv
+    with_window = migrate_write_argv(
+        "example_api.events",
+        "example_api.events_v1",
+        "schemas/example_api/events/events.schema.yaml",
+        "identity",
+        "2026-08-06",
+        all_raw_runs=True,
+    )
+    assert "-s" in with_window
+    assert "--all-raw-runs" in with_window
+    assert make_plan("migrate", argv).plan_digest != make_plan(
+        "migrate", with_window
+    ).plan_digest

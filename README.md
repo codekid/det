@@ -130,8 +130,10 @@ no `destination.type: s3`.
 
 Iceberg-only: `destination.partition` is `extract_run` (default — identity on
 `__extract_run_datetime` for load replace / silver watermark) or `none`
-(unpartitioned; use for small tables). Spec applies on **create** only; existing
-tables keep their live spec until wipe+reload. Not the raw hive layout.
+(unpartitioned; use for small tables). Spec applies on **create** only. Live
+mismatch **hard-fails** until `det migrate … --recreate-iceberg` (full table
+purge, then rewrite `-s`/`-e` or `--all-raw`; latest raw per interval unless
+`--all-raw-runs`) or a manual wipe. Not the raw hive layout.
 
 `det dbt -p …` sets `DET_BRONZE_SOURCE` from the pipeline (`iceberg` → `iceberg_scan`
 in `sources.yml`). Layout contract: [docs/lake-layout.md](docs/lake-layout.md).
@@ -246,6 +248,7 @@ never `dlt.pipeline` for landing.
 | `No module named 'det'` | `make unhide` or `PYTHONPATH=src .venv/bin/det` (macOS hidden `.pth`) |
 | `dbt CLI not found` | `uv run det dbt` so the venv `dbt` is on PATH |
 | `No raw partitions` | Load the **same** `-s`/`-e` you extracted |
+| Iceberg partition YAML ≠ live | `det migrate … --recreate-iceberg` (or wipe the bronze table path); plain load/migrate hard-fails |
 | Iceberg dbt vs JSONL lake | Don’t mix `make run-local` (filesystem) with `det dbt -p` (pipeline is iceberg) |
 | DuckDB lock in Airflow | Absolute `DET_ANALYTICS_DUCKDB`; one dbt process at a time |
 | Cube MCP `cube_unavailable` | `make cube-up`; copy `cube/.env.example` → `cube/.env` |

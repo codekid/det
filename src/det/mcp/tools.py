@@ -731,12 +731,15 @@ def migrate_dry_run(
     to_bronze: str,
     schema: str,
     mapper: str,
-    interval_start: str,
+    interval_start: str | None = None,
     *,
     interval_end: str | None = None,
     from_raw: str | None = None,
     validate_limit: int = MAX_SAMPLE_LIMIT,
     wire_version: int | None = None,
+    recreate_iceberg: bool = False,
+    all_raw: bool = False,
+    all_raw_runs: bool = False,
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Preview det migrate: parse/map/validate raw partitions; never writes bronze."""
@@ -745,6 +748,14 @@ def migrate_dry_run(
     from det.runtime.approval import migrate_write_argv
     from det.runtime.migrate import BronzeMigrator, MigratePlan
     from det.runtime.pipelines import resolve_pipeline_ref
+
+    if all_raw:
+        if interval_start is not None or interval_end is not None:
+            raise ValueError("--all-raw cannot be combined with interval_start/end")
+        if not recreate_iceberg:
+            raise ValueError("--all-raw requires recreate_iceberg")
+    elif interval_start is None:
+        raise ValueError("interval_start is required unless all_raw")
 
     base = _root(root)
     capped = clamp_sample_limit(validate_limit)
@@ -763,6 +774,9 @@ def migrate_dry_run(
         dry_run=True,
         validate_limit=capped,
         wire_version=wire_version,
+        recreate_iceberg=recreate_iceberg,
+        all_raw=all_raw,
+        all_raw_runs=all_raw_runs,
     )
     assert isinstance(plan, MigratePlan)
     out = plan.to_dict()
@@ -779,13 +793,27 @@ def migrate_dry_run(
             interval_end=interval_end,
             from_raw=from_raw,
             wire_version=wire_version,
+            recreate_iceberg=recreate_iceberg,
+            all_raw=all_raw,
+            all_raw_runs=all_raw_runs,
         ),
     )
+    bits: list[str] = []
+    if recreate_iceberg:
+        bits.append(" --recreate-iceberg")
+    if all_raw:
+        bits.append(" --all-raw")
+    if all_raw_runs:
+        bits.append(" --all-raw-runs")
+    flag_bit = "".join(bits)
+    if all_raw:
+        scope = ""
+    else:
+        scope = f" -s {interval_start}"
     out["note"] = (
         "Dry-run only — no bronze written. Apply with "
         f"`det migrate -p {resolved.canonical_id} --to-bronze {to_bronze} "
-        f"--schema {schema} --mapper {mapper} -s {interval_start}` "
-        "after user confirms."
+        f"--schema {schema} --mapper {mapper}{scope}{flag_bit}` after user confirms."
     )
     return out
 

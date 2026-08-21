@@ -307,11 +307,14 @@ def migrate_write_argv(
     to_bronze: str,
     schema: str,
     mapper: str,
-    interval_start: str,
+    interval_start: str | None = None,
     *,
     interval_end: str | None = None,
     from_raw: str | None = None,
     wire_version: int | None = None,
+    recreate_iceberg: bool = False,
+    all_raw: bool = False,
+    all_raw_runs: bool = False,
 ) -> list[str]:
     argv = [
         "migrate",
@@ -323,15 +326,23 @@ def migrate_write_argv(
         schema,
         "--mapper",
         mapper,
-        "-s",
-        interval_start,
     ]
-    if interval_end:
-        argv.extend(["-e", interval_end])
+    if all_raw:
+        argv.append("--all-raw")
+    else:
+        if interval_start is None:
+            raise ValueError("interval_start required unless all_raw=True")
+        argv.extend(["-s", interval_start])
+        if interval_end:
+            argv.extend(["-e", interval_end])
     if from_raw:
         argv.extend(["--from-raw", from_raw])
     if wire_version is not None:
         argv.extend(["--wire-version", str(wire_version)])
+    if recreate_iceberg:
+        argv.append("--recreate-iceberg")
+    if all_raw_runs:
+        argv.append("--all-raw-runs")
     return argv
 
 

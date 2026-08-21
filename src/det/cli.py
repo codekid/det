@@ -290,7 +290,7 @@ def migrate_bronze(
     to_bronze: str = typer.Option(..., "--to-bronze"),
     schema: Path = typer.Option(..., "--schema"),
     mapper: str = typer.Option(..., "--mapper"),
-    interval_start: str = typer.Option(..., "--interval-start", "-s"),
+    interval_start: str | None = typer.Option(None, "--interval-start", "-s"),
     interval_end: str | None = typer.Option(None, "--interval-end", "-e"),
     from_raw: str | None = typer.Option(
         None,
@@ -314,6 +314,31 @@ def migrate_bronze(
         "--wire-version",
         help="Only migrate raw partitions whose manifest wire_version matches",
     ),
+    recreate_iceberg: bool = typer.Option(
+        False,
+        "--recreate-iceberg",
+        help=(
+            "Purge the target Iceberg bronze table, then recreate with YAML "
+            "destination.partition. Drops the full table; rewrite scope is "
+            "-s/-e or --all-raw (latest raw per interval unless --all-raw-runs)."
+        ),
+    ),
+    all_raw: bool = typer.Option(
+        False,
+        "--all-raw",
+        help=(
+            "With --recreate-iceberg: rewrite every interval under raw "
+            "(no -s/-e). Latest extract per interval unless --all-raw-runs."
+        ),
+    ),
+    all_raw_runs: bool = typer.Option(
+        False,
+        "--all-raw-runs",
+        help=(
+            "Rematerialize every committed raw extract-run sibling as its own "
+            "bronze run (default: latest only, matching det load)."
+        ),
+    ),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     set_: list[str] = typer.Option([], "--set"),
     lock_ttl_sec: int | None = typer.Option(
@@ -329,7 +354,25 @@ def migrate_bronze(
     from det.runtime.lease import LeaseHeldError
     from det.runtime.migrate import BronzeMigrator, MigratePlan
 
-    start, end = _resolve_interval(interval_start, interval_end)
+    if all_raw:
+        if interval_start is not None or interval_end is not None:
+            raise typer.BadParameter(
+                "--all-raw cannot be combined with -s/-e",
+                param_hint="--all-raw",
+            )
+        if not recreate_iceberg:
+            raise typer.BadParameter(
+                "--all-raw requires --recreate-iceberg",
+                param_hint="--all-raw",
+            )
+        start, end = None, None
+    else:
+        if interval_start is None:
+            raise typer.BadParameter(
+                "-s/--interval-start is required unless --all-raw",
+                param_hint="-s",
+            )
+        start, end = _resolve_interval(interval_start, interval_end)
     root = _project_root(project_root)
     if not dry_run:
         _gate_approval(
@@ -344,6 +387,9 @@ def migrate_bronze(
                 interval_end=interval_end,
                 from_raw=from_raw,
                 wire_version=wire_version,
+                recreate_iceberg=recreate_iceberg,
+                all_raw=all_raw,
+                all_raw_runs=all_raw_runs,
             ),
             approval,
             require_approval,
@@ -370,8 +416,14 @@ def migrate_bronze(
             validate_limit=validate_limit,
             wire_version=wire_version,
             lock_ttl_sec=lock_ttl_sec,
+            recreate_iceberg=recreate_iceberg,
+            all_raw=all_raw,
+            all_raw_runs=all_raw_runs,
         )
     except LeaseHeldError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     if isinstance(result, MigratePlan):
@@ -385,6 +437,8 @@ def migrate_bronze(
             f"mapper={result.mapper_name} partitions={result.partitions_planned} "
             f"rows_checked={result.rows_checked} ok={result.ok}{filt}"
         )
+        if result.recreate_warning:
+            typer.echo(f"WARNING: {result.recreate_warning}", err=True)
         for part in result.partitions:
             status = "ok" if part.ok else "FAIL"
             trunc = " truncated" if part.truncated else ""
