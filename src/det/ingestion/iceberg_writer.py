@@ -7,7 +7,7 @@ live at ``{lake}/bronze/{provider}/{source}_vN/`` (Iceberg owns data-file names)
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import date, datetime
 from typing import Any
 
@@ -52,11 +52,16 @@ def lake_ref_uri(ref: LakeRef) -> str:
     return text
 
 
-def hadoop_catalog(lake: LakeRef):
+def hadoop_catalog(lake: LakeRef, *, env: Mapping[str, str] | None = None):
     _require_iceberg()
     from det.ingestion.iceberg_catalog import LakeHadoopCatalog
+    from det.runtime.object_store import iceberg_s3_properties
 
-    return LakeHadoopCatalog("det", warehouse=lake_ref_uri(lake))
+    warehouse = lake_ref_uri(lake)
+    props: dict[str, str] = {"warehouse": warehouse}
+    if warehouse.startswith("s3://"):
+        props.update(iceberg_s3_properties(env))
+    return LakeHadoopCatalog("det", **props)
 
 
 def _pyiceberg_type(type_name: str):

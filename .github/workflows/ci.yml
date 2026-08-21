@@ -28,15 +28,40 @@ jobs:
       DET_LAKE_PATH: ${{ github.workspace }}/data/lake
       DET_ANALYTICS_DUCKDB: ${{ github.workspace }}/data/analytics.duckdb
       DET_OPS_DUCKDB: ${{ github.workspace }}/data/det_ops.duckdb
+      # MinIO soak (tests/integration/test_minio_iceberg_soak.py); main suite stays local.
+      AWS_ENDPOINT_URL: http://127.0.0.1:9000
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_REGION: us-east-1
+      DET_MINIO_BUCKET: det-ci
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
+      - name: Start MinIO
+        # GHA service containers cannot pass `server /data` to minio/minio.
+        run: |
+          docker run -d --name det-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9000/minio/health/live; then
+              echo "minio ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "minio failed to become healthy" >&2
+          docker logs det-minio >&2 || true
+          exit 1
       - name: Install
         # mcp extra required for tests/mcp; dbt + postgres match prod extras.
+        # s3 + iceberg: MinIO object-lake soak.
         # avoid --system (PEP 668 on ubuntu-latest)
-        run: uv sync --extra dev --extra mcp --extra dbt --extra postgres --extra iceberg
+        run: uv sync --extra dev --extra mcp --extra dbt --extra postgres --extra iceberg --extra s3
       - name: Lint
         run: uv run ruff check .
       - name: Structure check

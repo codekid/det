@@ -116,8 +116,8 @@ def open_lake(
     validate_lake_mode(text, mode)
     if mode == "cloud" and not _CLOUD_EXPERIMENTAL_WARNED:
         logger.warning(
-            "object-store lake is experimental (no CI soak yet); "
-            "Iceberg on s3/gs may fail without det[s3]/det[gcs] and credentials",
+            "object-store lake: CI MinIO soak covers extract→Iceberg→DuckDB "
+            "iceberg_scan; shared multi-writer / Glue catalogs are still out of scope",
             lake_mode=mode,
             lake=text,
         )
@@ -126,8 +126,13 @@ def open_lake(
         return _open_memory(text)
     if text.startswith("s3://"):
         fs = _import_fsspec("s3")
+        from det.runtime.object_store import fsspec_s3_kwargs
+
         key = text[len("s3://") :].rstrip("/")
-        return LakeRef(_FsspecBackend(fs.filesystem("s3"), "s3"), key)
+        return LakeRef(
+            _FsspecBackend(fs.filesystem("s3", **fsspec_s3_kwargs(env)), "s3"),
+            key,
+        )
     if text.startswith(("gs://", "gcs://")):
         fs = _import_fsspec("gcs")
         rest = text.split("://", 1)[1].rstrip("/")

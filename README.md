@@ -114,8 +114,8 @@ no `destination.type: s3`.
 
 | Mode | Allowed lake | Typical use |
 | --- | --- | --- |
-| `local` | filesystem path or `memory://` (tests) | laptop, CI, Compose default |
-| `cloud` | `s3://…` or `gs://…` / `gcs://…` | experimental object store (no CI soak yet) |
+| `local` | filesystem path or `memory://` (tests) | laptop, CI default suite, Compose default |
+| `cloud` | `s3://…` or `gs://…` / `gcs://…` | object store; CI MinIO soak covers extract→Iceberg→`iceberg_scan` |
 
 `--lake-path` cannot bypass mode. `det check` errors on mismatch and warns when
 `mode=cloud`. Compose: `DET_LAKE_MODE` + overridable `DET_LAKE_PATH` (see

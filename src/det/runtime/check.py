@@ -367,8 +367,9 @@ def _lake_mode_findings() -> list[Finding]:
                 pipeline="*",
                 path=spec,
                 detail=(
-                    "DET_LAKE_MODE=cloud: object-store lakes are experimental "
-                    "(no CI soak yet). Prefer DET_LAKE_MODE=local for laptop/CI."
+                    "DET_LAKE_MODE=cloud: CI covers MinIO extract→Iceberg→"
+                    "iceberg_scan; multi-writer object lakes and Glue/REST "
+                    "catalogs are still out of scope."
                 ),
             )
         )
