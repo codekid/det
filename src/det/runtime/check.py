@@ -287,8 +287,10 @@ def check_project(
     Check all pipelines (or one) under the project.
 
     Errors: load / schema / discovered source; ``slo_seed_stale`` when the ops SLO
-    seed does not match pipeline YAML (full-project check only).
-    Warnings: missing dbt stg/silver when ``dbt/`` exists.
+    seed does not match pipeline YAML (full-project check only);
+    ``lake_mode_mismatch`` when ``DET_LAKE_MODE`` disagrees with the lake URI.
+    Warnings: missing dbt stg/silver when ``dbt/`` exists;
+    ``lake_cloud_experimental`` when ``DET_LAKE_MODE=cloud``.
     """
     root = resolve_project_root(project_root)
     load_plugins()
@@ -297,6 +299,8 @@ def check_project(
     if pipeline is not None:
         resolved = resolve_pipeline_ref(pipeline, project_root=root)
         return check_pipeline_config(resolved.path, project_root=root)
+
+    findings.extend(_lake_mode_findings())
 
     paths = discover_pipeline_files(root)
     if not paths:
@@ -314,6 +318,60 @@ def check_project(
     for path in paths:
         findings.extend(check_pipeline_config(path, project_root=root))
     findings.extend(_slo_seed_findings(root))
+    return findings
+
+
+def _lake_mode_findings() -> list[Finding]:
+    """Validate DET_LAKE_MODE against the resolved lake URI (no object I/O)."""
+    from det.runtime.lake import (
+        lake_mode_from_env,
+        pick_lake_spec,
+        validate_lake_mode,
+    )
+
+    findings: list[Finding] = []
+    try:
+        mode = lake_mode_from_env()
+    except ValueError as exc:
+        findings.append(
+            Finding(
+                severity="error",
+                code="lake_mode_invalid",
+                pipeline="*",
+                path=None,
+                detail=str(exc),
+            )
+        )
+        return findings
+
+    spec = pick_lake_spec()
+    try:
+        validate_lake_mode(spec, mode)
+    except ValueError as exc:
+        findings.append(
+            Finding(
+                severity="error",
+                code="lake_mode_mismatch",
+                pipeline="*",
+                path=spec,
+                detail=str(exc),
+            )
+        )
+        return findings
+
+    if mode == "cloud":
+        findings.append(
+            Finding(
+                severity="warning",
+                code="lake_cloud_experimental",
+                pipeline="*",
+                path=spec,
+                detail=(
+                    "DET_LAKE_MODE=cloud: object-store lakes are experimental "
+                    "(no CI soak yet). Prefer DET_LAKE_MODE=local for laptop/CI."
+                ),
+            )
+        )
     return findings
 
 

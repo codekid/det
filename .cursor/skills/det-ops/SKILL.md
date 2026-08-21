@@ -31,7 +31,8 @@ Install: `uv pip install -e ".[mcp]"`.
    - `read_manifest` on a raw run path
    - `list_runs` / `summarize_runs` — extract/load attempts (failures included)
 5. If raw is empty: check extract interval (`-s`/`-e`), source plugin, and lake
-   (`DET_LAKE_PATH` / default `./data/lake` — not a per-pipeline `destination.path`).
+   (`DET_LAKE_MODE` + `DET_LAKE_PATH` / default `./data/lake` — single root; not a
+   per-pipeline `destination.path` and not dual buckets).
    Lake **layout 1** is the current hive (`raw|bronze/{provider}/{source}_vN/…`),
    SQL names, and siblings (`locks/`, `runs/`, `ops/`). Full contract:
    `docs/lake-layout.md`. `wire_version` is only a payload/dataset-era bump.

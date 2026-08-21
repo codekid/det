@@ -5,7 +5,8 @@ DET extracts wire bytes to **raw**, lands typed **bronze**, then **dbt** owns si
 
 Canonical pipeline id is `provider.source` (e.g. `noaa.storm_events`). Interval `-s` is
 inclusive, `-e` exclusive (default start + 1 day). Lake hive/SQL contract:
-[docs/lake-layout.md](docs/lake-layout.md).
+[docs/lake-layout.md](docs/lake-layout.md). Prefer `DET_LAKE_MODE` + `DET_LAKE_PATH`
+(single root); do not invent dual raw/bronze roots.
 
 ## Hard rules
 

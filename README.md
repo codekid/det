@@ -106,8 +106,20 @@ Greenfield: `det init-pipeline --name example_api.events --source-type example_a
 
 ## Destinations
 
-Lake root: `DET_LAKE_PATH` / `--lake-path` (default `./data/lake`). Same hive on
-disk, `s3://…`, or `gs://…` — there is no `destination.type: s3`.
+Lake root: `DET_LAKE_PATH` / `--lake-path` (default `./data/lake`). Same hive under
+one root (`raw/` + `bronze/` prefixes) — dual buckets are not supported. There is
+no `destination.type: s3`.
+
+**`DET_LAKE_MODE`** (policy around the URI; unset → `local`):
+
+| Mode | Allowed lake | Typical use |
+| --- | --- | --- |
+| `local` | filesystem path or `memory://` (tests) | laptop, CI, Compose default |
+| `cloud` | `s3://…` or `gs://…` / `gcs://…` | experimental object store (no CI soak yet) |
+
+`--lake-path` cannot bypass mode. `det check` errors on mismatch and warns when
+`mode=cloud`. Compose: `DET_LAKE_MODE` + overridable `DET_LAKE_PATH` (see
+`airflow/.env.example`). Analytics/ops DuckDB stay on the worker filesystem.
 
 | `destination.type` | Bronze |
 | --- | --- |
@@ -238,3 +250,4 @@ never `dlt.pipeline` for landing.
 | DuckDB lock in Airflow | Absolute `DET_ANALYTICS_DUCKDB`; one dbt process at a time |
 | Cube MCP `cube_unavailable` | `make cube-up`; copy `cube/.env.example` → `cube/.env` |
 | DuckDB lock with Cube | Do not `det dbt` while Cube has that file open |
+| `DET_LAKE_MODE=local forbids…` / `requires an s3://` | Align mode and path: local + filesystem, or cloud + `s3://`/`gs://` |

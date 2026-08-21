@@ -237,3 +237,22 @@ def test_repo_root_smoke():
     assert ("example_api.events", "missing_dbt_models") in codes or not any(
         f.pipeline == "example_api.events" for f in findings
     )
+
+
+def test_lake_mode_mismatch_is_error(tmp_path: Path, monkeypatch):
+    _write_pipeline(tmp_path)
+    monkeypatch.setenv("DET_LAKE_MODE", "local")
+    monkeypatch.setenv("DET_LAKE_PATH", "s3://bucket/det-lake")
+    findings = check_project(tmp_path)
+    assert has_errors(findings)
+    assert any(f.code == "lake_mode_mismatch" for f in findings)
+
+
+def test_lake_cloud_experimental_warning(tmp_path: Path, monkeypatch):
+    _write_pipeline(tmp_path)
+    monkeypatch.setenv("DET_LAKE_MODE", "cloud")
+    monkeypatch.setenv("DET_LAKE_PATH", "s3://bucket/det-lake")
+    findings = check_project(tmp_path)
+    assert not has_errors(findings)
+    assert has_warnings(findings)
+    assert any(f.code == "lake_cloud_experimental" for f in findings)
