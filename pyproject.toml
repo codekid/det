@@ -72,6 +72,7 @@ pythonpath = ["src"]
 markers = [
     "integration: slower end-to-end tests",
     "postgres: live Postgres (skipped unless DET_POSTGRES_DSN is set)",
+    "minio: live MinIO/S3 (skipped unless AWS_ENDPOINT_URL is set)",
 ]
 
 [tool.ruff]

@@ -30,6 +30,8 @@ promises until **`lake_layout: 2`** is published with a changelog entry below.
   **not** bump `lake_layout`. Still one root with `raw/` + `bronze/` under that URI.
 - Object storage uses the same keys under `s3://…` or `gs://…` (no
   `destination.type: s3`). Dual raw/bronze buckets are not supported.
+  Custom endpoints (`AWS_ENDPOINT_URL`, e.g. MinIO) are mapped into Iceberg
+  FileIO properties (`s3.endpoint`, path-style) as well as s3fs.
 
 ### Dataset id (filesystem + Iceberg table path)
 
