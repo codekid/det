@@ -259,3 +259,119 @@ def test_version_hint_is_duckdb_stem_not_file_uri(tmp_path: Path):
     path = str((tmp_path / "lake" / "bronze" / "noaa" / "storm_events_v1").resolve())
     n = con.execute(f"SELECT count(*) FROM iceberg_scan('{path}')").fetchone()[0]
     assert n >= 1
+
+
+def test_iceberg_partition_extract_run_is_single_identity(tmp_path: Path):
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    loc = lake / "bronze" / "noaa" / "storm_events_v1"
+    write_iceberg_table(
+        _records(),
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_noaa",
+        table="storm_events_v1",
+        json_schema=_json_schema(),
+        partition="extract_run",
+    )
+    ice = load_iceberg_table(
+        lake=lake, namespace="bronze_noaa", table="storm_events_v1", table_location=loc
+    )
+    assert ice is not None
+    fields = list(ice.spec().fields)
+    assert len(fields) == 1
+    src = ice.schema().find_field(fields[0].source_id)
+    assert src.name == "__extract_run_datetime"
+    assert str(fields[0].transform) == "identity"
+
+
+def test_iceberg_partition_none_is_unpartitioned(tmp_path: Path):
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    loc = lake / "bronze" / "example_api" / "events_v1"
+    write_iceberg_table(
+        _records(),
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_example_api",
+        table="events_v1",
+        json_schema=_json_schema(),
+        partition="none",
+    )
+    ice = load_iceberg_table(
+        lake=lake,
+        namespace="bronze_example_api",
+        table="events_v1",
+        table_location=loc,
+    )
+    assert ice is not None
+    assert list(ice.spec().fields) == []
+
+
+def test_iceberg_replace_works_when_unpartitioned(tmp_path: Path):
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    loc = lake / "bronze" / "example_api" / "events_v1"
+    schema = _json_schema()
+    write_iceberg_table(
+        _records(),
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_example_api",
+        table="events_v1",
+        json_schema=schema,
+        partition="none",
+    )
+    write_iceberg_table(
+        _records(event_id=99, __row_hash="zzz"),
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_example_api",
+        table="events_v1",
+        json_schema=schema,
+        partition="none",
+    )
+    ice = load_iceberg_table(
+        lake=lake,
+        namespace="bronze_example_api",
+        table="events_v1",
+        table_location=loc,
+    )
+    rows = scan_iceberg_rows(ice, limit=10)
+    assert {r["__row_hash"]: r["event_id"] for r in rows} == {"zzz": 99}
+
+
+def test_iceberg_keeps_live_spec_when_yaml_mismatches(tmp_path: Path):
+    from structlog.testing import capture_logs
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    loc = lake / "bronze" / "noaa" / "storm_events_v1"
+    schema = _json_schema()
+    write_iceberg_table(
+        _records(),
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_noaa",
+        table="storm_events_v1",
+        json_schema=schema,
+        partition="extract_run",
+    )
+    with capture_logs() as logs:
+        write_iceberg_table(
+            _records(
+                event_id=2,
+                __row_hash="sib",
+                __extract_run_datetime="2026-08-06T16:00:00+00:00",
+            ),
+            lake=lake,
+            table_location=loc,
+            namespace="bronze_noaa",
+            table="storm_events_v1",
+            json_schema=schema,
+            partition="none",
+        )
+    ice = load_iceberg_table(
+        lake=lake, namespace="bronze_noaa", table="storm_events_v1", table_location=loc
+    )
+    assert len(list(ice.spec().fields)) == 1
+    warnings = [e for e in logs if e.get("log_level") == "warning"]
+    assert any(
+        "partition YAML does not match" in str(e.get("event", "")) for e in warnings
+    )

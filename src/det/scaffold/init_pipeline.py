@@ -108,6 +108,10 @@ def init_pipeline(
     actions: list[ScaffoldAction] = []
 
     dest: dict = {"type": destination_type}
+    if destination_type == "iceberg":
+        # Default extract_run (identity on __extract_run_datetime). Small /
+        # reference sources should set partition: none.
+        dest["partition"] = "extract_run"
     if lake_path and lake_path.strip() and lake_path.strip() not in {
         DEFAULT_LAKE_REL,
         "data/lake",
@@ -150,6 +154,13 @@ def init_pipeline(
         (pipeline_path, yaml.safe_dump(pipeline_doc, sort_keys=False), "pipeline"),
         (schema_path, yaml.safe_dump(schema_doc, sort_keys=False), "schema"),
     ):
+        if kind == "pipeline" and destination_type == "iceberg":
+            content = content.replace(
+                "  partition: extract_run\n",
+                "  # Small / reference sources: set partition: none\n"
+                "  partition: extract_run\n",
+                1,
+            )
         exists = path.exists()
         if exists and not force:
             actions.append(ScaffoldAction(path=path, action="skip", detail=f"{kind} exists"))

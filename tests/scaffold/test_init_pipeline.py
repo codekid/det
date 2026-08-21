@@ -48,6 +48,7 @@ def test_init_pipeline_writes_and_scaffolds(tmp_path: Path):
     assert "wire_version: 1" in pipe_text
     dest_block = pipe_text.split("destination:", 1)[1].split("medallion:", 1)[0]
     assert "type: iceberg" in dest_block
+    assert "partition: extract_run" in dest_block
     assert "path:" not in dest_block
     stg = (
         tmp_path / "dbt" / "models" / "silver" / "stg_example_api__events.sql"
@@ -117,6 +118,8 @@ def test_init_pipeline_iceberg_omits_path_and_scaffolds_scan(tmp_path: Path):
     pipe_text = result.pipeline_path.read_text(encoding="utf-8")
     dest_block = pipe_text.split("destination:", 1)[1].split("medallion:", 1)[0]
     assert "type: iceberg" in dest_block
+    assert "partition: extract_run" in dest_block
+    assert "Small / reference sources" in dest_block
     assert "path:" not in dest_block
     text = (tmp_path / "dbt" / "models" / "silver" / "sources.yml").read_text(
         encoding="utf-8"

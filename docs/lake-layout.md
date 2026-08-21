@@ -113,6 +113,9 @@ do **not** require a layout bump.
   or migrate as needed).
 - Iceberg catalog implementation (Hadoop on disk vs REST/Glue in prod) — table
   location under `{lake}/bronze/…` stays layout 1.
+- Iceberg **partition spec** (`destination.partition: extract_run` \| `none`) —
+  create-time table property, not hive path keys. Changing it does not rename
+  raw/bronze directories; existing tables keep their live spec until wipe+reload.
 - New optional manifest/receipt fields.
 - Bumping **`receipt_version`** only affects `{lake}/runs/` JSON consumers.
 

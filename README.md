@@ -95,6 +95,7 @@ source:
   type: noaa.storm_events
 destination:
   type: iceberg          # default lake; filesystem = JSONL; duckdb / postgres = SQL
+  partition: extract_run # Iceberg only; omit = extract_run; small tables: none
 wire_version: 1          # lake id is always {name}_vN (including _v1)
 ```
 
@@ -114,6 +115,11 @@ disk, `s3://…`, or `gs://…` — there is no `destination.type: s3`.
 | `filesystem` | Hive JSONL (thin / fixtures). Cannot share that path with Iceberg |
 | `duckdb` | `bronze_{provider}.{source}_vN` — needs `connection` |
 | `postgres` | Same SQL names — `connection_env: DET_POSTGRES_DSN` (never a DSN in YAML) |
+
+Iceberg-only: `destination.partition` is `extract_run` (default — identity on
+`__extract_run_datetime` for load replace / silver watermark) or `none`
+(unpartitioned; use for small tables). Spec applies on **create** only; existing
+tables keep their live spec until wipe+reload. Not the raw hive layout.
 
 `det dbt -p …` sets `DET_BRONZE_SOURCE` from the pipeline (`iceberg` → `iceberg_scan`
 in `sources.yml`). Layout contract: [docs/lake-layout.md](docs/lake-layout.md).

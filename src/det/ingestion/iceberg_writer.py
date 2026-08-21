@@ -14,6 +14,7 @@ from typing import Any
 from det.ingestion.chunks import iter_chunks
 from det.ingestion.sql_replace import require_bronze_run_identity
 from det.logging import get_logger
+from det.runtime.config import IcebergPartition
 from det.runtime.lake import LakeRef
 from det.runtime.meta import identity_iso
 from det.runtime.sql_types import (
@@ -133,24 +134,49 @@ def iceberg_schema_from_columns(columns: list[tuple[str, str]]):
     return Schema(*fields)
 
 
-def iceberg_partition_spec(schema):
-    from pyiceberg.partitioning import PartitionField, PartitionSpec
+def partition_spec_for(mode: IcebergPartition, schema):
+    """Build Iceberg PartitionSpec for YAML ``destination.partition``.
+
+    ``extract_run`` — identity on ``__extract_run_datetime`` only (ETL prune).
+    ``none`` — unpartitioned.
+    """
+    from pyiceberg.partitioning import (
+        UNPARTITIONED_PARTITION_SPEC,
+        PartitionField,
+        PartitionSpec,
+    )
     from pyiceberg.transforms import IdentityTransform
 
-    fields = []
-    field_id = 1000
-    for name in (_START, _END, _RUN):
-        src = schema.find_field(name)
-        fields.append(
-            PartitionField(
-                source_id=src.field_id,
-                field_id=field_id,
-                transform=IdentityTransform(),
-                name=name,
-            )
+    if mode == "none":
+        return UNPARTITIONED_PARTITION_SPEC
+    src = schema.find_field(_RUN)
+    return PartitionSpec(
+        PartitionField(
+            source_id=src.field_id,
+            field_id=1000,
+            transform=IdentityTransform(),
+            name=_RUN,
         )
-        field_id += 1
-    return PartitionSpec(*fields)
+    )
+
+
+def _live_partition_summary(table: Any) -> str:
+    """Human-readable live partition fields for mismatch warnings."""
+    fields = list(table.spec().fields)
+    if not fields:
+        return "none"
+    parts = []
+    for pf in fields:
+        src = table.schema().find_field(pf.source_id)
+        name = src.name if src is not None else str(pf.source_id)
+        parts.append(f"{pf.transform}({name})")
+    return ",".join(parts)
+
+
+def _expected_partition_summary(mode: IcebergPartition) -> str:
+    if mode == "none":
+        return "none"
+    return f"identity({_RUN})"
 
 
 def _as_utc_datetime(value: Any) -> datetime | None:
@@ -235,6 +261,7 @@ def ensure_iceberg_table(
     identifier: tuple[str, str],
     location: str,
     columns: list[tuple[str, str]],
+    partition: IcebergPartition = "extract_run",
 ) -> Any:
     from pyiceberg.exceptions import NoSuchTableError
 
@@ -248,7 +275,19 @@ def ensure_iceberg_table(
             identifier,
             schema=schema,
             location=location,
-            partition_spec=iceberg_partition_spec(schema),
+            partition_spec=partition_spec_for(partition, schema),
+        )
+
+    live_summary = _live_partition_summary(table)
+    expected_summary = _expected_partition_summary(partition)
+    if live_summary != expected_summary:
+        logger.warning(
+            "iceberg partition YAML does not match live table; keeping live spec "
+            "(wipe+reload or migrate to apply)",
+            table=f"{identifier[0]}.{identifier[1]}",
+            yaml_partition=partition,
+            expected=expected_summary,
+            live=live_summary,
         )
 
     live = {field.name: _live_type_name(field.field_type) for field in table.schema().fields}
@@ -304,12 +343,14 @@ def write_iceberg_table(
     table: str,
     json_schema: dict[str, Any],
     chunk_rows: int = 10_000,
+    partition: IcebergPartition = "extract_run",
 ) -> LakeRef:
     """
     Replace-by-extract-run DET bronze write into an Iceberg table.
 
-    Overwrites the three identity partitions, then appends Parquet in one
-    transaction. CREATE types come from ``json_schema``, not row values.
+    Deletes rows matching the three run-identity columns, then appends Parquet
+    in one transaction. ``partition`` applies on create only; existing tables
+    keep their live spec. CREATE types come from ``json_schema``, not row values.
     """
     _require_iceberg()
     chunks = iter_chunks(records, chunk_rows)
@@ -327,6 +368,7 @@ def write_iceberg_table(
         identifier=ident,
         location=location,
         columns=col_types,
+        partition=partition,
     )
     pa_schema = ice_table.schema().as_arrow()
     filt = _run_filter(first_identity)
@@ -358,6 +400,7 @@ def write_iceberg_table(
         table=f"{namespace}.{table}",
         location=location,
         rows=total,
+        partition=partition,
     )
     return table_location
 
