@@ -184,6 +184,38 @@ def _expected_partition_summary(mode: IcebergPartition) -> str:
     return f"identity({_RUN})"
 
 
+def purge_iceberg_table(
+    *,
+    lake: LakeRef,
+    table_location: LakeRef,
+    namespace: str,
+    table: str,
+) -> None:
+    """Remove Iceberg catalog hint and delete the table location tree.
+
+    Idempotent when the table/hint is already absent. Hint-only drop is not
+    enough — orphan metadata/data would block a clean recreate.
+    """
+    from pyiceberg.exceptions import NoSuchTableError
+
+    _require_iceberg()
+    catalog = hadoop_catalog(lake)
+    ident = (namespace, table)
+    location = lake_ref_uri(table_location)
+    catalog.bind_location(ident, location)
+    try:
+        catalog.drop_table(ident)
+    except NoSuchTableError:
+        pass
+    if table_location.exists():
+        table_location.rmtree(ignore_errors=True)
+    logger.info(
+        "purged iceberg table",
+        table=f"{namespace}.{table}",
+        location=location,
+    )
+
+
 def _as_utc_datetime(value: Any) -> datetime | None:
     import pendulum
     from pendulum import DateTime
@@ -286,13 +318,13 @@ def ensure_iceberg_table(
     live_summary = _live_partition_summary(table)
     expected_summary = _expected_partition_summary(partition)
     if live_summary != expected_summary:
-        logger.warning(
-            "iceberg partition YAML does not match live table; keeping live spec "
-            "(wipe+reload or migrate to apply)",
-            table=f"{identifier[0]}.{identifier[1]}",
-            yaml_partition=partition,
-            expected=expected_summary,
-            live=live_summary,
+        raise ValueError(
+            f"iceberg partition YAML ({partition!r} → {expected_summary}) does not "
+            f"match live table {identifier[0]}.{identifier[1]} ({live_summary}). "
+            "Refuse to load/migrate onto the wrong shape. Fix with "
+            "`det migrate … --recreate-iceberg` (purges the bronze table then "
+            "rebuilds from raw in -s/-e) or wipe the table location so the next "
+            "write creates with the YAML profile."
         )
 
     live = {field.name: _live_type_name(field.field_type) for field in table.schema().fields}
@@ -355,7 +387,8 @@ def write_iceberg_table(
 
     Deletes rows matching the three run-identity columns, then appends Parquet
     in one transaction. ``partition`` applies on create only; existing tables
-    keep their live spec. CREATE types come from ``json_schema``, not row values.
+    must match YAML or ``ensure_iceberg_table`` raises (use migrate
+    ``--recreate-iceberg`` to purge and recreate).
     """
     _require_iceberg()
     chunks = iter_chunks(records, chunk_rows)

@@ -306,11 +306,14 @@ def create_server():
         to_bronze: p.ToBronze,
         schema: p.SchemaPath,
         mapper: p.MapperName,
-        interval_start: p.IntervalStart,
+        interval_start: p.IntervalStartOpt = None,
         interval_end: p.IntervalEndOpt = None,
         from_raw: p.FromRawOpt = None,
         validate_limit: p.ValidateLimit = t.MAX_SAMPLE_LIMIT,
         wire_version: p.WireVersionOpt = None,
+        recreate_iceberg: p.RecreateIceberg = False,
+        all_raw: p.AllRaw = False,
+        all_raw_runs: p.AllRawRuns = False,
     ) -> dict[str, Any]:
         """Preview migrate (name/map/validate); never writes bronze."""
         return t.migrate_dry_run(
@@ -323,6 +326,9 @@ def create_server():
             from_raw=from_raw,
             validate_limit=validate_limit,
             wire_version=wire_version,
+            recreate_iceberg=recreate_iceberg,
+            all_raw=all_raw,
+            all_raw_runs=all_raw_runs,
         )
 
     @mcp.tool()

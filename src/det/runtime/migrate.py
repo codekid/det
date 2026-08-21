@@ -29,7 +29,8 @@ from det.runtime.lake import relpath as lake_relpath
 from det.runtime.lease import pipeline_lease
 from det.runtime.load_rows import CountingIter, chain_first, iter_bronze_rows
 from det.runtime.manifest import (
-    is_committed_raw_dir,
+    committed_extract_run_dirs,
+    extract_run_datetime_from_raw,
     read_manifest,
     sha256_file,
     stamp_validation_success,
@@ -90,6 +91,13 @@ class MigratePlan:
     partitions_planned: int = 0
     rows_checked: int = 0
     wire_version_filter: int | None = None
+    recreate_iceberg: bool = False
+    will_drop_table: bool = False
+    table_location: str | None = None
+    yaml_partition: str | None = None
+    recreate_warning: str | None = None
+    all_raw: bool = False
+    all_raw_runs: bool = False
 
     @property
     def ok(self) -> bool:
@@ -108,6 +116,13 @@ class MigratePlan:
             "partitions_planned": self.partitions_planned,
             "rows_checked": self.rows_checked,
             "partitions": [p.to_dict() for p in self.partitions],
+            "recreate_iceberg": self.recreate_iceberg,
+            "will_drop_table": self.will_drop_table,
+            "table_location": self.table_location,
+            "yaml_partition": self.yaml_partition,
+            "recreate_warning": self.recreate_warning,
+            "all_raw": self.all_raw,
+            "all_raw_runs": self.all_raw_runs,
         }
 
 
@@ -121,13 +136,29 @@ def manifest_wire_version(manifest: dict[str, Any]) -> int:
     return value if value >= 1 else 1
 
 
-def _raw_partitions_in_window(
-    raw_dataset: Path | LakeRef, start: str, end: str
+def _raw_partitions_for_migrate(
+    raw_dataset: Path | LakeRef,
+    *,
+    start: str | None,
+    end: str | None,
+    all_raw: bool,
+    all_raw_runs: bool,
 ) -> list[Path | LakeRef]:
     """
-    Leaf raw dirs (…/__extract_run_datetime=…) whose interval start is in [start, end).
+    Committed raw leaves to migrate.
+
+    Default (load parity): latest committed ``__extract_run_datetime`` per
+    interval. With ``all_raw_runs``, every committed sibling. With ``all_raw``,
+    every interval under the dataset (no start-key filter); otherwise only
+    intervals whose start is in ``[start, end)``.
     """
-    start_key, end_key = to_partition_value(start), to_partition_value(end)
+    if not all_raw:
+        if start is None or end is None:
+            raise ValueError("interval start/end required unless all_raw=True")
+        start_key, end_key = to_partition_value(start), to_partition_value(end)
+    else:
+        start_key = end_key = None
+
     parts: list[Path | LakeRef] = []
     if not raw_dataset.exists():
         return parts
@@ -137,20 +168,21 @@ def _raw_partitions_in_window(
         ):
             continue
         key = start_dir.name.split("=", 1)[1]
-        if not (start_key <= key < end_key):
-            continue
+        if start_key is not None and end_key is not None:
+            if not (start_key <= key < end_key):
+                continue
         for end_dir in sorted(start_dir.iterdir()):
             if not end_dir.is_dir() or not end_dir.name.startswith(
                 "__interval_end_datetime="
             ):
                 continue
-            for run_dir in sorted(end_dir.iterdir()):
-                if (
-                    run_dir.is_dir()
-                    and run_dir.name.startswith("__extract_run_datetime=")
-                    and is_committed_raw_dir(run_dir)
-                ):
-                    parts.append(run_dir)
+            runs = committed_extract_run_dirs(end_dir)
+            if not runs:
+                continue
+            if all_raw_runs:
+                parts.extend(runs)
+            else:
+                parts.append(runs[-1])
     return parts
 
 
@@ -170,7 +202,7 @@ class BronzeMigrator:
         to_bronze: str,
         schema_path: Path | str,
         mapper_name: str,
-        interval_start: str,
+        interval_start: str | None = None,
         interval_end: str | None = None,
         from_raw: str | None = None,
         lake_path: str | None = None,
@@ -182,6 +214,9 @@ class BronzeMigrator:
         validate_limit: int | None = None,
         wire_version: int | None = None,
         lock_ttl_sec: int | None = None,
+        recreate_iceberg: bool = False,
+        all_raw: bool = False,
+        all_raw_runs: bool = False,
     ) -> MigrateResult | MigratePlan:
         """
         Rebuild bronze from raw wire using the pipeline's source parser + naming,
@@ -190,13 +225,26 @@ class BronzeMigrator:
         When ``dry_run=True``, parse/map/validate only and return a ``MigratePlan``
         (never calls the bronze writer). ``validate_limit`` caps rows checked per
         partition (dry-run only).
+
+        ``recreate_iceberg`` purges the target Iceberg bronze table location before
+        writing (full table drop). Default raw selection matches load: latest
+        committed extract per interval; bronze ``__extract_run_datetime`` comes
+        from each raw manifest. ``all_raw`` (with recreate) covers every interval;
+        ``all_raw_runs`` rematerializes every raw sibling as its own bronze run.
         """
         if not dry_run and validate_limit is not None:
             raise ValueError("validate_limit is only valid with dry_run=True")
         if wire_version is not None and wire_version < 1:
             raise ValueError("wire_version filter must be a positive integer (>= 1)")
+        if all_raw:
+            if not recreate_iceberg:
+                raise ValueError("--all-raw requires --recreate-iceberg")
+            if interval_start is not None or interval_end is not None:
+                raise ValueError("--all-raw cannot be combined with -s/-e")
+        elif interval_start is None:
+            raise ValueError("-s/--interval-start is required unless --all-raw")
 
-        extract_ts = format_extract_run_datetime()
+        job_ts = format_extract_run_datetime()
         config = (
             pipeline
             if isinstance(pipeline, PipelineConfig)
@@ -211,11 +259,18 @@ class BronzeMigrator:
                 dataset=config.destination.dataset,
                 connection=config.destination.connection,
                 connection_env=config.destination.connection_env,
+                partition=config.destination.partition,
             )
         if bronze_prefix is not None or raw_prefix is not None:
             config.medallion = MedallionConfig(
                 bronze_prefix=bronze_prefix or config.medallion.bronze_prefix,
                 raw_prefix=raw_prefix or config.medallion.raw_prefix,
+            )
+
+        if recreate_iceberg and config.destination.type != "iceberg":
+            raise ValueError(
+                "--recreate-iceberg requires destination.type iceberg, "
+                f"got {config.destination.type!r}"
             )
 
         schema_resolved = (
@@ -228,14 +283,17 @@ class BronzeMigrator:
         mapper = get_mapper(mapper_name)
         source = get_source(config.source.type)
         effective = merge_source_config(source.defaults(), config.source.overrides)
-        window_start, window_end = resolve_interval(interval_start, interval_end)
+        if all_raw:
+            window_start = window_end = None
+        else:
+            window_start, window_end = resolve_interval(interval_start, interval_end)
 
         with bound_run_context(
             command="migrate",
             pipeline=config.name,
             interval_start=window_start,
             interval_end=window_end,
-            extract_run_datetime=extract_ts,
+            extract_run_datetime=job_ts,
             destination=config.destination.type,
             lake=sanitize_lake_uri(str(lake_root(config.destination, self.project_root))),
         ):
@@ -244,7 +302,13 @@ class BronzeMigrator:
             raw_dataset = raw_dataset_dir(
                 config, self.project_root, dataset=raw_name
             )
-            source_parts = _raw_partitions_in_window(raw_dataset, window_start, window_end)
+            source_parts = _raw_partitions_for_migrate(
+                raw_dataset,
+                start=window_start,
+                end=window_end,
+                all_raw=all_raw,
+                all_raw_runs=all_raw_runs,
+            )
             if wire_version is not None:
                 filtered: list[Path | LakeRef] = []
                 for part in source_parts:
@@ -255,6 +319,22 @@ class BronzeMigrator:
                     if manifest_wire_version(part_manifest) == wire_version:
                         filtered.append(part)
                 source_parts = filtered
+
+            if all_raw and source_parts:
+                starts: list[str] = []
+                ends: list[str] = []
+                for part in source_parts:
+                    try:
+                        man = read_manifest(part)
+                        s, e = resolve_interval(
+                            str(man["interval_start"]), str(man["interval_end"])
+                        )
+                        starts.append(s)
+                        ends.append(e)
+                    except Exception:
+                        continue
+                if starts and ends:
+                    window_start, window_end = min(starts), max(ends)
 
             # Keep name == source.type; _lake_id overrides the target lake/SQL identity.
             to_config = PipelineConfig(
@@ -273,6 +353,29 @@ class BronzeMigrator:
             )
             to_config._lake_id = to_bronze_id
 
+            bronze_loc = bronze_dataset_dir(
+                to_config, self.project_root, dataset=to_bronze_id
+            )
+            recreate_warning = None
+            yaml_partition = None
+            if recreate_iceberg:
+                yaml_partition = to_config.destination.iceberg_partition
+                scope = (
+                    "all committed raw intervals"
+                    if all_raw
+                    else f"raw partitions in [{window_start}, {window_end})"
+                )
+                runs_note = (
+                    " every raw extract-run sibling"
+                    if all_raw_runs
+                    else " latest raw extract per interval (load parity)"
+                )
+                recreate_warning = (
+                    "Will DROP the entire Iceberg bronze table at "
+                    f"{bronze_loc}, then rewrite {scope} ({runs_note}). "
+                    "Bronze data outside the rewrite set is destroyed."
+                )
+
             if dry_run:
                 return self._migrate_dry_run(
                     config=config,
@@ -286,11 +389,38 @@ class BronzeMigrator:
                     raw_name=raw_name,
                     to_bronze_id=to_bronze_id,
                     source_parts=source_parts,
-                    window_start=window_start,
-                    window_end=window_end,
-                    extract_ts=extract_ts,
+                    window_start=window_start or job_ts,
+                    window_end=window_end or job_ts,
                     validate_limit=validate_limit,
                     wire_version_filter=wire_version,
+                    recreate_iceberg=recreate_iceberg,
+                    will_drop_table=recreate_iceberg,
+                    table_location=_rel(bronze_loc, self.project_root),
+                    yaml_partition=yaml_partition,
+                    recreate_warning=recreate_warning,
+                    all_raw=all_raw,
+                    all_raw_runs=all_raw_runs,
+                )
+
+            if recreate_iceberg:
+                from det.ingestion.iceberg_writer import purge_iceberg_table
+                from det.runtime.ids import sql_names_for_config
+
+                sql_schema, sql_table = sql_names_for_config(to_config)
+                logger.warning(
+                    "recreate_iceberg purging bronze table before migrate",
+                    table=f"{sql_schema}.{sql_table}",
+                    location=str(bronze_loc),
+                    interval_start=window_start,
+                    interval_end=window_end,
+                    all_raw=all_raw,
+                    all_raw_runs=all_raw_runs,
+                )
+                purge_iceberg_table(
+                    lake=lake_root(to_config.destination, self.project_root),
+                    table_location=bronze_loc,
+                    namespace=sql_schema,
+                    table=sql_table,
                 )
 
             backend = get_ingestion(ingestion_library)
@@ -299,6 +429,7 @@ class BronzeMigrator:
 
             for raw_dir in source_parts:
                 manifest = read_manifest(raw_dir)
+                extract_ts = extract_run_datetime_from_raw(manifest, raw_dir)
                 start_iso = str(manifest.get("interval_start") or window_start)
                 end_iso = str(manifest.get("interval_end") or window_end)
                 start_iso, end_iso = resolve_interval(start_iso, end_iso)
@@ -356,7 +487,10 @@ class BronzeMigrator:
                     total_rows += counted.n
                     written += 1
                     logger.info(
-                        "migrated raw partition", raw_dir=str(raw_dir), rows=counted.n
+                        "migrated raw partition",
+                        raw_dir=str(raw_dir),
+                        rows=counted.n,
+                        extract_run_datetime=extract_ts,
                     )
 
             return MigrateResult(
@@ -382,9 +516,15 @@ class BronzeMigrator:
         source_parts: list[Path],
         window_start: str,
         window_end: str,
-        extract_ts: str,
         validate_limit: int | None,
         wire_version_filter: int | None = None,
+        recreate_iceberg: bool = False,
+        will_drop_table: bool = False,
+        table_location: str | None = None,
+        yaml_partition: str | None = None,
+        recreate_warning: str | None = None,
+        all_raw: bool = False,
+        all_raw_runs: bool = False,
     ) -> MigratePlan:
         plans: list[PartitionPlan] = []
         rows_checked = 0
@@ -402,10 +542,27 @@ class BronzeMigrator:
                         would_write_bronze_path=None,
                         interval_start=window_start,
                         interval_end=window_end,
-                        extract_run_datetime=extract_ts,
+                        extract_run_datetime="",
                         rows=0,
                         ok=False,
                         errors=[f"manifest: {exc}"],
+                    )
+                )
+                continue
+
+            try:
+                extract_ts = extract_run_datetime_from_raw(manifest, raw_dir)
+            except ValueError as exc:
+                plans.append(
+                    PartitionPlan(
+                        raw_path=_rel(raw_dir, self.project_root),
+                        would_write_bronze_path=None,
+                        interval_start=window_start,
+                        interval_end=window_end,
+                        extract_run_datetime="",
+                        rows=0,
+                        ok=False,
+                        errors=[str(exc)],
                     )
                 )
                 continue
@@ -474,17 +631,26 @@ class BronzeMigrator:
                 rows=len(named_rows),
                 ok=part_ok,
                 wire_version=part_wire,
+                extract_run_datetime=extract_ts,
             )
 
+        plan_extract = plans[0].extract_run_datetime if plans else ""
         return MigratePlan(
             dry_run=True,
             from_raw=raw_name,
             to_bronze=to_bronze_id,
             mapper_name=mapper_name,
             schema_path=schema_rel,
-            extract_run_datetime=extract_ts,
+            extract_run_datetime=plan_extract,
             partitions=plans,
             partitions_planned=len(plans),
             rows_checked=rows_checked,
             wire_version_filter=wire_version_filter,
+            recreate_iceberg=recreate_iceberg,
+            will_drop_table=will_drop_table,
+            table_location=table_location,
+            yaml_partition=yaml_partition,
+            recreate_warning=recreate_warning,
+            all_raw=all_raw,
+            all_raw_runs=all_raw_runs,
         )

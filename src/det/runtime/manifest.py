@@ -49,6 +49,43 @@ def is_committed_raw_dir(raw_dir: LakePath) -> bool:
     return isinstance(data, dict)
 
 
+def committed_extract_run_dirs(interval_end_dir: LakePath) -> list[LakePath]:
+    """
+    Committed ``__extract_run_datetime=…`` leaves under one interval end dir.
+
+    Sorted by hive name (same order as load's latest-pick: ``runs[-1]``).
+    """
+    if not interval_end_dir.exists():
+        return []
+    return sorted(
+        (
+            p
+            for p in interval_end_dir.iterdir()
+            if p.is_dir()
+            and p.name.startswith("__extract_run_datetime=")
+            and is_committed_raw_dir(p)
+        ),
+        key=lambda p: p.name,
+    )
+
+
+def extract_run_datetime_from_raw(
+    manifest: dict[str, Any], raw_dir: LakePath
+) -> str:
+    """Bronze/load identity: manifest extract_run, else hive leaf value."""
+    from det.runtime.meta import from_partition_value, to_interval_datetime
+
+    raw = manifest.get("extract_run_datetime")
+    if raw is not None and str(raw).strip():
+        return to_interval_datetime(str(raw))
+    name = getattr(raw_dir, "name", "") or ""
+    if name.startswith("__extract_run_datetime="):
+        return from_partition_value(name.split("=", 1)[1])
+    raise ValueError(
+        f"raw partition {raw_dir} has no extract_run_datetime in manifest or path"
+    )
+
+
 def write_manifest(raw_dir: LakePath, payload: dict[str, Any]) -> LakePath:
     """
     Publish the extract commit object.

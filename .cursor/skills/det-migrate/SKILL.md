@@ -70,12 +70,46 @@ det migrate -p <pipeline> \
 # History rebuild after a wire bump (config already at v2)
 # det migrate -p provider.source \
 #   --from-raw provider.source_v1 --to-bronze provider.source_v2 …
+
+# Iceberg partition profile change (or incompatible types): purge table then rewrite
+# WARNING: drops the *entire* bronze Iceberg table.
+# Preferred: all intervals, latest raw extract per interval (load parity):
+# det migrate -p … --to-bronze … --schema … --mapper … \
+#   --recreate-iceberg --all-raw
+# Windowed: … -s … -e … --recreate-iceberg
+# Every raw sibling as its own bronze run: add --all-raw-runs
 ```
 
 CLI preview: `det migrate … --dry-run` (optional `--validate-limit N`,
-`--wire-version N`).
+`--wire-version N`, `--recreate-iceberg`, `--all-raw`, `--all-raw-runs`).
+MCP `migrate_dry_run` accepts the same flags on `approval_plan`.
 
 Optional: `--from-raw`, `--lake-path`, `--ingestion thin`.
+
+### Load parity (raw selection)
+
+Migrate matches **`det load`** by default:
+
+- **Latest** committed raw `__extract_run_datetime` per interval (not every sibling).
+- Bronze `__extract_run_datetime` comes from the **raw manifest** (not a migrate job clock).
+- `--all-raw-runs` rematerializes every committed raw sibling as its own bronze run.
+
+### `--recreate-iceberg`
+
+Use when YAML `destination.partition` disagrees with the live Iceberg table
+(load/migrate **hard-fail** otherwise), or after an incompatible bronze type
+change you intend to wipe. Flow:
+
+1. `migrate_dry_run(..., recreate_iceberg=True)` — optionally `all_raw=True` —
+   check `will_drop_table` / `recreate_warning`.
+2. User confirms → `det approve --plan …`.
+3. Later: `det migrate … --recreate-iceberg [--all-raw] --approval apr_…`.
+
+Preferred full rebuild: `--recreate-iceberg --all-raw` (no `-s`/`-e`).
+`--all-raw` requires recreate and cannot combine with `-s`/`-e`.
+
+Do **not** use plain migrate to “evolve” partitions — it never changes the live
+spec.
 
 ## Hard rules
 
@@ -84,3 +118,5 @@ Optional: `--from-raw`, `--lake-path`, `--ingestion thin`.
   a writing `det migrate`. Never chain dry-run → apply in one turn.
 - Do not suggest `dlt.pipeline` for landing.
 - Prune never deletes `raw/`; migrate rebuilds bronze from raw only.
+- `--recreate-iceberg` destroys bronze outside `-s`/`-e`; pass a window that
+  covers all history you want kept.
