@@ -24,6 +24,7 @@ jobs:
           --health-retries 5
     env:
       DET_POSTGRES_DSN: postgresql://det:det@localhost:5432/det
+      DET_LAKE_MODE: local
       DET_LAKE_PATH: ${{ github.workspace }}/data/lake
       DET_ANALYTICS_DUCKDB: ${{ github.workspace }}/data/analytics.duckdb
       DET_OPS_DUCKDB: ${{ github.workspace }}/data/det_ops.duckdb

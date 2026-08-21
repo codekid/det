@@ -2,6 +2,9 @@
 
 The lake root is a runtime location (default ``./data/lake``), not a per-pipeline
 contract. ``destination.type`` still only chooses bronze serving.
+
+``DET_LAKE_MODE`` (local|cloud) is policy around the URI shape — not a second
+writer path. Unset defaults to local.
 """
 
 from __future__ import annotations
@@ -15,15 +18,64 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any, Literal
 
+from det.logging import get_logger
+
+logger = get_logger(__name__)
+
 DEFAULT_LAKE_REL = "./data/lake"
+ENV_LAKE_MODE = "DET_LAKE_MODE"
+LakeMode = Literal["local", "cloud"]
 _OBJECT_SCHEMES = ("s3://", "gs://", "gcs://")
 _MEMORY_STORES: dict[str, dict[str, bytes]] = {}
 _MEMORY_DIRS: dict[str, set[str]] = {}
+_CLOUD_EXPERIMENTAL_WARNED = False
 
 
 def is_lake_uri(spec: str) -> bool:
     text = (spec or "").strip()
     return text.startswith((*_OBJECT_SCHEMES, "memory://"))
+
+
+def is_object_lake_spec(spec: str) -> bool:
+    text = (spec or "").strip()
+    return text.startswith(_OBJECT_SCHEMES)
+
+
+def lake_mode_from_env(env: Mapping[str, str] | None = None) -> LakeMode:
+    """Parse ``DET_LAKE_MODE``. Unset or empty → ``local``."""
+    environ = os.environ if env is None else env
+    raw = (environ.get(ENV_LAKE_MODE) or "").strip().lower()
+    if not raw:
+        return "local"
+    if raw in {"local", "cloud"}:
+        return raw  # type: ignore[return-value]
+    raise ValueError(
+        f"{ENV_LAKE_MODE} must be 'local' or 'cloud', got {raw!r}"
+    )
+
+
+def validate_lake_mode(spec: str, mode: LakeMode) -> None:
+    """Raise ``ValueError`` when lake URI shape disagrees with ``DET_LAKE_MODE``."""
+    text = (spec or "").strip() or DEFAULT_LAKE_REL
+    if mode == "local":
+        if is_object_lake_spec(text):
+            raise ValueError(
+                f"DET_LAKE_MODE=local forbids object-store lakes "
+                f"(got {text!r}); use a filesystem path or set "
+                f"{ENV_LAKE_MODE}=cloud"
+            )
+        return
+    # cloud
+    if text.startswith("memory://"):
+        raise ValueError(
+            f"DET_LAKE_MODE=cloud forbids memory:// lakes (got {text!r}); "
+            f"use s3:// or gs://, or set {ENV_LAKE_MODE}=local"
+        )
+    if not is_object_lake_spec(text):
+        raise ValueError(
+            f"DET_LAKE_MODE=cloud requires an s3:// or gs:// lake "
+            f"(got {text!r}); set {ENV_LAKE_MODE}=local for filesystem lakes"
+        )
 
 
 def pick_lake_spec(
@@ -51,9 +103,25 @@ def pick_lake_spec(
     return DEFAULT_LAKE_REL
 
 
-def open_lake(spec: str, project_root: Path) -> LakeRef:
+def open_lake(
+    spec: str,
+    project_root: Path,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> LakeRef:
     """Open a lake root. Never pass a URI through ``pathlib.Path``."""
+    global _CLOUD_EXPERIMENTAL_WARNED
     text = (spec or "").strip() or DEFAULT_LAKE_REL
+    mode = lake_mode_from_env(env)
+    validate_lake_mode(text, mode)
+    if mode == "cloud" and not _CLOUD_EXPERIMENTAL_WARNED:
+        logger.warning(
+            "object-store lake is experimental (no CI soak yet); "
+            "Iceberg on s3/gs may fail without det[s3]/det[gcs] and credentials",
+            lake_mode=mode,
+            lake=text,
+        )
+        _CLOUD_EXPERIMENTAL_WARNED = True
     if text.startswith("memory://"):
         return _open_memory(text)
     if text.startswith("s3://"):
@@ -75,6 +143,12 @@ def open_lake(spec: str, project_root: Path) -> LakeRef:
 def clear_memory_lakes() -> None:
     _MEMORY_STORES.clear()
     _MEMORY_DIRS.clear()
+
+
+def reset_lake_mode_warning_for_tests() -> None:
+    """Test helper: allow the cloud experimental warning to fire again."""
+    global _CLOUD_EXPERIMENTAL_WARNED
+    _CLOUD_EXPERIMENTAL_WARNED = False
 
 
 def relpath(path: Path | LakeRef, root: Path) -> str:

@@ -9,11 +9,15 @@ import yaml
 
 from det.runtime.lake import (
     DEFAULT_LAKE_REL,
+    ENV_LAKE_MODE,
     LakeRef,
     clear_memory_lakes,
     is_lake_uri,
+    lake_mode_from_env,
     open_lake,
     pick_lake_spec,
+    reset_lake_mode_warning_for_tests,
+    validate_lake_mode,
 )
 from det.runtime.manifest import is_committed_raw_dir, read_manifest, write_manifest
 from det.runtime.runner import PipelineRunner
@@ -22,10 +26,13 @@ from det.sources.http import http_get_file
 
 
 @pytest.fixture(autouse=True)
-def _reset_memory():
+def _reset_memory(monkeypatch: pytest.MonkeyPatch):
     clear_memory_lakes()
+    reset_lake_mode_warning_for_tests()
+    monkeypatch.delenv(ENV_LAKE_MODE, raising=False)
     yield
     clear_memory_lakes()
+    reset_lake_mode_warning_for_tests()
 
 
 def test_pick_lake_spec_order():
@@ -69,6 +76,8 @@ def test_open_lake_local_does_not_use_uri_path(tmp_path: Path):
 
 
 def test_open_s3_without_extra_hints_install(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(ENV_LAKE_MODE, "cloud")
+
     def fail(extra: str):
         raise ImportError(
             f"Object lake {extra} requires the optional extra: pip install 'det[{extra}]'"
@@ -80,6 +89,8 @@ def test_open_s3_without_extra_hints_install(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_open_gcs_without_extra_hints_install(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(ENV_LAKE_MODE, "cloud")
+
     def fail(extra: str):
         raise ImportError(
             f"Object lake {extra} requires the optional extra: pip install 'det[{extra}]'"
@@ -209,6 +220,7 @@ def test_http_get_file_memory_upload_and_retry_deletes(
 
 def test_path_constructor_never_used_for_s3(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Regression: pathlib.Path mangles s3:// into a relative local path."""
+    monkeypatch.setenv(ENV_LAKE_MODE, "cloud")
 
     def boom(*args, **kwargs):
         raise AssertionError("Path() must not wrap object-store lake URIs")
@@ -218,7 +230,58 @@ def test_path_constructor_never_used_for_s3(monkeypatch: pytest.MonkeyPatch, tmp
     monkeypatch.setattr(lake_mod, "_import_fsspec", boom)
     with pytest.raises(AssertionError, match="must not wrap"):
         open_lake("s3://bucket/prefix", tmp_path)
+
+    monkeypatch.setenv(ENV_LAKE_MODE, "local")
     # Local Path wrapping still works.
     local = open_lake("./data/lake", tmp_path)
     assert isinstance(local, LakeRef)
     assert local.is_local
+
+
+def test_lake_mode_from_env_defaults_and_parse(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv(ENV_LAKE_MODE, raising=False)
+    assert lake_mode_from_env() == "local"
+    assert lake_mode_from_env({}) == "local"
+    assert lake_mode_from_env({ENV_LAKE_MODE: ""}) == "local"
+    assert lake_mode_from_env({ENV_LAKE_MODE: "LOCAL"}) == "local"
+    assert lake_mode_from_env({ENV_LAKE_MODE: "cloud"}) == "cloud"
+    with pytest.raises(ValueError, match="must be 'local' or 'cloud'"):
+        lake_mode_from_env({ENV_LAKE_MODE: "hybrid"})
+
+
+def test_validate_lake_mode_local_rejects_object_uris():
+    validate_lake_mode("./data/lake", "local")
+    validate_lake_mode("memory://t", "local")
+    with pytest.raises(ValueError, match="DET_LAKE_MODE=local forbids"):
+        validate_lake_mode("s3://bucket/prefix", "local")
+    with pytest.raises(ValueError, match="DET_LAKE_MODE=local forbids"):
+        validate_lake_mode("gs://bucket/prefix", "local")
+
+
+def test_validate_lake_mode_cloud_rejects_local_and_memory():
+    validate_lake_mode("s3://bucket/prefix", "cloud")
+    validate_lake_mode("gs://bucket/prefix", "cloud")
+    validate_lake_mode("gcs://bucket/prefix", "cloud")
+    with pytest.raises(ValueError, match="DET_LAKE_MODE=cloud requires"):
+        validate_lake_mode("./data/lake", "cloud")
+    with pytest.raises(ValueError, match="DET_LAKE_MODE=cloud forbids memory"):
+        validate_lake_mode("memory://t", "cloud")
+
+
+def test_open_lake_enforces_mode_before_import(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    called = {"n": 0}
+
+    def boom(extra: str):
+        called["n"] += 1
+        raise AssertionError("import should not run when mode rejects")
+
+    monkeypatch.setattr("det.runtime.lake._import_fsspec", boom)
+    # Default local rejects s3 before fsspec import.
+    with pytest.raises(ValueError, match="DET_LAKE_MODE=local forbids"):
+        open_lake("s3://bucket/prefix", tmp_path)
+    assert called["n"] == 0
+
+    monkeypatch.setenv(ENV_LAKE_MODE, "cloud")
+    with pytest.raises(ValueError, match="DET_LAKE_MODE=cloud requires"):
+        open_lake("./data/lake", tmp_path)
+    assert called["n"] == 0

@@ -26,8 +26,10 @@ promises until **`lake_layout: 2`** is published with a changelog entry below.
 ### Lake root
 
 - Single root: `DET_LAKE_PATH` / `--lake-path` / rare `destination.path`.
+- `DET_LAKE_MODE` (`local`|`cloud`, default `local`) only guards URI shape; it does
+  **not** bump `lake_layout`. Still one root with `raw/` + `bronze/` under that URI.
 - Object storage uses the same keys under `s3://…` or `gs://…` (no
-  `destination.type: s3`).
+  `destination.type: s3`). Dual raw/bronze buckets are not supported.
 
 ### Dataset id (filesystem + Iceberg table path)
 
