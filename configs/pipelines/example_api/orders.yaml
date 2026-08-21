@@ -12,6 +12,8 @@ ingestion:
   library: det
 destination:
   type: iceberg
+  # Small table — unpartitioned; large feeds use extract_run (Iceberg default).
+  partition: none
 medallion:
   bronze_prefix: bronze
   raw_prefix: raw

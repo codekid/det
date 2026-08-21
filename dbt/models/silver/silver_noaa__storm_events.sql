@@ -1,7 +1,9 @@
 {{
     config(
-        materialized="table",
+        materialized="incremental",
         schema="silver_noaa",
+        unique_key=["__row_hash"],
+        incremental_strategy="delete+insert",
     )
 }}
 
@@ -9,6 +11,12 @@
 with base as (
     select *
     from {{ ref("stg_noaa__storm_events") }}
+    {% if is_incremental() %}
+    where __extract_run_datetime > (
+        select coalesce(max(__extract_run_datetime), '0001-01-01')
+        from {{ this }}
+    )
+    {% endif %}
 ),
 deduped as (
     {{ det_dedupe_latest_run(

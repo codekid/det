@@ -44,6 +44,10 @@ class IngestionConfig(BaseModel):
     chunk_rows: int = Field(default=10_000, ge=1)
 
 
+# Iceberg bronze partition profile (create-time only; not hive layout).
+IcebergPartition = Literal["extract_run", "none"]
+
+
 class DestinationConfig(BaseModel):
     # Lake bronze default. ``filesystem`` is explicit JSONL (thin/dev).
     type: Literal["filesystem", "duckdb", "postgres", "iceberg"] = "iceberg"
@@ -59,6 +63,10 @@ class DestinationConfig(BaseModel):
     # postgres only: name of the env var holding the DSN, mirroring auth_env on a
     # source. Preferred over connection so credentials never live in committed YAML.
     connection_env: str | None = None
+    # Iceberg only: identity on ``__extract_run_datetime`` (ETL default) or
+    # unpartitioned. Applied on create_table; existing tables keep their live spec.
+    # Omit when type is iceberg → extract_run. Forbidden on other destination types.
+    partition: IcebergPartition | None = None
 
     @model_validator(mode="after")
     def connection_required_for_db_destinations(self) -> DestinationConfig:
@@ -92,6 +100,26 @@ class DestinationConfig(BaseModel):
                 "required when destination.type is postgres"
             )
         return self
+
+    @model_validator(mode="after")
+    def partition_iceberg_only(self) -> DestinationConfig:
+        if self.partition is not None and self.type != "iceberg":
+            raise ValueError(
+                "destination.partition is only supported when destination.type is "
+                f"iceberg, got {self.type}"
+            )
+        if self.type == "iceberg" and self.partition is None:
+            self.partition = "extract_run"
+        return self
+
+    @property
+    def iceberg_partition(self) -> IcebergPartition:
+        """Resolved Iceberg partition profile (default extract_run)."""
+        if self.type != "iceberg":
+            raise ValueError(
+                f"iceberg_partition requires destination.type iceberg, got {self.type}"
+            )
+        return self.partition or "extract_run"
 
 
 class MedallionConfig(BaseModel):

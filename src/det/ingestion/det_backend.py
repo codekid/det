@@ -151,6 +151,7 @@ class DetBackend:
             table=table,
             json_schema=json_schema,
             chunk_rows=chunk_rows,
+            partition=config.destination.iceberg_partition,
         )
         logger.info(
             "iceberg load finished",

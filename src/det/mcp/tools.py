@@ -174,6 +174,11 @@ def describe_pipeline(pipeline: str, *, root: Path | None = None) -> dict[str, A
             "medallion_prefix": config.destination.dataset or "bronze",
             "connection": _connection_display(config.destination),
             "connection_env": config.destination.connection_env,
+            "partition": (
+                config.destination.partition
+                if config.destination.type == "iceberg"
+                else None
+            ),
             "sql_schema": sql_schema,
             "sql_table": sql_table,
         },
