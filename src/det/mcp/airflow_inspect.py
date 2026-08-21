@@ -420,16 +420,23 @@ def preview_backfill_conf(
 ) -> dict[str, Any]:
     """Preview backfill trigger conf + logical dates. Never triggers a DagRun."""
     _ = root
+    from det.runtime.approval import backfill_write_argv, make_plan
+
     try:
         logical_dates = daily_logical_dates_for_interval(interval_start, interval_end)
     except ValueError as exc:
         return {"ok": False, "error": "invalid_interval", "detail": str(exc)}
 
+    start = interval_start.strip()[:10]
+    end = interval_end.strip()[:10]
     conf = {
-        "interval_start": interval_start.strip()[:10],
-        "interval_end": interval_end.strip()[:10],
+        "interval_start": start,
+        "interval_end": end,
     }
-    conf_json = json.dumps(conf)
+    argv = backfill_write_argv(start, end)
+    plan = make_plan("backfill", argv)
+    conf_with_approval = {**conf, "approval": "apr_…"}
+    conf_json = json.dumps(conf_with_approval)
     compose_hint = (
         "cd airflow && docker compose exec airflow-scheduler "
         f"airflow dags trigger det_backfill_extract_bronze --conf '{conf_json}'"
@@ -441,15 +448,18 @@ def preview_backfill_conf(
         "ok": True,
         "dag_id": "det_backfill_extract_bronze",
         "conf": conf,
-        "conf_json": conf_json,
+        "conf_json": json.dumps(conf),
         "logical_dates": logical_dates,
         "day_count": len(logical_dates),
+        "approval_plan": plan.to_dict(),
         "suggested_commands": {
             "compose": compose_hint,
             "generic": generic_hint,
         },
         "note": (
             "Dry-run only — MCP never triggers DagRuns. "
-            "Use Compose hint locally or generic CLI against a remote Airflow."
+            "Operator: det approve --plan <approval_plan> --approved-by <id>, "
+            "then trigger with conf.approval set to that apr_…. "
+            "Child extract DagRuns stay approval-free."
         ),
     }

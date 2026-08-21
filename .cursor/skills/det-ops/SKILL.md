@@ -148,6 +148,8 @@ value, do not paste it into YAML.
    `det approve --plan <json> --approved-by <id>` (or `--command` / `--argv-json`).
    Apply in a **later** turn: `det prune -p … -s … --keep N --apply --approval apr_…`.
    `DET_REQUIRE_APPROVAL=1` (or `--require-approval`) makes `--approval` mandatory.
+   Airflow prune-apply uses the same approval id in DagRun conf
+   (`{"approval":"apr_…"}` with `DET_PRUNE_APPLY=1`); MCP never triggers that.
 
 ## Scaffold / init from pipeline
 

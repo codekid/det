@@ -11,6 +11,11 @@ Env:
   DET_PRUNE=1              — run prune after load (default off)
   DET_PRUNE_APPLY=1        — actually delete (otherwise dry-run plan only)
   DET_PRUNE_KEEP=1         — newest extract runs to keep per interval
+
+Prune **apply** requires DagRun conf ``{"approval": "apr_…"}`` matching the same
+argv as ``det prune … --apply`` / MCP ``prune_dry_run`` ``approval_plan`` (after
+``det approve``). Scheduled extract/load never need approvals. Do not set
+``DET_REQUIRE_APPROVAL=1`` on Compose for the scheduler.
 """
 
 from __future__ import annotations
@@ -20,8 +25,12 @@ from datetime import datetime
 
 from airflow.decorators import dag, task
 from det_env import (
+    approval_id_from_conf,
+    consume_prune_approval,
     env_flag,
+    gate_prune_apply_approval,
     lock_ttl_sec_from_conf,
+    merge_dag_conf,
     pipeline_overrides,
     pipeline_path,
     project_root,
@@ -108,6 +117,8 @@ def det_extract_bronze():
         if not env_flag("DET_PRUNE"):
             return {"skipped": True, "reason": "DET_PRUNE not set"}
 
+        from airflow.operators.python import get_current_context
+
         from det.runtime.config import load_pipeline_config
         from det.runtime.prune import BronzePruner
 
@@ -121,18 +132,45 @@ def det_extract_bronze():
             interval_end=load_info["interval_end"],
             keep=keep,
         )
+        if not apply:
+            return {
+                "skipped": False,
+                "apply": False,
+                "keep": keep,
+                "would_remove": plan.remove_count,
+                "removed": 0,
+            }
+
+        context = get_current_context()
+        dag_run = context.get("dag_run")
+        merged = merge_dag_conf(
+            getattr(dag_run, "conf", None) if dag_run else None,
+            context.get("params"),
+        )
+        approval_id = approval_id_from_conf(merged)
+        gate_prune_apply_approval(
+            PROJECT_ROOT,
+            pipeline=config.name,
+            interval_start=load_info["interval_start"],
+            interval_end=load_info["interval_end"],
+            keep=keep,
+            approval_id=approval_id,
+        )
         removed = pruner.apply(
             config,
             plan,
             interval_start=load_info["interval_start"],
             interval_end=load_info["interval_end"],
-        ) if apply else 0
+        )
+        assert approval_id is not None  # gate_prune_apply_approval require=True
+        consume_prune_approval(PROJECT_ROOT, approval_id)
         return {
             "skipped": False,
-            "apply": apply,
+            "apply": True,
             "keep": keep,
             "would_remove": plan.remove_count,
             "removed": removed,
+            "approval": approval_id,
         }
 
     extracted = extract_raw()

@@ -155,9 +155,20 @@ def test_preview_backfill_conf():
     }
     assert len(out["logical_dates"]) == 2
     assert "docker compose exec" in out["suggested_commands"]["compose"]
+    assert "apr_" in out["suggested_commands"]["generic"]
     assert out["suggested_commands"]["generic"].startswith(
         "airflow dags trigger det_backfill_extract_bronze"
     )
+    ap = out["approval_plan"]
+    assert ap["command"] == "backfill"
+    assert ap["argv"] == [
+        "backfill",
+        "--interval-start",
+        "2026-08-01",
+        "--interval-end",
+        "2026-08-03",
+    ]
+    assert ap["plan_digest"]
 
 
 def test_det_dag_ids_include_clear_lock():

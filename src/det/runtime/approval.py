@@ -349,6 +349,19 @@ def prune_write_argv(
     return argv
 
 
+def backfill_write_argv(interval_start: str, interval_end: str) -> list[str]:
+    """Canonical argv for approving an Airflow backfill window (not a det CLI verb)."""
+    start = interval_start.strip()[:10]
+    end = interval_end.strip()[:10]
+    return [
+        "backfill",
+        "--interval-start",
+        start,
+        "--interval-end",
+        end,
+    ]
+
+
 def init_pipeline_write_argv(
     name: str,
     source_type: str,
