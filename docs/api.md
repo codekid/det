@@ -122,6 +122,10 @@ These have their own `__all__` and are SemVer-stable for plugin authors:
 | --- | --- |
 | `det.sources.http_json` | JSON page artifacts, bearer token helper |
 | `det.sources.http` | Retried GET / file download |
+| `det.testing` | Plugin-author test helpers (`TestProject`, `run_extract_load`, …) |
+
+Optional pytest fixtures: `pytest_plugins = ["det.testing.pytest"]` (requires
+pytest; not imported by the core helpers).
 
 ---
 
@@ -144,7 +148,6 @@ These have their own `__all__` and are SemVer-stable for plugin authors:
 
 | Feature | Issue |
 | --- | --- |
-| `det.testing` | [#30](https://github.com/codekid/det/issues/30) |
 | Operator vs library getting started polish | [#33](https://github.com/codekid/det/issues/33) |
 
 Epic: [#24](https://github.com/codekid/det/issues/24).

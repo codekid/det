@@ -45,3 +45,41 @@ Catch operational failures with `except DetError`. Call `configure_logging()` at
 the process edge (or BYO structlog + `drop_secrets` / `scrub_secrets`).
 
 Lake object-store credentials stay AWS_/GCP env conventions — not on `DetSettings`.
+
+## Testing plugins
+
+`det.testing` ships in the base install (no extra). Framework-neutral helpers
+plus optional pytest fixtures:
+
+```python
+from det.testing import (
+    TestProject,
+    run_extract_load,
+    assert_raw_contract,
+    assert_no_dlt_artifacts,
+    register_source_for_tests,
+    isolated_registries,
+)
+
+def test_acme_smoke(tmp_path):
+    # project-local plugin already at sources/acme/tickets.py, or:
+    with isolated_registries():
+        register_source_for_tests("acme.tickets", AcmeTicketsSource)
+        proj = TestProject(tmp_path)
+        proj.write_minimal_pipeline(
+            "acme.tickets",
+            fixture_rows=[{"id": "t1", "status": "open"}],
+        )
+        result = run_extract_load(proj, "acme.tickets", interval_start="2026-08-06")
+        assert result.rows == 1
+        assert_raw_contract(result.raw_dir)
+        assert_no_dlt_artifacts(result.raw_dir)
+```
+
+Unit-only (no lake): `extract_fixture` / `records_from_fixture`. Secrets without
+mutating env: `secrets_map({"ACME_TOKEN": "x"})` passed to `TestProject.runner`.
+
+Pytest autouse isolation (optional)::
+
+    # conftest.py
+    pytest_plugins = ["det.testing.pytest"]
