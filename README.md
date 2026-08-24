@@ -229,6 +229,7 @@ src/det/                 CLI, runtime, example sources, writers
 configs/pipelines/       provider.source YAML
 schemas/                 bronze JSON Schema
 docs/lake-layout.md      hive / SQL compatibility
+docs/api.md              public Python API (SemVer / __all__)
 dbt/                     silver + gold + ops
 cube/                    local Cube Core (gold + ops metrics)
 dags/ + airflow/         local Compose

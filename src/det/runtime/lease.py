@@ -282,6 +282,11 @@ def force_release_lock(path: LakeRef) -> dict[str, Any] | None:
     return payload
 
 
+# Public library aliases (det.__all__); same callables as read/force-release.
+inspect_lease = read_lock
+release_lock = force_release_lock
+
+
 @contextmanager
 def pipeline_lease(
     lake: LakeRef,
