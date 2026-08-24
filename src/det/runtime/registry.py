@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from det.errors import DetNotFoundError, DetPluginError
@@ -26,6 +27,9 @@ def clear_registries() -> None:
     _INGESTION_REGISTRY.clear()
     _MAPPER_REGISTRY.clear()
     _MAPPERS_SCANNED = False
+    import det.plugins as plugs
+
+    plugs._LOADED = False
 
 
 def register_source(name: str, factory: Callable[[], SourcePlugin]) -> None:
@@ -49,15 +53,20 @@ def register_mapper(name: str, fn: Callable[[dict[str, Any]], dict[str, Any]]) -
     _MAPPER_REGISTRY[name] = fn
 
 
-def _ensure_source_factory(name: str) -> Callable[[], SourcePlugin]:
+def _ensure_source_factory(
+    name: str,
+    *,
+    project_root: Path | None = None,
+) -> Callable[[], SourcePlugin]:
     cached = _SOURCE_REGISTRY.get(name)
     if cached is not None:
         return cached
     try:
-        factory = load_source(name)
+        factory = load_source(name, project_root=project_root)
     except KeyError as exc:
         raise DetNotFoundError(
-            f"Unknown source '{name}'. Available: {discovered_source_ids()}"
+            f"Unknown source '{name}'. Available: "
+            f"{discovered_source_ids(project_root=project_root)}"
         ) from exc
     except PluginLoadError:
         raise
@@ -69,8 +78,8 @@ def _ensure_source_factory(name: str) -> Callable[[], SourcePlugin]:
     return factory
 
 
-def get_source(name: str) -> SourcePlugin:
-    return _ensure_source_factory(name)()
+def get_source(name: str, *, project_root: Path | None = None) -> SourcePlugin:
+    return _ensure_source_factory(name, project_root=project_root)()
 
 
 def get_ingestion(name: str) -> IngestionBackend:
@@ -82,7 +91,7 @@ def get_ingestion(name: str) -> IngestionBackend:
         ) from exc
 
 
-def _ensure_mappers() -> None:
+def _ensure_mappers(*, project_root: Path | None = None) -> None:
     global _MAPPERS_SCANNED
     if _MAPPERS_SCANNED:
         return
@@ -90,13 +99,17 @@ def _ensure_mappers() -> None:
         from det.runtime.mappers import identity_mapper
 
         register_mapper("identity", identity_mapper)
-    for mapper_name, fn in iter_discovered_mappers():
+    for mapper_name, fn in iter_discovered_mappers(project_root=project_root):
         register_mapper(mapper_name, fn)
     _MAPPERS_SCANNED = True
 
 
-def get_mapper(name: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    _ensure_mappers()
+def get_mapper(
+    name: str,
+    *,
+    project_root: Path | None = None,
+) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    _ensure_mappers(project_root=project_root)
     try:
         return _MAPPER_REGISTRY[name]
     except KeyError as exc:
@@ -105,18 +118,18 @@ def get_mapper(name: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
         ) from exc
 
 
-def list_sources() -> list[str]:
-    return discovered_source_ids()
+def list_sources(*, project_root: Path | None = None) -> list[str]:
+    return discovered_source_ids(project_root=project_root)
 
 
-def list_mappers() -> list[str]:
-    _ensure_mappers()
+def list_mappers(*, project_root: Path | None = None) -> list[str]:
+    _ensure_mappers(project_root=project_root)
     return sorted(_MAPPER_REGISTRY)
 
 
-def describe_mappers() -> list[tuple[str, str]]:
+def describe_mappers(*, project_root: Path | None = None) -> list[tuple[str, str]]:
     """Registered mappers paired with the first line of their docstring."""
-    _ensure_mappers()
+    _ensure_mappers(project_root=project_root)
     described: list[tuple[str, str]] = []
     for name in sorted(_MAPPER_REGISTRY):
         doc = (_MAPPER_REGISTRY[name].__doc__ or "").strip()

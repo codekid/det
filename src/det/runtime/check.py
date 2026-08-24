@@ -128,7 +128,7 @@ def check_pipeline_config(
                 )
 
     load_plugins()
-    sources = set(list_sources())
+    sources = set(list_sources(project_root=root))
     if config.source.type not in sources:
         findings.append(
             Finding(

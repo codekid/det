@@ -600,6 +600,68 @@ def dbt_cmd(
     typer.echo(f"OK dbt finished exit={result.returncode}")
 
 
+@app.command("init-source")
+def init_source_cmd(
+    name: str = typer.Option(
+        ...,
+        "--name",
+        "-n",
+        help="Canonical provider.source id (writes sources/<provider>/<source>.py)",
+    ),
+    destination_type: str = typer.Option(
+        "iceberg",
+        "--destination-type",
+        help="iceberg (default lake) | filesystem (JSONL) | duckdb | postgres",
+    ),
+    connection: str | None = typer.Option(
+        None,
+        "--connection",
+        help=(
+            "DuckDB file path, or for postgres the env var name holding the DSN "
+            "(e.g. DET_POSTGRES_DSN). Required for duckdb/postgres"
+        ),
+    ),
+    lake_path: str | None = typer.Option(None, "--lake-path"),
+    skip_pipeline: bool = typer.Option(
+        False,
+        "--skip-pipeline",
+        help="Only write the plugin file (no YAML / schema / dbt)",
+    ),
+    skip_dbt: bool = typer.Option(False, "--skip-dbt", help="Skip scaffold-dbt"),
+    force: bool = typer.Option(False, "--force"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+) -> None:
+    """Scaffold a project-local source plugin (+ pipeline YAML / schema by default)."""
+    from det.scaffold.init_source import init_source
+
+    if destination_type not in {"filesystem", "duckdb", "postgres", "iceberg"}:
+        raise typer.BadParameter(
+            "must be filesystem, duckdb, postgres, or iceberg",
+            param_hint="--destination-type",
+        )
+    root = _project_root(project_root)
+    try:
+        result = init_source(
+            name=name,
+            project_root=root,
+            force=force,
+            dry_run=dry_run,
+            skip_pipeline=skip_pipeline,
+            skip_dbt=skip_dbt,
+            destination_type=destination_type,
+            lake_path=lake_path,
+            connection=connection,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    mode = "DRY-RUN" if dry_run else "OK"
+    typer.echo(f"{mode} init-source name={result.name} plugin={result.plugin_path}")
+    for action in result.actions:
+        typer.echo(f"  {action.action}: {action.path} ({action.detail})")
+
+
 @app.command("init-pipeline")
 def init_pipeline_cmd(
     name: str = typer.Option(
@@ -1382,10 +1444,13 @@ def list_pipelines_cmd(
 
 
 @app.command("list-sources")
-def list_sources_cmd() -> None:
+def list_sources_cmd(
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+) -> None:
     from det.runtime.registry import list_sources
 
-    for name in list_sources():
+    root = _project_root(project_root)
+    for name in list_sources(project_root=root):
         typer.echo(name)
 
 

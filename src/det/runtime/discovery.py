@@ -1,19 +1,20 @@
-"""Path-convention source/mapper discovery (in-tree) plus optional entry points.
+"""Path-convention source/mapper discovery: in-tree, project-local, entry points.
 
-In-tree plugins are non-package modules ``det.sources.<provider>.<source>``
-(file ``sources/<provider>/<source>.py``). Helpers at the ``det.sources`` package
-root (``http``, ``http_json``, ``base``) are not candidates. Leaf names starting
-with ``_`` are skipped so a provider can keep private helpers.
+In-tree: ``det.sources.<provider>.<source>`` (package modules).
+Project-local: ``{project_root}/sources/<provider>/<source>.py``.
+Helpers at the ``det.sources`` package root (``http``, ``http_json``, ``base``)
+are not candidates. Leaf names starting with ``_`` are skipped.
 
 ``cls.name`` must equal ``{provider}.{source}``. Out-of-tree packages may register
-via entry points ``det.sources`` and ``det.mappers``; those names must not collide
-with in-tree ids, and must match ``cls.name`` / ``@mapper`` name.
+via entry points ``det.sources`` / ``det.mappers``; those names must not collide
+with in-tree or project-local ids.
 """
 
 from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import importlib.util
 import pkgutil
 import sys
 from collections.abc import Callable, Iterator
@@ -28,6 +29,7 @@ from det.sources.base import MAPPER_ATTR, SourcePlugin
 SOURCES_GROUP = "det.sources"
 MAPPERS_GROUP = "det.mappers"
 _PLUGIN_METHODS = ("defaults", "extract_to_raw", "records_from_raw")
+_PROJECT_MODULE_PREFIX = "_det_project_sources"
 
 
 class PluginLoadError(DetPluginError):
@@ -40,6 +42,24 @@ class PluginLoadError(DetPluginError):
 
 def _entry_points(group: str) -> importlib.metadata.EntryPoints:
     return importlib.metadata.entry_points(group=group)
+
+
+def resolve_discovery_root(project_root: Path | None = None) -> Path:
+    """Explicit root > active ``DetSettings`` > ``DET_PROJECT_ROOT`` / cwd."""
+    if project_root is not None:
+        return Path(project_root).expanduser().resolve()
+    from det.runtime.settings import get_active_settings
+
+    active = get_active_settings()
+    if active is not None:
+        return active.project_root
+    from det.runtime.pipelines import resolve_project_root
+
+    return resolve_project_root(None)
+
+
+def project_sources_dir(project_root: Path) -> Path:
+    return Path(project_root).resolve() / "sources"
 
 
 def iter_in_tree_source_specs() -> Iterator[tuple[str, str]]:
@@ -66,6 +86,27 @@ def in_tree_source_map() -> dict[str, str]:
     return dict(iter_in_tree_source_specs())
 
 
+def iter_project_source_specs(
+    project_root: Path | None = None,
+) -> Iterator[tuple[str, Path]]:
+    """Yield ``(plugin_id, path)`` for ``{project_root}/sources/<provider>/<source>.py``."""
+    root = project_sources_dir(resolve_discovery_root(project_root))
+    if not root.is_dir():
+        return
+    for provider_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        provider = provider_dir.name
+        if provider.startswith("_"):
+            continue
+        for path in sorted(provider_dir.glob("*.py")):
+            if path.name.startswith("_"):
+                continue
+            yield f"{provider}.{path.stem}", path
+
+
+def project_source_map(project_root: Path | None = None) -> dict[str, Path]:
+    return dict(iter_project_source_specs(project_root))
+
+
 def is_in_tree_plugin_module(module_name: str) -> bool:
     """True for ``det.sources.<provider>.<leaf>`` plugin modules (not helpers)."""
     parts = module_name.split(".")
@@ -78,10 +119,16 @@ def is_in_tree_plugin_module(module_name: str) -> bool:
     )
 
 
+def is_project_plugin_module(module_name: str) -> bool:
+    return module_name.startswith(f"{_PROJECT_MODULE_PREFIX}.")
+
+
 def evict_in_tree_plugin_modules() -> None:
     """Drop discovered plugin modules from ``sys.modules`` (not helpers or packages)."""
     for name in [n for n in sys.modules if is_in_tree_plugin_module(n)]:
         _unbind_submodule(name)
+        del sys.modules[name]
+    for name in [n for n in sys.modules if is_project_plugin_module(n)]:
         del sys.modules[name]
 
 
@@ -109,15 +156,31 @@ def _bind_submodule(module_name: str, module: ModuleType) -> None:
         setattr(parent, leaf, module)
 
 
-def discovered_source_ids() -> list[str]:
-    """Path-derived in-tree ids plus entry-point names. Does not import plugin modules."""
+def discovered_source_ids(project_root: Path | None = None) -> list[str]:
+    """In-tree + project-local + entry-point ids. Does not import plugin modules."""
+    root = resolve_discovery_root(project_root)
     in_tree = in_tree_source_map()
+    project = project_source_map(root)
     ids = set(in_tree)
+    for plugin_id, path in project.items():
+        if plugin_id in in_tree:
+            raise PluginLoadError(
+                f"project source {plugin_id!r} at {path} collides with in-tree "
+                f"{in_tree[plugin_id]}",
+                module=str(path),
+            )
+        ids.add(plugin_id)
     for ep in _entry_points(SOURCES_GROUP):
         if ep.name in in_tree:
             raise PluginLoadError(
                 f"entry point source {ep.name!r} collides with in-tree {in_tree[ep.name]}",
                 module=in_tree[ep.name],
+            )
+        if ep.name in project:
+            raise PluginLoadError(
+                f"entry point source {ep.name!r} collides with project-local "
+                f"{project[ep.name]}",
+                module=str(project[ep.name]),
             )
         ids.add(ep.name)
     return sorted(ids)
@@ -156,7 +219,7 @@ def source_class_from_module(module: ModuleType, *, expected_id: str) -> type[So
     if name != expected_id:
         raise PluginLoadError(
             f"{module.__name__} plugin name {name!r} must equal {expected_id!r} "
-            f"(path det.sources.<provider>.<source>)",
+            f"(path sources/<provider>/<source>.py or det.sources.<provider>.<source>)",
             module=module.__name__,
         )
     return cls
@@ -180,21 +243,67 @@ def collect_mappers(module: ModuleType) -> dict[str, Callable[[dict[str, Any]], 
     return found
 
 
-def load_source(plugin_id: str) -> Callable[[], SourcePlugin]:
-    """Import the plugin module (or entry point) and return the zero-arg factory."""
+def _project_module_name(plugin_id: str) -> str:
+    return f"{_PROJECT_MODULE_PREFIX}.{plugin_id.replace('.', '_')}"
+
+
+def _import_project_source(plugin_id: str, path: Path) -> ModuleType:
+    module_name = _project_module_name(plugin_id)
+    existing = sys.modules.get(module_name)
+    if existing is not None and getattr(existing, "__file__", None) == str(path):
+        return existing
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise PluginLoadError(
+            f"failed to create import spec for project source {plugin_id!r} at {path}",
+            module=str(path),
+        )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        sys.modules.pop(module_name, None)
+        raise PluginLoadError(
+            f"failed to import project source {plugin_id!r} from {path}: {exc}",
+            module=str(path),
+        ) from exc
+    return module
+
+
+def load_source(
+    plugin_id: str,
+    *,
+    project_root: Path | None = None,
+) -> Callable[[], SourcePlugin]:
+    """Import the plugin module (project, in-tree, or entry point) and return factory."""
+    root = resolve_discovery_root(project_root)
     in_tree = in_tree_source_map()
+    project = project_source_map(root)
     ep_by_name = {ep.name: ep for ep in _entry_points(SOURCES_GROUP)}
-    in_mod = plugin_id in in_tree
-    in_ep = plugin_id in ep_by_name
-    if in_mod and in_ep:
+
+    if plugin_id in in_tree and plugin_id in project:
+        raise PluginLoadError(
+            f"project source {plugin_id!r} collides with in-tree {in_tree[plugin_id]}",
+            module=str(project[plugin_id]),
+        )
+    if plugin_id in ep_by_name and plugin_id in in_tree:
         raise PluginLoadError(
             f"entry point source {plugin_id!r} collides with in-tree {in_tree[plugin_id]}",
             module=in_tree[plugin_id],
         )
-    if not in_mod and not in_ep:
-        raise KeyError(plugin_id)
+    if plugin_id in ep_by_name and plugin_id in project:
+        raise PluginLoadError(
+            f"entry point source {plugin_id!r} collides with project-local "
+            f"{project[plugin_id]}",
+            module=str(project[plugin_id]),
+        )
 
-    if in_mod:
+    if plugin_id in project:
+        module = _import_project_source(plugin_id, project[plugin_id])
+        return source_class_from_module(module, expected_id=plugin_id)
+
+    if plugin_id in in_tree:
         module_name = in_tree[plugin_id]
         try:
             module = importlib.import_module(module_name)
@@ -205,27 +314,33 @@ def load_source(plugin_id: str) -> Callable[[], SourcePlugin]:
             ) from exc
         return source_class_from_module(module, expected_id=plugin_id)
 
-    ep = ep_by_name[plugin_id]
-    try:
-        loaded = ep.load()
-    except Exception as exc:
-        raise PluginLoadError(
-            f"failed to load entry point source {plugin_id!r}: {exc}",
-        ) from exc
-    if not is_source_plugin_class(loaded):
-        raise PluginLoadError(
-            f"entry point {plugin_id!r} did not load a SourcePlugin class",
-        )
-    if loaded.name != plugin_id:
-        raise PluginLoadError(
-            f"entry point source {plugin_id!r} class name {loaded.name!r} mismatch",
-            module=getattr(loaded, "__module__", None),
-        )
-    return loaded
+    if plugin_id in ep_by_name:
+        ep = ep_by_name[plugin_id]
+        try:
+            loaded = ep.load()
+        except Exception as exc:
+            raise PluginLoadError(
+                f"failed to load entry point source {plugin_id!r}: {exc}",
+            ) from exc
+        if not is_source_plugin_class(loaded):
+            raise PluginLoadError(
+                f"entry point {plugin_id!r} did not load a SourcePlugin class",
+            )
+        if loaded.name != plugin_id:
+            raise PluginLoadError(
+                f"entry point source {plugin_id!r} class name {loaded.name!r} mismatch",
+                module=getattr(loaded, "__module__", None),
+            )
+        return loaded
+
+    raise KeyError(plugin_id)
 
 
-def iter_discovered_mappers() -> Iterator[tuple[str, Callable[[dict[str, Any]], dict[str, Any]]]]:
-    """Import every in-tree plugin module plus mapper entry points; yield ``(name, fn)``."""
+def iter_discovered_mappers(
+    project_root: Path | None = None,
+) -> Iterator[tuple[str, Callable[[dict[str, Any]], dict[str, Any]]]]:
+    """Import every in-tree + project plugin module plus mapper entry points."""
+    root = resolve_discovery_root(project_root)
     for _plugin_id, module_name in iter_in_tree_source_specs():
         try:
             module = importlib.import_module(module_name)
@@ -234,6 +349,10 @@ def iter_discovered_mappers() -> Iterator[tuple[str, Callable[[dict[str, Any]], 
                 f"failed to import {module_name} while collecting mappers: {exc}",
                 module=module_name,
             ) from exc
+        yield from collect_mappers(module).items()
+
+    for plugin_id, path in iter_project_source_specs(root):
+        module = _import_project_source(plugin_id, path)
         yield from collect_mappers(module).items()
 
     for ep in _entry_points(MAPPERS_GROUP):
@@ -252,12 +371,14 @@ def iter_discovered_mappers() -> Iterator[tuple[str, Callable[[dict[str, Any]], 
         yield ep.name, fn
 
 
-def probe_source_load_errors() -> list[dict[str, str]]:
+def probe_source_load_errors(
+    project_root: Path | None = None,
+) -> list[dict[str, str]]:
     """Import each discovered source; return ``{id, detail}`` for failures (not unknown)."""
     errors: list[dict[str, str]] = []
-    for plugin_id in discovered_source_ids():
+    for plugin_id in discovered_source_ids(project_root=project_root):
         try:
-            load_source(plugin_id)
+            load_source(plugin_id, project_root=project_root)
         except PluginLoadError as exc:
             errors.append({"id": plugin_id, "detail": str(exc)})
         except Exception as exc:

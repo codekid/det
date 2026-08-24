@@ -129,7 +129,11 @@ def list_sources_tool(*, root: Path | None = None) -> dict[str, Any]:
 
     _ = _root(root)
     load_plugins()
-    return {"sources": list_sources(), "errors": probe_source_load_errors()}
+    base = _root(root)
+    return {
+        "sources": list_sources(project_root=base),
+        "errors": probe_source_load_errors(project_root=base),
+    }
 
 
 def list_mappers_tool(*, root: Path | None = None) -> dict[str, Any]:

@@ -71,9 +71,8 @@ AWS_/GCP env conventions — not on `DetSettings`.
 | `list_sources` | Discovered source plugin ids |
 | `list_mappers`, `describe_mappers` | Migrate mapper ids (+ docstring summary) |
 
-Registration for production: entry points or (planned) project-local `sources/`.
-In-process `register_source` is for tests via **`det.testing`** (planned,
-[#30](https://github.com/codekid/det/issues/30)), not top-level `det`.
+Registration for production: entry points or project-local `sources/`
+(`det init-source`). See [getting-started-library.md](getting-started-library.md).
 
 ### Lake, check, receipts, locks
 
@@ -146,7 +145,6 @@ These have their own `__all__` and are SemVer-stable for plugin authors:
 | Feature | Issue |
 | --- | --- |
 | `det.testing` | [#30](https://github.com/codekid/det/issues/30) |
-| Project-local `sources/` + `init-source` | [#29](https://github.com/codekid/det/issues/29) |
-| Operator vs library getting started | [#33](https://github.com/codekid/det/issues/33) |
+| Operator vs library getting started polish | [#33](https://github.com/codekid/det/issues/33) |
 
 Epic: [#24](https://github.com/codekid/det/issues/24).
