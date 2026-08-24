@@ -231,7 +231,13 @@ def run_dbt(
         env=env,
     )
     lake = open_lake(spec, root)
-    env["DET_LAKE_PATH"] = str(lake)
+    lake_uri = str(lake)
+    env["DET_LAKE_PATH"] = lake_uri
+    if lake_uri.startswith("s3://") and resolved_target != "ops":
+        from det.runtime.object_store import duckdb_s3_profile_env
+
+        env.update(duckdb_s3_profile_env(env))
+        resolved_target = "duckdb_s3"
     if resolved_target == "ops":
         env.setdefault(
             "DET_OPS_DUCKDB",
