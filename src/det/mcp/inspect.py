@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 from typing import Any, Literal
 
-import duckdb
 from jsonschema import Draft202012Validator
 
 from det.destinations.models import (
@@ -16,6 +15,7 @@ from det.destinations.models import (
     raw_dataset_dir,
 )
 from det.mcp.context import PathSandboxError, project_root, resolve_under_root
+from det.optional_deps import require_duckdb
 from det.plugins import load_plugins
 from det.runtime.coerce import CoerceError, coerce_record
 from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
@@ -185,6 +185,7 @@ def _list_bronze_sql_runs(
         db_path = duckdb_connection_path(dest, root)
         if not db_path.exists():
             return [], f"DuckDB file not found: {_rel(db_path, root)}"
+        duckdb = require_duckdb()
         con = duckdb.connect(str(db_path), read_only=True)
         try:
             exists = con.execute(
@@ -970,6 +971,7 @@ def _sample_bronze_duckdb(
         extract_run_datetime=extract_run_datetime,
     )
     # DuckDB uses ? placeholders; rebuild where for duckdb (already ?).
+    duckdb = require_duckdb()
     con = duckdb.connect(str(db_path), read_only=True)
     try:
         exists = con.execute(

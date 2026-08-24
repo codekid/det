@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import duckdb
-
 from det.destinations.models import (
     bronze_dataset_dir,
     duckdb_connection_path,
@@ -13,6 +11,7 @@ from det.destinations.models import (
 )
 from det.ingestion.sql_replace import delete_extract_run_sql
 from det.logging import bound_run_context, get_logger, sanitize_lake_uri
+from det.optional_deps import require_duckdb
 from det.runtime.config import PipelineConfig
 from det.runtime.ids import sql_names_for_config
 from det.runtime.lake import LakeRef
@@ -206,6 +205,7 @@ class BronzePruner:
 
         schema, table = sql_names_for_config(config)
         qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
+        duckdb = require_duckdb()
         con = duckdb.connect(str(db_path), read_only=True)
         try:
             exists = con.execute(
@@ -300,6 +300,7 @@ class BronzePruner:
         db_path = duckdb_connection_path(config.destination, self.project_root)
         schema, table = sql_names_for_config(config)
         qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
+        duckdb = require_duckdb()
         con = duckdb.connect(str(db_path))
         deleted_groups = 0
         try:
