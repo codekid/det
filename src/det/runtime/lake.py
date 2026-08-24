@@ -82,20 +82,24 @@ def pick_lake_spec(
     *,
     cli_lake_path: str | None = None,
     destination_path: str | None = None,
+    settings_lake_path: str | None = None,
     env: Mapping[str, str] | None = None,
 ) -> str:
     """
     Resolve the lake root spec (URI or local path). First hit wins:
 
-    1. CLI ``--lake-path``
+    1. CLI ``--lake-path`` / ``DetSettings.lake_override``
     2. Explicit ``destination.path`` in YAML
-    3. ``DET_LAKE_PATH``
-    4. ``./data/lake``
+    3. ``DetSettings.lake_path`` (usually from ``DET_LAKE_PATH`` via ``from_env``)
+    4. ``DET_LAKE_PATH``
+    5. ``./data/lake``
     """
     if cli_lake_path is not None and str(cli_lake_path).strip():
         return str(cli_lake_path).strip()
     if destination_path is not None and str(destination_path).strip():
         return str(destination_path).strip()
+    if settings_lake_path is not None and str(settings_lake_path).strip():
+        return str(settings_lake_path).strip()
     environ = os.environ if env is None else env
     env_val = environ.get("DET_LAKE_PATH")
     if env_val is not None and str(env_val).strip():
@@ -108,11 +112,12 @@ def open_lake(
     project_root: Path,
     *,
     env: Mapping[str, str] | None = None,
+    lake_mode: LakeMode | None = None,
 ) -> LakeRef:
     """Open a lake root. Never pass a URI through ``pathlib.Path``."""
     global _CLOUD_EXPERIMENTAL_WARNED
     text = (spec or "").strip() or DEFAULT_LAKE_REL
-    mode = lake_mode_from_env(env)
+    mode = lake_mode if lake_mode is not None else lake_mode_from_env(env)
     validate_lake_mode(text, mode)
     if mode == "cloud" and not _CLOUD_EXPERIMENTAL_WARNED:
         logger.warning(

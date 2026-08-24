@@ -174,9 +174,15 @@ def acquire_lease(
     ttl_sec: int | None = None,
     owner: str | None = None,
     env: Mapping[str, str] | None = None,
+    enabled: bool | None = None,
 ) -> Lease | None:
-    """Create the lock object. Returns None when DET_LOCK=0. Nested same id is a no-op Lease."""
-    if not locks_enabled(env):
+    """Create the lock object. Returns None when locks are disabled.
+
+    Nested same id is a no-op Lease.
+    """
+    if enabled is None:
+        enabled = locks_enabled(env)
+    if not enabled:
         return None
     ttl = resolve_lock_ttl_sec(ttl_sec, env=env)
     who = owner or default_lock_owner(env)
@@ -298,6 +304,7 @@ def pipeline_lease(
     ttl_sec: int | None = None,
     owner: str | None = None,
     env: Mapping[str, str] | None = None,
+    enabled: bool | None = None,
 ) -> Iterator[Lease | None]:
     lease = acquire_lease(
         lake,
@@ -308,6 +315,7 @@ def pipeline_lease(
         ttl_sec=ttl_sec,
         owner=owner,
         env=env,
+        enabled=enabled,
     )
     ident = lock_id(pipeline, interval_start, interval_end)
     nested = _HELD.get() == ident
