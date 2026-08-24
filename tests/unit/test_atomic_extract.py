@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+from det.errors import DetConflictError, DetPluginError
 from det.runtime.manifest import is_committed_raw_dir, read_manifest, write_manifest
 from det.runtime.runner import PipelineRunner
 from det.sources.example_api.events import ExampleApiSource
@@ -77,7 +78,7 @@ def test_failed_extract_does_not_commit_and_cleans_prefix(
     runner = PipelineRunner(tmp_path)
     with (
         patch.object(ExampleApiSource, "extract_to_raw", boom),
-        pytest.raises(RuntimeError, match="download failed"),
+        pytest.raises(DetPluginError, match="download failed"),
     ):
         runner.extract(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
 
@@ -118,7 +119,7 @@ def test_extract_refuses_overwrite_of_committed_run(
         extract_run_datetime=stamp,
     )
     assert is_committed_raw_dir(first.raw_dir)
-    with pytest.raises(FileExistsError, match="Committed raw extract"):
+    with pytest.raises(DetConflictError, match="Committed raw extract"):
         runner.extract(
             pipe,
             interval_start="2026-08-06",

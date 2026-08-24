@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from det.errors import DetContractError
 
-class CoerceError(ValueError):
+
+class CoerceError(DetContractError, ValueError):
     """Raised when a value cannot be coerced to the schema type."""
 
 

@@ -5,7 +5,21 @@ Public names are listed in ``__all__`` and follow SemVer. See ``docs/api.md``.
 
 from __future__ import annotations
 
-from det.logging import configure_logging, get_logger
+from det.errors import (
+    DetConfigError,
+    DetConflictError,
+    DetContractError,
+    DetError,
+    DetNotFoundError,
+    DetPluginError,
+)
+from det.logging import (
+    configure_logging,
+    drop_secrets,
+    get_logger,
+    scrub_rendered,
+    scrub_secrets,
+)
 from det.runtime.check import (
     Finding,
     check_pipeline_config,
@@ -51,6 +65,12 @@ __all__ = [
     "BronzeMigrator",
     "BronzePruner",
     "BronzeRunRef",
+    "DetConfigError",
+    "DetConflictError",
+    "DetContractError",
+    "DetError",
+    "DetNotFoundError",
+    "DetPluginError",
     "DetSettings",
     "ExtractResult",
     "Finding",
@@ -73,6 +93,7 @@ __all__ = [
     "configure_duckdb_s3",
     "configure_logging",
     "describe_mappers",
+    "drop_secrets",
     "findings_payload",
     "get_logger",
     "has_errors",
@@ -87,5 +108,7 @@ __all__ = [
     "merge_source_config",
     "open_lake",
     "release_lock",
+    "scrub_rendered",
+    "scrub_secrets",
     "summarize_receipts",
 ]

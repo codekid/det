@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlsplit
 
+from det.errors import DetConfigError
 from det.logging import get_logger, register_secret_value
 
 logger = get_logger(__name__)
@@ -57,7 +58,7 @@ _FILE_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
 _WARNED_EXTRAS: set[str] = set()
 
 
-class SecretError(RuntimeError):
+class SecretError(DetConfigError):
     """Base class for secret resolution failures."""
 
 

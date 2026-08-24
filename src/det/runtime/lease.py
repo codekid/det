@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from det.errors import DetConflictError
 from det.logging import get_logger
 from det.runtime.lake import LakeRef
 from det.runtime.meta import to_partition_value
@@ -22,7 +23,7 @@ DEFAULT_LOCK_TTL_SEC = 7200
 _HELD: ContextVar[str | None] = ContextVar("det_lease_held", default=None)
 
 
-class LeaseHeldError(RuntimeError):
+class LeaseHeldError(DetConflictError):
     """Another writer holds a live lake lease for this pipeline+interval."""
 
     def __init__(self, message: str, *, payload: dict[str, Any] | None = None) -> None:

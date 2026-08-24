@@ -91,9 +91,27 @@ In-process `register_source` is for tests via **`det.testing`** (planned,
 
 | Name | Role |
 | --- | --- |
-| `configure_logging`, `get_logger` | structlog setup (call at process edge; not on import) |
+| `configure_logging`, `get_logger` | structlog setup (**call at process edge**; not on import) |
+| `drop_secrets`, `scrub_secrets`, `scrub_rendered` | Redaction processors / helpers for BYO structlog |
 
-Redaction helpers remain on `det.logging` for advanced BYO structlog chains.
+The library never calls `configure_logging` on import. Embedders either call it
+once at startup or configure structlog themselves and still use the redaction
+helpers. The CLI configures logging in its Typer callback as today.
+
+### Errors
+
+| Name | Role |
+| --- | --- |
+| `DetError` | Base for operational failures (`except DetError`) |
+| `DetConfigError` | Settings / YAML / secret-store config |
+| `DetPluginError` | Source / mapper / ingestion plugin failure (`__cause__` preserved) |
+| `DetContractError` | Schema / coerce failures |
+| `DetConflictError` | Lease held, committed raw already exists, … |
+| `DetNotFoundError` | Missing pipeline, raw partition, plugin id |
+| `LeaseHeldError` | Subclass of `DetConflictError` (lake lease) |
+
+`SecretError` / `PluginLoadError` / `SchemaValidationError` fold into this tree
+internally; prefer catching the public `Det*` types.
 
 ---
 
@@ -127,7 +145,6 @@ These have their own `__all__` and are SemVer-stable for plugin authors:
 
 | Feature | Issue |
 | --- | --- |
-| `DetError` tree + plugin wrap | [#28](https://github.com/codekid/det/issues/28) |
 | `det.testing` | [#30](https://github.com/codekid/det/issues/30) |
 | Project-local `sources/` + `init-source` | [#29](https://github.com/codekid/det/issues/29) |
 | Operator vs library getting started | [#33](https://github.com/codekid/det/issues/33) |

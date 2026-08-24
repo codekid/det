@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from det.errors import DetNotFoundError, DetPluginError
 from det.ingestion.base import IngestionBackend
 from det.runtime.discovery import (
     PluginLoadError,
@@ -55,8 +56,14 @@ def _ensure_source_factory(name: str) -> Callable[[], SourcePlugin]:
     try:
         factory = load_source(name)
     except KeyError as exc:
-        raise KeyError(
+        raise DetNotFoundError(
             f"Unknown source '{name}'. Available: {discovered_source_ids()}"
+        ) from exc
+    except PluginLoadError:
+        raise
+    except Exception as exc:
+        raise DetPluginError(
+            f"failed to load source {name!r}: {exc}", plugin=name
         ) from exc
     register_source(name, factory)
     return factory
@@ -70,7 +77,7 @@ def get_ingestion(name: str) -> IngestionBackend:
     try:
         return _INGESTION_REGISTRY[name]()
     except KeyError as exc:
-        raise KeyError(
+        raise DetNotFoundError(
             f"Unknown ingestion library '{name}'. Available: {sorted(_INGESTION_REGISTRY)}"
         ) from exc
 
@@ -93,7 +100,7 @@ def get_mapper(name: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
     try:
         return _MAPPER_REGISTRY[name]
     except KeyError as exc:
-        raise KeyError(
+        raise DetNotFoundError(
             f"Unknown mapper '{name}'. Available: {sorted(_MAPPER_REGISTRY)}"
         ) from exc
 

@@ -10,6 +10,7 @@ import pytest
 import yaml
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 
+from det.errors import DetPluginError
 from det.ingestion.det_backend import DetBackend
 from det.logging import register_secret_value
 from det.runtime.coerce import CoerceError
@@ -382,7 +383,7 @@ def test_failed_extract_receipt_survives_rmtree(project_root: Path, tmp_path: Pa
     runner = PipelineRunner(tmp_path)
     with (
         patch.object(ExampleApiSource, "extract_to_raw", boom),
-        pytest.raises(HttpError, match="download failed"),
+        pytest.raises(DetPluginError, match="download failed"),
     ):
         runner.extract(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
 
@@ -394,7 +395,7 @@ def test_failed_extract_receipt_survives_rmtree(project_root: Path, tmp_path: Pa
     assert len(rows) == 1
     assert rows[0]["status"] == "error"
     assert rows[0]["error_code"] == "http_error"
-    assert rows[0]["error_class"] == "HttpError"
+    assert rows[0]["error_class"] == "DetPluginError"
 
 
 def test_lease_held_receipt_wrapper_is_outside_lease(
@@ -483,7 +484,7 @@ def test_postgres_destination_receipt_has_no_dsn(
 
     with (
         patch.object(DetBackend, "write", boom),
-        pytest.raises(RuntimeError, match="connection failed"),
+        pytest.raises(DetPluginError, match="connection failed"),
     ):
         runner.load(
             pipe,

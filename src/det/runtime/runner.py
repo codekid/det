@@ -10,6 +10,7 @@ from det.destinations.models import (
     lake_root,
     raw_dataset_dir,
 )
+from det.errors import DetConflictError, DetNotFoundError, reraise_as_plugin
 from det.logging import bound_run_context, get_logger, sanitize_lake_uri, update_run_context
 from det.plugins import load_plugins
 from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
@@ -138,7 +139,7 @@ class PipelineRunner:
             destination=config.destination.type,
         ) as receipt:
             if is_committed_raw_dir(raw_dir):
-                raise FileExistsError(
+                raise DetConflictError(
                     f"Committed raw extract already exists at {raw_dir}; "
                     "re-extract with a new __extract_run_datetime "
                     "(do not copy data to publish)"
@@ -175,9 +176,14 @@ class PipelineRunner:
                         raw_dir=str(raw_dir),
                     )
                     try:
-                        artifacts = source.extract_to_raw(
-                            config=effective, interval=interval, data_dir=data_dir
-                        )
+                        try:
+                            artifacts = source.extract_to_raw(
+                                config=effective, interval=interval, data_dir=data_dir
+                            )
+                        except Exception as exc:
+                            reraise_as_plugin(
+                                exc, plugin=source.name, action="extract_to_raw"
+                            )
                         refresh_lease(lease)
                         logger.info(
                             "writing raw manifest",
@@ -297,42 +303,47 @@ class PipelineRunner:
                     refresh_lease(lease)
 
                     bronze_loaded_at = format_extract_run_datetime()
-                    counted = CountingIter(
-                        iter_bronze_rows(
-                            source.records_from_raw(
-                                config=effective, raw_dir=raw_dir, manifest=manifest
-                            ),
-                            schema=schema,
-                            naming=config.bronze.naming,
-                            extract_run_datetime=extract_ts,
+                    try:
+                        counted = CountingIter(
+                            iter_bronze_rows(
+                                source.records_from_raw(
+                                    config=effective,
+                                    raw_dir=raw_dir,
+                                    manifest=manifest,
+                                ),
+                                schema=schema,
+                                naming=config.bronze.naming,
+                                extract_run_datetime=extract_ts,
+                                interval_start_datetime=start_iso,
+                                interval_end_datetime=end_iso,
+                                bronze_loaded_at=bronze_loaded_at,
+                                log_every=config.ingestion.chunk_rows,
+                            )
+                        )
+
+                        partition = hive_partition_dir(
+                            bronze_dataset_dir(config, self.project_root),
                             interval_start_datetime=start_iso,
                             interval_end_datetime=end_iso,
-                            bronze_loaded_at=bronze_loaded_at,
-                            log_every=config.ingestion.chunk_rows,
+                            extract_run_datetime=extract_ts,
                         )
-                    )
-
-                    partition = hive_partition_dir(
-                        bronze_dataset_dir(config, self.project_root),
-                        interval_start_datetime=start_iso,
-                        interval_end_datetime=end_iso,
-                        extract_run_datetime=extract_ts,
-                    )
-                    backend = get_ingestion(config.ingestion.library)
-                    logger.info(
-                        "writing bronze partition",
-                        backend=config.ingestion.library,
-                        chunk_rows=config.ingestion.chunk_rows,
-                        partition=str(partition),
-                    )
-                    written = backend.write(
-                        counted,
-                        config=config,
-                        project_root=self.project_root,
-                        partition_dir=partition,
-                        destination=config.destination,
-                        chunk_rows=config.ingestion.chunk_rows,
-                    )
+                        backend = get_ingestion(config.ingestion.library)
+                        logger.info(
+                            "writing bronze partition",
+                            backend=config.ingestion.library,
+                            chunk_rows=config.ingestion.chunk_rows,
+                            partition=str(partition),
+                        )
+                        written = backend.write(
+                            counted,
+                            config=config,
+                            project_root=self.project_root,
+                            partition_dir=partition,
+                            destination=config.destination,
+                            chunk_rows=config.ingestion.chunk_rows,
+                        )
+                    except Exception as exc:
+                        reraise_as_plugin(exc, plugin=source.name, action="load")
                     schema_sha256 = sha256_file(
                         resolve_path(self.project_root, config.schema_path)
                     )
@@ -428,16 +439,16 @@ class PipelineRunner:
                 base / f"__extract_run_datetime={to_partition_value(extract_run_datetime)}"
             )
             if not is_committed_raw_dir(target):
-                raise FileNotFoundError(
+                raise DetNotFoundError(
                     f"No committed raw extract at {target} "
                     "(incomplete extract has no meta/manifest.json)"
                 )
             return target
         if not base.exists():
-            raise FileNotFoundError(f"No raw partitions under {base}")
+            raise DetNotFoundError(f"No raw partitions under {base}")
         from det.runtime.manifest import committed_extract_run_dirs
 
         runs = committed_extract_run_dirs(base)
         if not runs:
-            raise FileNotFoundError(f"No committed extract runs under {base}")
+            raise DetNotFoundError(f"No committed extract runs under {base}")
         return runs[-1]

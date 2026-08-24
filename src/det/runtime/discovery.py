@@ -22,6 +22,7 @@ from types import ModuleType
 from typing import Any
 
 import det.sources as sources_pkg
+from det.errors import DetPluginError
 from det.sources.base import MAPPER_ATTR, SourcePlugin
 
 SOURCES_GROUP = "det.sources"
@@ -29,11 +30,11 @@ MAPPERS_GROUP = "det.mappers"
 _PLUGIN_METHODS = ("defaults", "extract_to_raw", "records_from_raw")
 
 
-class PluginLoadError(RuntimeError):
+class PluginLoadError(DetPluginError):
     """A discovered plugin module exists but failed name, protocol, or import checks."""
 
     def __init__(self, message: str, *, module: str | None = None) -> None:
-        super().__init__(message)
+        super().__init__(message, plugin=module)
         self.module = module
 
 
