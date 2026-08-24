@@ -12,7 +12,7 @@ from det.destinations.models import (
 from det.ingestion.sql_replace import delete_extract_run_sql
 from det.logging import bound_run_context, get_logger, sanitize_lake_uri
 from det.optional_deps import require_duckdb
-from det.runtime.config import PipelineConfig
+from det.runtime.config import PipelineConfig, load_pipeline
 from det.runtime.ids import sql_names_for_config
 from det.runtime.lake import LakeRef
 from det.runtime.lease import pipeline_lease
@@ -68,9 +68,12 @@ class BronzePruner:
     def _lake(self, dest):
         return lake_root(dest, self.project_root, settings=self.settings)
 
+    def _config(self, pipeline: PipelineConfig | Path | str) -> PipelineConfig:
+        return load_pipeline(pipeline, project_root=self.project_root)
+
     def plan(
         self,
-        config: PipelineConfig,
+        pipeline: PipelineConfig | Path | str,
         *,
         interval_start: str,
         interval_end: str | None,
@@ -78,7 +81,7 @@ class BronzePruner:
     ) -> PrunePlan:
         with use_settings(self.settings):
             return self._plan(
-                config,
+                self._config(pipeline),
                 interval_start=interval_start,
                 interval_end=interval_end,
                 keep=keep,
@@ -127,7 +130,7 @@ class BronzePruner:
 
     def apply(
         self,
-        config: PipelineConfig,
+        pipeline: PipelineConfig | Path | str,
         plan: PrunePlan,
         *,
         interval_start: str | None = None,
@@ -136,7 +139,7 @@ class BronzePruner:
     ) -> int:
         with use_settings(self.settings):
             return self._apply(
-                config,
+                self._config(pipeline),
                 plan,
                 interval_start=interval_start,
                 interval_end=interval_end,

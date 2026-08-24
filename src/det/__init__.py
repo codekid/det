@@ -28,7 +28,7 @@ from det.runtime.check import (
     has_errors,
     has_warnings,
 )
-from det.runtime.config import PipelineConfig, load_pipeline_config
+from det.runtime.config import PipelineConfig, load_pipeline, load_pipeline_config
 from det.runtime.lake import LakeRef, open_lake
 from det.runtime.layout import LAKE_LAYOUT
 from det.runtime.lease import (
@@ -103,6 +103,7 @@ __all__ = [
     "list_mappers",
     "list_receipts",
     "list_sources",
+    "load_pipeline",
     "load_pipeline_config",
     "mapper",
     "merge_source_config",

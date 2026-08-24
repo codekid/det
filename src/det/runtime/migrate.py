@@ -20,8 +20,7 @@ from det.runtime.config import (
     PipelineConfig,
     SourceConfig,
     ValidationConfig,
-    load_pipeline_config,
-    resolve_path,
+    load_pipeline,
 )
 from det.runtime.ids import validate_canonical_id
 from det.runtime.lake import LakeRef
@@ -256,12 +255,8 @@ class BronzeMigrator:
             raise ValueError("-s/--interval-start is required unless --all-raw")
 
         job_ts = format_extract_run_datetime()
-        config = (
-            pipeline
-            if isinstance(pipeline, PipelineConfig)
-            else load_pipeline_config(
-                resolve_path(self.project_root, str(pipeline)), overrides=overrides
-            )
+        config = load_pipeline(
+            pipeline, project_root=self.project_root, overrides=overrides
         )
         if lake_path is not None:
             config.destination = DestinationConfig(

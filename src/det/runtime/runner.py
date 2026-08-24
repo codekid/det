@@ -13,7 +13,7 @@ from det.destinations.models import (
 from det.errors import DetConflictError, DetNotFoundError, reraise_as_plugin
 from det.logging import bound_run_context, get_logger, sanitize_lake_uri, update_run_context
 from det.plugins import load_plugins
-from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
+from det.runtime.config import PipelineConfig, load_pipeline, resolve_path
 from det.runtime.lake import LakeRef
 from det.runtime.layout import LAKE_LAYOUT
 from det.runtime.lease import pipeline_lease, refresh_lease
@@ -415,10 +415,8 @@ class PipelineRunner:
         pipeline: PipelineConfig | Path | str,
         overrides: Sequence[str] | None,
     ) -> PipelineConfig:
-        if isinstance(pipeline, PipelineConfig):
-            return pipeline
-        return load_pipeline_config(
-            resolve_path(self.project_root, str(pipeline)), overrides=overrides
+        return load_pipeline(
+            pipeline, project_root=self.project_root, overrides=overrides
         )
 
     def _resolve_raw_dir(

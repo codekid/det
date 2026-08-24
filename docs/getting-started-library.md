@@ -46,6 +46,61 @@ the process edge (or BYO structlog + `drop_secrets` / `scrub_secrets`).
 
 Lake object-store credentials stay AWS_/GCP env conventions — not on `DetSettings`.
 
+## Lake lifecycle (library)
+
+These are on `det.__all__`. Approvals are **not** part of the library path —
+call apply/migrate/run directly. Use `det approve` only for CLI/agent gated
+writes.
+
+```python
+from det import (
+    DetSettings,
+    PipelineRunner,
+    BronzeMigrator,
+    BronzePruner,
+    check_project,
+    open_lake,
+    list_receipts,
+    inspect_lease,
+    release_lock,
+    has_errors,
+)
+
+settings = DetSettings.from_env(project_root=".")
+
+# Structure check (no lake writes)
+findings = check_project(settings.project_root, pipeline="myco.feed")
+assert not has_errors(findings)
+
+# Extract + load (canonical id)
+PipelineRunner(settings=settings).run("myco.feed", interval_start="2026-01-01")
+
+# Rebuild bronze after a schema/mapper change (dry-run first)
+migrator = BronzeMigrator(settings=settings)
+plan = migrator.migrate(
+    pipeline="myco.feed",
+    to_bronze="myco.feed_v2",
+    schema_path="schemas/myco/feed/feed.schema.yaml",
+    mapper_name="identity",
+    interval_start="2026-01-01",
+    dry_run=True,
+)
+# migrator.migrate(..., dry_run=False) when ready — no approval file
+
+# Bronze retention only (never raw)
+pruner = BronzePruner(settings=settings)
+prune_plan = pruner.plan("myco.feed", interval_start="2026-01-01", keep=3)
+pruner.apply("myco.feed", prune_plan)
+
+# Receipts (read-only)
+lake = open_lake(settings.lake_path or "data/lake", settings.project_root)
+list_receipts(lake, pipeline="myco.feed", limit=20)
+```
+
+Locks: `inspect_lease` / `release_lock` are the public names (wrappers over
+`read_lock` / `force_release_lock`). Build the lock object path with
+`det.runtime.lease.lock_path` when you need to inspect a held lease.
+
 ## Testing plugins
 
 `det.testing` ships in the base install (no extra). Framework-neutral helpers

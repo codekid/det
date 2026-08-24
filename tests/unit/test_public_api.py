@@ -25,6 +25,11 @@ def test_version_and_lake_layout() -> None:
     assert det.LAKE_LAYOUT == 1
 
 
+def test_load_pipeline_exported() -> None:
+    assert "load_pipeline" in det.__all__
+    assert callable(det.load_pipeline)
+
+
 def test_http_json_submodule_all() -> None:
     from det.sources import http_json
 

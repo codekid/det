@@ -53,7 +53,7 @@ wipe + re-extract; there is no layout migrator in v1.
 | Name | Role |
 | --- | --- |
 | `DetSettings` | Frozen embedder settings (`from_env`, lake, locks, secrets callable) |
-| `PipelineConfig`, `load_pipeline_config` | Pipeline YAML model |
+| `PipelineConfig`, `load_pipeline`, `load_pipeline_config` | Pipeline YAML model; `load_pipeline` accepts canonical id / path / config |
 | `Interval`, `SourceRow`, `SourcePlugin` | Source protocol |
 | `mapper`, `merge_source_config`, `identity_mapper` | Config merge and migrate mappers |
 
@@ -85,6 +85,23 @@ Registration for production: entry points or project-local `sources/`
 | `list_receipts`, `summarize_receipts` | Read run receipts (observability) |
 | `Lease`, `LeaseHeldError` | Lake lease types |
 | `inspect_lease`, `release_lock` | Inspect / force-release lock files |
+
+`PipelineRunner`, `BronzeMigrator`, and `BronzePruner` accept a canonical pipeline
+id (`provider.source`), a YAML path, or a `PipelineConfig`. Prefer
+`load_pipeline(ref, project_root=…)` when you need the config object yourself.
+
+**Prune is bronze-only** — it never deletes raw. Prefer `plan` then `apply`.
+
+**Approvals are CLI/agent-only.** Embedders call `migrate(dry_run=False)`,
+`BronzePruner.apply`, and `PipelineRunner` directly; there is no approval file
+on the library path. Operators/agents use `det approve` + `--approval` (or
+`DET_REQUIRE_APPROVAL=1`) when gating writes from CLI / Airflow prune-apply /
+backfill windows. `record_attempt` and `runs-materialize` stay internal / ops
+product — not on `__all__`.
+
+Lock paths live under the lake; build them with
+`det.runtime.lease.lock_path` (advanced) then `inspect_lease` / `release_lock`.
+
 
 ### Logging
 
@@ -136,9 +153,10 @@ pytest; not imported by the core helpers).
 | CLI (`det.cli`) | Operator front-door |
 | MCP (`det.mcp.*`) | Agent inspect / dry-run |
 | Scaffold / `dbt_runner` | Product integrations |
-| Approvals | CLI / agent only — library callers are trusted |
+| Approvals | CLI / agent only — library callers are trusted (`PipelineRunner` / migrator / pruner apply have no approval hook) |
 | `record_attempt` / receipt writes | Runner-internal |
 | `runs-materialize` | Ops product path |
+| `read_lock` / `force_release_lock` | Prefer `inspect_lease` / `release_lock` |
 | In-tree example sources | Content demos, not SemVer surface |
 | `get_source` / `get_mapper` | Advanced; prefer discovery lists + runners |
 
