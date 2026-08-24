@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import IO, Any
 
 import pendulum
-from bs4 import BeautifulSoup
 
 from det.logging import get_logger
+from det.optional_deps import require_beautifulsoup
 from det.runtime.lake import LakeRef
 from det.runtime.manifest import sha256_file
 from det.sources.base import Interval, SourceRow
@@ -236,7 +236,8 @@ class NoaaStormEventsSource:
                 yield SourceRow(data=data, filename=filename)
         logger.info("CSV parse finished", path=path.name, rows=emitted)
 
-    def _get_soup(self, page_url: str) -> BeautifulSoup:
+    def _get_soup(self, page_url: str) -> Any:
+        BeautifulSoup = require_beautifulsoup()
         logger.info(
             "Fetching storm events index (HTTP GET; may take a bit)",
             url=page_url,
@@ -253,7 +254,7 @@ class NoaaStormEventsSource:
 
     def _filenames_in_interval(
         self,
-        soup: BeautifulSoup,
+        soup: Any,
         *,
         interval_start: str,
         interval_end: str | None,

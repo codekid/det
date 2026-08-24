@@ -13,7 +13,7 @@ dbt models, optional local Airflow, and a read-only MCP server.
 Python 3.12+ and [uv](https://github.com/astral-sh/uv):
 
 ```bash
-uv venv && make install          # extras: dev, dbt, mcp, postgres, iceberg
+uv venv && make install          # recommended extras (includes iceberg + examples)
 export DET_LAKE_PATH="$PWD/data/lake"
 
 uv run det run -p noaa.storm_events -s 2026-08-06 \
@@ -64,18 +64,27 @@ flowchart LR
 
 ## Install extras
 
+Base `det` is the runtime + CLI (no Iceberg / DuckDB / example HTTP deps).
+**Recommended first line:** install with the `iceberg` extra.
+
 | Extra | For |
 | --- | --- |
-| `iceberg` | Default lake bronze (`make install` includes it) |
-| `dbt` | `det dbt` / scaffold |
+| `iceberg` | **Recommended** — default lake bronze |
+| `examples` | In-tree HTTP sources (`dlt`, BeautifulSoup) |
+| `duckdb` | DuckDB destination / DuckDB-backed prune |
+| `scaffold` | Jinja2 dbt/pipeline scaffolding |
+| `dbt` | `det dbt` |
 | `postgres` | SQL serving destination |
 | `s3` / `gcs` | Object-store lake URI |
 | `mcp` | Cursor inspect / dry-run server |
 | `dev` | pytest, ruff |
 
 ```bash
-uv pip install -e ".[dbt,iceberg]"    # typical app repo
-make test                             # this checkout
+# App / embed (git until PyPI publish as det-elt):
+uv pip install -e ".[iceberg]"              # recommended
+uv pip install -e ".[iceberg,duckdb,dbt]"   # typical app repo
+make install                                # this checkout (full extras)
+make test
 uv run det check
 ```
 

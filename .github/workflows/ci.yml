@@ -8,6 +8,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
     services:
       postgres:
         image: postgres:16
@@ -38,7 +42,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - name: Start MinIO
         # GHA service containers cannot pass `server /data` to minio/minio.
         run: |
@@ -58,10 +62,14 @@ jobs:
           docker logs det-minio >&2 || true
           exit 1
       - name: Install
-        # mcp extra required for tests/mcp; dbt + postgres match prod extras.
+        # mcp + examples/duckdb/scaffold: product extras; dbt + postgres match prod.
         # s3 + iceberg: MinIO object-lake soak.
         # avoid --system (PEP 668 on ubuntu-latest)
-        run: uv sync --extra dev --extra mcp --extra dbt --extra postgres --extra iceberg --extra s3
+        run: >
+          uv sync
+          --extra dev --extra mcp --extra dbt --extra postgres
+          --extra iceberg --extra s3
+          --extra examples --extra duckdb --extra scaffold
       - name: Lint
         run: uv run ruff check .
       - name: Structure check
@@ -80,3 +88,27 @@ jobs:
         run: uv run dbt parse --project-dir dbt --profiles-dir dbt
       - name: Pytest
         run: uv run pytest -q
+
+  minimal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Install base only
+        run: uv sync
+      - name: Import + filesystem bronze smoke
+        run: uv run python scripts/minimal_install_smoke.py
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Install (typed public surface)
+        run: uv sync --extra duckdb --extra iceberg
+      - name: Narrow pyright on public modules
+        run: uvx --from basedpyright basedpyright

@@ -8,7 +8,7 @@ INTERVAL_END ?=
 export DET_LAKE_PATH ?= $(CURDIR)/data/lake
 
 install:
-	uv pip install -e ".[dev,dbt,mcp,postgres,iceberg]"
+	uv pip install -e ".[dev,dbt,mcp,postgres,iceberg,examples,duckdb,scaffold,s3]"
 	@$(MAKE) --no-print-directory unhide
 
 # Python 3.12+ silently ignores .pth files carrying the macOS UF_HIDDEN flag, which

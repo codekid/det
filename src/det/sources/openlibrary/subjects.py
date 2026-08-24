@@ -5,10 +5,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from dlt.sources.helpers.rest_client import RESTClient
-from dlt.sources.helpers.rest_client.paginators import OffsetPaginator
-
 from det.logging import get_logger
+from det.optional_deps import require_dlt_rest
 from det.runtime.lake import LakeRef
 from det.sources.base import Interval, SourceRow
 from det.sources.http_json import dig, write_json_page
@@ -118,9 +116,10 @@ class OpenLibrarySubjectsSource:
             params["published_in"] = str(published_in)
 
         path = _subject_path(subject)
+        RESTClient, _rest_auth, rest_paginators = require_dlt_rest()
         client = RESTClient(
             base_url=str(config["base_url"]).rstrip("/"),
-            paginator=OffsetPaginator(
+            paginator=rest_paginators.OffsetPaginator(
                 limit=page_size,
                 total_path="work_count",
                 maximum_offset=max_offset,
