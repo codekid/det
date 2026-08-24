@@ -90,8 +90,9 @@ def test_minio_extract_load_iceberg_duckdb_scan(
     pytest.importorskip("s3fs")
     duckdb = pytest.importorskip("duckdb")
 
+    lake_uri = f"{_LAKE_URI}/duckdb-scan-{tmp_path.name}"
     monkeypatch.setenv(ENV_LAKE_MODE, "cloud")
-    monkeypatch.setenv("DET_LAKE_PATH", _LAKE_URI)
+    monkeypatch.setenv("DET_LAKE_PATH", lake_uri)
     monkeypatch.setenv("AWS_ENDPOINT_URL", _ENDPOINT)
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", _KEY)
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", _SECRET)
@@ -108,7 +109,7 @@ def test_minio_extract_load_iceberg_duckdb_scan(
     assert result.raw_dir is not None
     assert (result.raw_dir / "meta" / "manifest.json").exists()
 
-    lake = open_lake(_LAKE_URI, tmp_path)
+    lake = open_lake(lake_uri, tmp_path)
     bronze = lake / "bronze" / "example_api" / "events_v1"
     assert bronze.exists()
     hint = (bronze / "metadata" / "version-hint.text").read_text().strip()
@@ -130,7 +131,7 @@ def test_minio_extract_load_iceberg_duckdb_scan(
         configure_duckdb_s3(con)
     except Exception as exc:  # pragma: no cover - extension / secret quirks
         pytest.skip(f"duckdb s3/iceberg setup failed: {exc}")
-    scan_uri = f"{_LAKE_URI.rstrip('/')}/bronze/example_api/events_v1"
+    scan_uri = f"{lake_uri.rstrip('/')}/bronze/example_api/events_v1"
     n = con.execute(f"SELECT count(*) FROM iceberg_scan('{scan_uri}')").fetchone()[0]
     assert n == SOAK_ROWS
 
@@ -141,8 +142,9 @@ def test_minio_extract_load_iceberg_det_dbt(
     pytest.importorskip("pyiceberg")
     pytest.importorskip("s3fs")
 
+    lake_uri = f"{_LAKE_URI}/det-dbt-{tmp_path.name}"
     monkeypatch.setenv(ENV_LAKE_MODE, "cloud")
-    monkeypatch.setenv("DET_LAKE_PATH", _LAKE_URI)
+    monkeypatch.setenv("DET_LAKE_PATH", lake_uri)
     monkeypatch.setenv("AWS_ENDPOINT_URL", _ENDPOINT)
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", _KEY)
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", _SECRET)
@@ -164,7 +166,7 @@ def test_minio_extract_load_iceberg_det_dbt(
     dbt_result = run_dbt(
         project_root=project_root,
         pipeline=pipe,
-        lake_path=_LAKE_URI,
+        lake_path=lake_uri,
         select=["stg_example_api__events"],
         command="run",
     )
