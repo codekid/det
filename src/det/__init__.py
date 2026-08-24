@@ -35,6 +35,7 @@ from det.runtime.prune import BronzePruner, BronzeRunRef, PrunePlan
 from det.runtime.receipts import list_receipts, summarize_receipts
 from det.runtime.registry import describe_mappers, list_mappers, list_sources
 from det.runtime.runner import ExtractResult, PipelineRunner, RunResult
+from det.runtime.settings import DetSettings
 from det.sources.base import (
     Interval,
     SourcePlugin,
@@ -50,6 +51,7 @@ __all__ = [
     "BronzeMigrator",
     "BronzePruner",
     "BronzeRunRef",
+    "DetSettings",
     "ExtractResult",
     "Finding",
     "Interval",

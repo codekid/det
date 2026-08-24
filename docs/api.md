@@ -52,9 +52,17 @@ wipe + re-extract; there is no layout migrator in v1.
 
 | Name | Role |
 | --- | --- |
+| `DetSettings` | Frozen embedder settings (`from_env`, lake, locks, secrets callable) |
 | `PipelineConfig`, `load_pipeline_config` | Pipeline YAML model |
 | `Interval`, `SourceRow`, `SourcePlugin` | Source protocol |
 | `mapper`, `merge_source_config`, `identity_mapper` | Config merge and migrate mappers |
+
+`DetSettings.from_env(project_root=…)` reads `DET_LAKE_*`, `DET_LOCK*`, and
+`DET_SECRETS_*`. Pass `settings=` into `PipelineRunner` / migrator / pruner.
+CLI builds settings then applies `--lake-path` / `--lock-ttl-sec`. Config YAML
+still holds secret **names** only; values come from `settings.resolve_secret`
+(default: env → optional `.env.secrets`). Object-store lake credentials stay
+AWS_/GCP env conventions — not on `DetSettings`.
 
 ### Discovery
 
@@ -119,7 +127,6 @@ These have their own `__all__` and are SemVer-stable for plugin authors:
 
 | Feature | Issue |
 | --- | --- |
-| `DetSettings` (project_root, lake, secrets callable) | [#27](https://github.com/codekid/det/issues/27) |
 | `DetError` tree + plugin wrap | [#28](https://github.com/codekid/det/issues/28) |
 | `det.testing` | [#30](https://github.com/codekid/det/issues/30) |
 | Project-local `sources/` + `init-source` | [#29](https://github.com/codekid/det/issues/29) |
