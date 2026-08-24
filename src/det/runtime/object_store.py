@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlparse
 
 
 def _env(environ: Mapping[str, str] | None) -> Mapping[str, str]:
@@ -80,3 +81,87 @@ def iceberg_s3_properties(env: Mapping[str, str] | None = None) -> dict[str, str
     if token:
         props["s3.session-token"] = token
     return props
+
+
+def _sql_literal(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def duckdb_s3_credentials_required(env: Mapping[str, str] | None = None) -> tuple[str, str]:
+    """Return static S3 key/secret or raise when dbt/DuckDB cannot auth."""
+    environ = _env(env)
+    key = (environ.get("AWS_ACCESS_KEY_ID") or "").strip()
+    secret = (environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
+    if not key or not secret:
+        raise ValueError(
+            "object-lake dbt requires AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY "
+            "(same env as DET extract/load)"
+        )
+    return key, secret
+
+
+def duckdb_s3_endpoint_parts(
+    env: Mapping[str, str] | None = None,
+) -> tuple[str | None, bool]:
+    """DuckDB S3 secret endpoint host (no scheme) and USE_SSL flag."""
+    endpoint = s3_endpoint_from_env(env)
+    if not endpoint:
+        return None, False
+    parsed = urlparse(endpoint)
+    host = parsed.netloc or parsed.path
+    return (host or None), parsed.scheme == "https"
+
+
+def duckdb_s3_secret_params(env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Parameters for DuckDB ``CREATE SECRET`` / dbt-duckdb profile secrets."""
+    key, secret = duckdb_s3_credentials_required(env)
+    endpoint_host, use_ssl = duckdb_s3_endpoint_parts(env)
+    params: dict[str, Any] = {
+        "key_id": key,
+        "secret": secret,
+        "region": s3_region_from_env(env) or "us-east-1",
+        "url_style": "path",
+        "use_ssl": use_ssl,
+    }
+    if endpoint_host:
+        params["endpoint"] = endpoint_host
+    return params
+
+
+def duckdb_s3_profile_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Env exports for ``dbt/profiles.yml`` duckdb_s3 target (``DET_DUCKDB_S3_*``)."""
+    duckdb_s3_credentials_required(env)
+    endpoint_host, use_ssl = duckdb_s3_endpoint_parts(env)
+    out: dict[str, str] = {
+        "DET_DUCKDB_S3_USE_SSL": "true" if use_ssl else "false",
+    }
+    if endpoint_host:
+        out["DET_DUCKDB_S3_ENDPOINT"] = endpoint_host
+    return out
+
+
+def configure_duckdb_s3(
+    con: Any,
+    env: Mapping[str, str] | None = None,
+    *,
+    secret_name: str = "det_s3",
+) -> None:
+    """Install httpfs/iceberg and register an S3 secret on a DuckDB connection."""
+    params = duckdb_s3_secret_params(env)
+    con.execute("INSTALL httpfs")
+    con.execute("LOAD httpfs")
+    con.execute("INSTALL iceberg")
+    con.execute("LOAD iceberg")
+    parts = [
+        "TYPE s3",
+        f"KEY_ID '{_sql_literal(str(params['key_id']))}'",
+        f"SECRET '{_sql_literal(str(params['secret']))}'",
+        f"REGION '{_sql_literal(str(params['region']))}'",
+        "URL_STYLE 'path'",
+        f"USE_SSL {'true' if params['use_ssl'] else 'false'}",
+    ]
+    endpoint = params.get("endpoint")
+    if endpoint:
+        parts.append(f"ENDPOINT '{_sql_literal(str(endpoint))}'")
+    body = ",\n    ".join(parts)
+    con.execute(f"CREATE OR REPLACE SECRET {secret_name} (\n    {body}\n)")

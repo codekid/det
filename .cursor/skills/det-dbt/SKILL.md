@@ -131,11 +131,17 @@ Bronze recreate after renames: identity migrate (no growing Python normalize map
 
 | Var | Role |
 | --- | --- |
-| `DET_LAKE_PATH` | Lake root for schema-aware `read_json` or `iceberg_scan` (default `./data/lake`; `s3://`/`gs://` for DET I/O — dbt JSONL globs stay local) |
+| `DET_LAKE_PATH` | Lake root for schema-aware `read_json` or `iceberg_scan` (default `./data/lake`; `s3://` for Iceberg bronze — dbt JSONL globs stay local) |
 | `DET_BRONZE_SOURCE` | `iceberg` (default lake), `filesystem` (JSONL opt-in), or `duckdb` |
 | `DET_BRONZE_SCHEMA` | SQL schema when bronze is DuckDB/Postgres |
 | `DET_ANALYTICS_DUCKDB` | Absolute analytics DB path (prefer in Airflow/Compose) |
 | `DET_OPS_DUCKDB` | Absolute ops DB path for `--target ops` (separate from analytics) |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Required for `det dbt` on `s3://` Iceberg lakes (same as extract/load) |
+| `AWS_ENDPOINT_URL` | MinIO / custom S3 API endpoint (sets `DET_DUCKDB_S3_ENDPOINT` for dbt) |
+
+On `s3://` lakes, `det dbt` selects profile target **`duckdb_s3`** (loads httpfs/iceberg
++ DuckDB S3 secret). Local filesystem lakes keep target **`duckdb`**. Ops builds stay
+on local `DET_OPS_DUCKDB` only.
 
 Macro `det_bronze_from("table", "bronze_{provider}")` switches stg to a native
 DuckDB table when `DET_BRONZE_SOURCE=duckdb`. Iceberg bronze keeps `source()` and

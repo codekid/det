@@ -115,7 +115,7 @@ no `destination.type: s3`.
 | Mode | Allowed lake | Typical use |
 | --- | --- | --- |
 | `local` | filesystem path or `memory://` (tests) | laptop, CI default suite, Compose default |
-| `cloud` | `s3://…` or `gs://…` / `gcs://…` | object store; CI MinIO soak covers extract→Iceberg→`iceberg_scan` |
+| `cloud` | `s3://…` or `gs://…` / `gcs://…` | object store; CI MinIO soak covers extract→Iceberg→`iceberg_scan` and `det dbt` |
 
 `--lake-path` cannot bypass mode. `det check` errors on mismatch and warns when
 `mode=cloud`. Compose: `DET_LAKE_MODE` + overridable `DET_LAKE_PATH` (see
@@ -136,7 +136,8 @@ purge, then rewrite `-s`/`-e` or `--all-raw`; latest raw per interval unless
 `--all-raw-runs`) or a manual wipe. Not the raw hive layout.
 
 `det dbt -p …` sets `DET_BRONZE_SOURCE` from the pipeline (`iceberg` → `iceberg_scan`
-in `sources.yml`). Layout contract: [docs/lake-layout.md](docs/lake-layout.md).
+in `sources.yml`). On `s3://` lakes, `det dbt` auto-selects profile target
+`duckdb_s3` (httpfs + S3 secret from the same `AWS_*` as extract/load). Layout contract: [docs/lake-layout.md](docs/lake-layout.md).
 
 ---
 

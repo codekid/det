@@ -50,3 +50,63 @@ def test_iceberg_s3_defaults_region_when_endpoint_set():
     props = iceberg_s3_properties({"AWS_ENDPOINT_URL": "http://minio:9000"})
     assert props["s3.region"] == "us-east-1"
     assert "s3.access-key-id" not in props
+
+
+def test_duckdb_s3_endpoint_parts_minio():
+    from det.runtime.object_store import duckdb_s3_endpoint_parts
+
+    host, use_ssl = duckdb_s3_endpoint_parts(
+        {"AWS_ENDPOINT_URL": "http://127.0.0.1:9000"}
+    )
+    assert host == "127.0.0.1:9000"
+    assert use_ssl is False
+
+
+def test_duckdb_s3_endpoint_parts_https():
+    from det.runtime.object_store import duckdb_s3_endpoint_parts
+
+    host, use_ssl = duckdb_s3_endpoint_parts(
+        {"AWS_ENDPOINT_URL": "https://s3.example.com"}
+    )
+    assert host == "s3.example.com"
+    assert use_ssl is True
+
+
+def test_duckdb_s3_secret_params_minio():
+    from det.runtime.object_store import duckdb_s3_secret_params
+
+    params = duckdb_s3_secret_params(
+        {
+            "AWS_ENDPOINT_URL": "http://127.0.0.1:9000",
+            "AWS_ACCESS_KEY_ID": "minioadmin",
+            "AWS_SECRET_ACCESS_KEY": "minioadmin",
+            "AWS_REGION": "us-east-1",
+        }
+    )
+    assert params["key_id"] == "minioadmin"
+    assert params["endpoint"] == "127.0.0.1:9000"
+    assert params["url_style"] == "path"
+    assert params["use_ssl"] is False
+
+
+def test_duckdb_s3_credentials_required_raises():
+    import pytest
+
+    from det.runtime.object_store import duckdb_s3_credentials_required
+
+    with pytest.raises(ValueError, match="AWS_ACCESS_KEY_ID"):
+        duckdb_s3_credentials_required({})
+
+
+def test_duckdb_s3_profile_env_exports_endpoint():
+    from det.runtime.object_store import duckdb_s3_profile_env
+
+    env = duckdb_s3_profile_env(
+        {
+            "AWS_ENDPOINT_URL": "http://127.0.0.1:9000",
+            "AWS_ACCESS_KEY_ID": "k",
+            "AWS_SECRET_ACCESS_KEY": "s",
+        }
+    )
+    assert env["DET_DUCKDB_S3_ENDPOINT"] == "127.0.0.1:9000"
+    assert env["DET_DUCKDB_S3_USE_SSL"] == "false"

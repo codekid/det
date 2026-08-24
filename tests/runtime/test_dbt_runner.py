@@ -206,6 +206,72 @@ destination:
     assert result.bronze_source == "iceberg"
 
 
+def test_run_dbt_s3_lake_uses_duckdb_s3_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("DET_LAKE_MODE", "cloud")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "http://127.0.0.1:9000")
+    dbt_dir = tmp_path / "dbt"
+    dbt_dir.mkdir()
+    (dbt_dir / "dbt_project.yml").write_text("name: x\n", encoding="utf-8")
+    pipeline = tmp_path / "pipe.yaml"
+    pipeline.write_text(
+        """
+name: example_api.events
+source:
+  type: example_api.events
+schema: schemas/mini.schema.yaml
+destination:
+  type: iceberg
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "schemas").mkdir()
+    (tmp_path / "schemas" / "mini.schema.yaml").write_text(
+        "type: object\nproperties: {}\n",
+        encoding="utf-8",
+    )
+    result = run_dbt(
+        project_root=tmp_path,
+        pipeline=pipeline,
+        lake_path="s3://det-ci/det-lake",
+        dry_run=True,
+    )
+    assert result.command[result.command.index("--target") + 1] == "duckdb_s3"
+    assert result.lake_path == "s3://det-ci/det-lake"
+
+
+def test_run_dbt_local_lake_keeps_duckdb_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    dbt_dir = tmp_path / "dbt"
+    dbt_dir.mkdir()
+    (dbt_dir / "dbt_project.yml").write_text("name: x\n", encoding="utf-8")
+    pipeline = tmp_path / "pipe.yaml"
+    pipeline.write_text(
+        """
+name: noaa.storm_events
+source:
+  type: noaa.storm_events
+schema: schemas/mini.schema.yaml
+destination:
+  type: filesystem
+  path: ./data/lake
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "schemas").mkdir()
+    (tmp_path / "schemas" / "mini.schema.yaml").write_text(
+        "type: object\nproperties: {}\n",
+        encoding="utf-8",
+    )
+    result = run_dbt(project_root=tmp_path, pipeline=pipeline, dry_run=True)
+    assert "--target" not in result.command
+
+
 def test_run_dbt_missing_cli(tmp_path: Path):
     dbt_dir = tmp_path / "dbt"
     dbt_dir.mkdir()
