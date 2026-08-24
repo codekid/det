@@ -1,3 +1,8 @@
+"""HTTP fetch helpers for source plugins (retries, file download, gzip checks).
+
+SemVer-stable plugin helpers (not re-exported on top-level ``det``). See ``docs/api.md``.
+"""
+
 from __future__ import annotations
 
 import gzip
@@ -18,6 +23,15 @@ logger = get_logger(__name__)
 DEFAULT_MAX_ATTEMPTS = 4
 BACKOFF_CAP_SECONDS = 60.0
 _STREAM_CHUNK = 256 * 1024
+
+__all__ = [
+    "DEFAULT_MAX_ATTEMPTS",
+    "HttpError",
+    "HttpIntegrityError",
+    "http_get",
+    "http_get_file",
+    "verify_gzip",
+]
 
 
 class HttpError(Exception):

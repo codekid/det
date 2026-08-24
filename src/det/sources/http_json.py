@@ -1,4 +1,7 @@
-"""Shared helpers for JSON HTTP page sources (example_api, openlibrary, …)."""
+"""Shared helpers for JSON HTTP page sources (example_api, openlibrary, …).
+
+SemVer-stable plugin helpers (not re-exported on top-level ``det``). See ``docs/api.md``.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +13,13 @@ from det.runtime.ids import parse_canonical_id
 from det.runtime.lake import LakeRef
 from det.runtime.manifest import sha256_file
 from det.runtime.secrets import HTTP_TOKEN_KEYS, resolve_secret, source_secret_names
+
+__all__ = [
+    "dig",
+    "nest_under_path",
+    "source_bearer_token",
+    "write_json_page",
+]
 
 
 def source_bearer_token(config: dict[str, Any], *, source_name: str) -> str | None:
