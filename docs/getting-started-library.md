@@ -101,6 +101,9 @@ Locks: `inspect_lease` / `release_lock` are the public names (wrappers over
 `read_lock` / `force_release_lock`). Build the lock object path with
 `det.runtime.lease.lock_path` when you need to inspect a held lease.
 
+**dlt:** helpers OK inside `extract_to_raw`; never `dlt.pipeline` for landing.
+DET fail-closes on `_dlt_*` keys / state paths (see [api.md](api.md)).
+
 ## Testing plugins
 
 `det.testing` ships in the base install (no extra). Framework-neutral helpers

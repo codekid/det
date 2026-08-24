@@ -14,6 +14,7 @@ from det.errors import DetConflictError, DetNotFoundError, reraise_as_plugin
 from det.logging import bound_run_context, get_logger, sanitize_lake_uri, update_run_context
 from det.plugins import load_plugins
 from det.runtime.config import PipelineConfig, load_pipeline, resolve_path
+from det.runtime.dlt_hygiene import check_raw_hygiene
 from det.runtime.lake import LakeRef
 from det.runtime.layout import LAKE_LAYOUT
 from det.runtime.lease import pipeline_lease, refresh_lease
@@ -184,6 +185,7 @@ class PipelineRunner:
                             reraise_as_plugin(
                                 exc, plugin=source.name, action="extract_to_raw"
                             )
+                        check_raw_hygiene(raw_dir, artifacts)
                         refresh_lease(lease)
                         logger.info(
                             "writing raw manifest",
@@ -295,6 +297,7 @@ class PipelineRunner:
                     )
                     logger.info("resolved raw partition", raw_dir=str(raw_dir))
                     manifest = read_manifest(raw_dir)
+                    check_raw_hygiene(raw_dir, manifest.get("artifacts"))
                     extract_ts = str(
                         manifest.get("extract_run_datetime") or extract_run_datetime
                     )

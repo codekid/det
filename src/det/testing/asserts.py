@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import json
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from det.errors import DetContractError
+from det.runtime.dlt_hygiene import check_raw_hygiene, lake_dlt_path_hits
 from det.runtime.layout import LAKE_LAYOUT, lake_layout_of
 from det.runtime.manifest import is_committed_raw_dir, read_manifest
-
-_DLT_KEY_PREFIX = "_dlt"
 
 
 def assert_raw_contract(raw_dir: Path | Any) -> dict[str, Any]:
@@ -77,79 +75,16 @@ def assert_no_dlt_artifacts(
     """
     Fail if a raw or bronze prefix looks dlt-managed.
 
-    Scans directory names / files for ``_dlt*`` and optionally JSON object keys
-    under ``data/`` (and ``*.jsonl`` bronze files). Full refuse-at-boundary
-    hygiene lands in #32; this helper is the author-facing check today.
+    Shares the same rules as extract/load/``det check`` (``det.runtime.dlt_hygiene``).
     """
-    base = _as_local_path(root)
-    if base is None:
-        # Non-local LakeRef: light check on immediate children only.
-        if not root.exists():
-            raise AssertionError(f"path does not exist: {root}")
-        for child in root.iterdir():
-            if child.name.startswith(_DLT_KEY_PREFIX):
-                raise AssertionError(f"dlt-shaped path under lake prefix: {child}")
-        return
-
-    if not base.exists():
-        raise AssertionError(f"path does not exist: {base}")
-
-    for path in base.rglob("*"):
-        if path.name.startswith(_DLT_KEY_PREFIX):
-            raise AssertionError(f"dlt-shaped path under lake prefix: {path}")
-
-    if not scan_json:
-        return
-
-    for path in _iter_json_files(base):
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise AssertionError(f"cannot read {path}: {exc}") from exc
-        if path.suffix == ".jsonl":
-            for line_no, line in enumerate(text.splitlines(), 1):
-                if not line.strip():
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    raise AssertionError(f"invalid jsonl {path}:{line_no}: {exc}") from exc
-                _reject_dlt_keys(obj, where=f"{path}:{line_no}")
-        else:
-            try:
-                obj = json.loads(text)
-            except json.JSONDecodeError as exc:
-                raise AssertionError(f"invalid json {path}: {exc}") from exc
-            _reject_dlt_keys(obj, where=str(path))
-
-
-def _as_local_path(root: Any) -> Path | None:
-    if isinstance(root, Path):
-        return root
-    if hasattr(root, "to_path") and getattr(root, "is_local", False):
-        return root.to_path()
     try:
-        return Path(root)
-    except TypeError:
-        return None
-
-
-def _iter_json_files(base: Path) -> Iterable[Path]:
-    if not base.is_dir():
-        if base.suffix in {".json", ".jsonl"}:
-            yield base
-        return
-    for path in base.rglob("*"):
-        if path.is_file() and path.suffix in {".json", ".jsonl"}:
-            yield path
-
-
-def _reject_dlt_keys(obj: Any, *, where: str) -> None:
-    if isinstance(obj, dict):
-        for key, value in obj.items():
-            if isinstance(key, str) and key.startswith(_DLT_KEY_PREFIX):
-                raise AssertionError(f"dlt-shaped key {key!r} in {where}")
-            _reject_dlt_keys(value, where=where)
-    elif isinstance(obj, list):
-        for item in obj:
-            _reject_dlt_keys(item, where=where)
+        if scan_json:
+            check_raw_hygiene(root)
+        else:
+            hits = lake_dlt_path_hits(root)
+            if hits:
+                raise DetContractError(
+                    f"dlt-shaped path under lake prefix: {hits[0]}"
+                )
+    except DetContractError as exc:
+        raise AssertionError(str(exc)) from exc

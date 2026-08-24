@@ -136,5 +136,5 @@ def test_assert_no_dlt_artifacts_rejects_key(tmp_path: Path) -> None:
     bad = tmp_path / "data" / "pages"
     bad.mkdir(parents=True)
     (bad / "0001.json").write_text('{"_dlt_id": "x", "id": 1}', encoding="utf-8")
-    with pytest.raises(AssertionError, match="dlt-shaped key"):
+    with pytest.raises(AssertionError, match="_dlt_id"):
         assert_no_dlt_artifacts(tmp_path)

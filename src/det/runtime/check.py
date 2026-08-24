@@ -163,6 +163,7 @@ def check_pipeline_config(
             config_rel=_rel(config_path, root),
         )
     )
+    findings.extend(_dlt_lake_findings(config, project_root=root, pipeline_id=pipeline_id))
 
     dbt_root = root / "dbt"
     if dbt_root.is_dir():
@@ -207,6 +208,37 @@ def _credential_literals(value: Any, *, prefix: str = "") -> list[str]:
         for index, item in enumerate(value):
             hits.extend(_credential_literals(item, prefix=f"{prefix}[{index}]"))
     return hits
+
+
+def _dlt_lake_findings(
+    config: Any,
+    *,
+    project_root: Path,
+    pipeline_id: str,
+) -> list[Finding]:
+    """Flag leftover dlt state tables / paths under this pipeline's lake prefixes."""
+    from det.destinations.models import bronze_dataset_dir, raw_dataset_dir
+    from det.runtime.dlt_hygiene import dlt_hygiene_message, lake_dlt_path_hits
+
+    findings: list[Finding] = []
+    try:
+        raw_ds = raw_dataset_dir(config, project_root)
+        bronze_ds = bronze_dataset_dir(config, project_root)
+    except Exception:
+        return findings
+
+    hits = lake_dlt_path_hits(raw_ds, bronze_ds)
+    for path_str in hits:
+        findings.append(
+            Finding(
+                severity="error",
+                code="dlt_state_on_lake",
+                pipeline=pipeline_id,
+                path=path_str,
+                detail=dlt_hygiene_message(f"found path {path_str}", surface="Lake"),
+            )
+        )
+    return findings
 
 
 def _secret_findings(

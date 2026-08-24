@@ -5,6 +5,7 @@ from typing import Any
 
 from det.logging import get_logger
 from det.runtime.coerce import CoerceError, coerce_record
+from det.runtime.dlt_hygiene import refuse_dlt_keys
 from det.runtime.meta import attach_meta
 from det.runtime.naming import BronzeNamingConfig, apply_naming
 from det.sources.base import SourceRow
@@ -43,9 +44,11 @@ def iter_bronze_rows(
     """
     n = 0
     for source_row in source_rows:
+        refuse_dlt_keys(source_row.data, surface="Raw row")
         named = apply_naming(source_row.data, naming)
         if mapper is not None:
             named = mapper(named)
+        refuse_dlt_keys(named, surface="Bronze row")
         try:
             typed = coerce_record(named, schema)
         except CoerceError as exc:
@@ -54,7 +57,7 @@ def iter_bronze_rows(
         n += 1
         if n == 1 or (log_every >= 1 and n % log_every == 0):
             logger.info("bronze row progress", rows=n)
-        yield attach_meta(
+        row = attach_meta(
             typed,
             filename=source_row.filename,
             extract_run_datetime=extract_run_datetime,
@@ -62,6 +65,8 @@ def iter_bronze_rows(
             interval_end_datetime=interval_end_datetime,
             bronze_loaded_at=bronze_loaded_at,
         )
+        refuse_dlt_keys(row, surface="Bronze row")
+        yield row
 
 
 def chain_first(first: Any, rest: Iterable[Any]) -> Iterator[Any]:

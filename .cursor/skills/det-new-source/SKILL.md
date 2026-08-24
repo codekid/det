@@ -31,7 +31,9 @@ Do not list in-tree plugins in `pyproject.toml` entry points (`det.sources` /
 `det.mappers` are for out-of-tree packages only).
 
 dlt may help HTTP (`RESTClient`, `@dlt.resource` as iterator). **Never**
-`dlt.pipeline` / `pipeline.run` for bronze landing.
+`dlt.pipeline` / `pipeline.run` for bronze landing. After extract (and at load /
+`det check`), DET refuses `_dlt_*` keys and leftover `_dlt_loads` /
+`_dlt_pipeline_state` / `_dlt_version` paths under the pipeline lake prefix.
 
 ## Credentials
 

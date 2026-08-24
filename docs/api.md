@@ -64,6 +64,15 @@ still holds secret **names** only; values come from `settings.resolve_secret`
 (default: env → optional `.env.secrets`). Object-store lake credentials stay
 AWS_/GCP env conventions — not on `DetSettings`.
 
+### dlt boundary
+
+DET never lands bronze via `dlt.pipeline`. HTTP helpers (`RESTClient`, etc.) are
+fine inside `extract_to_raw`. If raw pages, bronze rows, or lake prefixes look
+dlt-managed (`_dlt_*` keys, `_dlt_loads` / `_dlt_pipeline_state` /
+`_dlt_version` paths), extract/load raise `DetContractError` and `det check`
+emits `dlt_state_on_lake`. Shared helpers live in `det.runtime.dlt_hygiene`
+(also used by `det.testing.assert_no_dlt_artifacts`).
+
 ### Discovery
 
 | Name | Role |
