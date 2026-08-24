@@ -1,7 +1,9 @@
-# Superseded by dbt/models/silver/sources_bigquery.yml (checked into repo).
-# Kept as a pointer for operators upgrading from the example-only layout.
+# Obsolete. Do not create sources_bigquery.yml alongside sources.yml.
 #
-# BigQuery sources for BigLake Iceberg bronze (architecture C) live in:
-#   dbt/models/silver/sources_bigquery.yml
+# dbt 1.12 parses every sources file; duplicate source names fail even when
+# config.enabled differs. BigLake + DuckDB share one file:
+#   dbt/models/silver/sources.yml
+#   dbt/models/ops/sources.yml
 #
+# Inline Jinja sets database for BigQuery and gates DuckDB meta.external_location.
 # Full recipe: docs/gcp-biglake.md

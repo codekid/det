@@ -145,8 +145,11 @@ On `s3://` lakes, `det dbt` selects profile target **`duckdb_s3`** (loads httpfs
 + DuckDB S3 secret). Local filesystem lakes keep target **`duckdb`**. On `gs://`,
 do **not** expect DuckDB S3 — set `DET_DBT_TARGET=bigquery` / `--target bigquery`
 after registering BigLake tables ([docs/gcp-biglake.md](../../../docs/gcp-biglake.md);
-sources: `dbt/models/silver/sources_bigquery.yml` + `dbt/models/ops/sources_bigquery.yml`).
-On `gs://` with `DET_DBT_TARGET=bigquery`, ops builds use the same BQ target (not DuckDB).
+prerequisites, IAM, and sandbox teardown in the same doc).
+Silver/ops use **one** `sources.yml` each with inline Jinja (BQ `database` vs
+DuckDB `meta.external_location`) — do not scaffold a second `sources_bigquery.yml`
+with the same source names (dbt 1.12 duplicate-source parse error). On `gs://`
+with `DET_DBT_TARGET=bigquery`, ops builds use the same BQ target (not DuckDB).
 
 Macro `det_bronze_from("table", "bronze_{provider}")` switches stg to a native
 DuckDB table when `DET_BRONZE_SOURCE=duckdb`. Iceberg bronze keeps `source()` and
@@ -168,6 +171,12 @@ not a DET destination — there is no `destination.type: bigquery`.
   Airflow DAG `det_ops_receipts` follows the same rule. Materialize first:
   `det runs-materialize`. Local: query `data/det_ops.duckdb` schema `ops`.
   GCS: query BQ `ops.*` tables.
+- **Infra vs SLO:** `tag:ops` builds models **and** seed/tests. For a GCP/model
+  smoke (or after mixed failed receipts), use
+  `det dbt --select 'tag:ops,resource_type:model'` first. Full `tag:ops` SLO
+  tests fail closed against `ops_slo_expected` — error attempts or missing recent
+  ok receipts for seeded `(pipeline, command)` pairs fail the build even when
+  silver/ops models succeed.
 - **This run vs the fleet:** receipts answer “did this extract/load break?”;
   ops dbt answers “have opted-in pipelines been running often/well enough?”
   Declare policy with pipeline `slo:` (opt-in; omit → not in the expected set).

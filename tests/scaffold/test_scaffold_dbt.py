@@ -126,8 +126,11 @@ def test_scaffold_creates_and_skips_without_force(tmp_path: Path):
     assert "bronze_noaa" in sources_text
     assert "read_json(" in sources_text
     assert "'event_id': 'INTEGER'" in sources_text
-    assert "formatter: template" in sources_text
+    assert "formatter:" in sources_text
+    assert "target.name != 'bigquery'" in sources_text
+    assert "target.name == 'bigquery'" in sources_text
     assert "storm_events_v1" in sources_text
+    assert not (models / "sources_bigquery.yml").exists()
     # Jinja must survive YAML round-trip for dbt.
     assert 'env_var("DET_LAKE_PATH"' in sources_text or "env_var('DET_LAKE_PATH'" in sources_text
 

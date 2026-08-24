@@ -638,38 +638,33 @@ def _table_entry_yaml(
     desc_indented = _yaml_block({"description": description}, indent=8)
 
     # Match existing lake path Jinja; path is concrete per table (not {name}).
-    lake_jinja = '{{ env_var("DET_LAKE_PATH", "../data/lake") }}'
+    # Gate DuckDB meta with inline Jinja so the same sources.yml works for
+    # BigLake (dbt 1.12 rejects a second sources_bigquery.yml with same names).
+    lake_jinja = "{{ env_var('DET_LAKE_PATH', '../data/lake') }}"
+    if_not_bq = "{% if target.name != 'bigquery' %}"
+    endif = "{% endif %}"
     if bronze_source == "iceberg":
+        loc = f"iceberg_scan('{lake_jinja}/bronze/{provider}/{table}')"
         lines = [
             f"      - name: {table}",
             desc_indented,
             "        meta:",
-            "          # Iceberg bronze: DuckDB iceberg_scan of the table location",
-            "          # (Hadoop catalog on the lake). Not a JSONL hive glob.",
-            "          formatter: template",
-            "          external_location: >-",
-            f"            iceberg_scan('{lake_jinja}/bronze/{provider}/{table}')",
+            f'          formatter: "{if_not_bq}template{endif}"',
+            f'          external_location: "{if_not_bq}{loc}{endif}"',
             "        columns:",
             cols_indented,
         ]
         return "\n".join(lines)
+    loc = (
+        f"read_json('{lake_jinja}/bronze/{provider}/{table}/**/data.jsonl', "
+        f"columns={columns_struct}, union_by_name=true, hive_partitioning=false)"
+    )
     lines = [
         f"      - name: {table}",
         desc_indented,
         "        meta:",
-        "          # Schema-aware columns avoid read_json_auto promoting mixed",
-        "          # partitions to JSON (values that look like \"48\" / \"\").",
-        "          # formatter=template: columns={...} braces must not go through",
-        "          # str.format_map (dbt-duckdb default newstyle).",
-        "          # hive_partitioning=false: partition keys are also payload cols.",
-        "          formatter: template",
-        "          external_location: >-",
-        "            read_json(",
-        f"              '{lake_jinja}/bronze/{provider}/{table}/**/data.jsonl',",
-        f"              columns={columns_struct},",
-        "              union_by_name=true,",
-        "              hive_partitioning=false",
-        "            )",
+        f'          formatter: "{if_not_bq}template{endif}"',
+        f'          external_location: "{if_not_bq}{loc}{endif}"',
         "        columns:",
         cols_indented,
     ]
@@ -841,140 +836,6 @@ def _merge_sources_table(
     sources_path.write_text(text, encoding="utf-8")
     actions.append(ScaffoldAction(path=sources_path, action="write", detail=detail))
     logger.info("scaffolded sources.yml", path=str(sources_path), detail=detail)
-
-
-def _bq_table_entry_yaml(
-    table: str,
-    required: list[str],
-    *,
-    description: str,
-    column_descriptions: dict[str, str] | None = None,
-) -> str:
-    """Emit a BigQuery sources_bigquery.yml table block (plain BQ table ref)."""
-    descs = column_descriptions or {}
-    columns: list[dict[str, Any]] = []
-    for name in ["__row_hash", *required]:
-        entry: dict[str, Any] = {"name": name}
-        if name in descs:
-            entry["description"] = descs[name]
-        if name == "__row_hash" or name in required:
-            entry["tests"] = ["not_null"]
-        columns.append(entry)
-
-    cols_yaml = yaml.safe_dump(
-        columns, sort_keys=False, default_flow_style=False, allow_unicode=True, width=1000
-    ).rstrip()
-    cols_indented = "\n".join(
-        "        " + line if line else line for line in cols_yaml.splitlines()
-    )
-    desc_indented = _yaml_block({"description": description}, indent=8)
-    return "\n".join(
-        [
-            f"      - name: {table}",
-            desc_indented,
-            "        columns:",
-            cols_indented,
-        ]
-    )
-
-
-def _merge_sources_bigquery_table(
-    sources_path: Path,
-    *,
-    source_name: str,
-    provider: str,
-    table: str,
-    required: list[str],
-    force: bool,
-    dry_run: bool,
-    actions: list[ScaffoldAction],
-    table_description: str | None = None,
-    column_descriptions: dict[str, str] | None = None,
-) -> None:
-    """Merge a bronze table into sources_bigquery.yml for BigLake-backed dbt."""
-    table_yaml = _bq_table_entry_yaml(
-        table,
-        required,
-        description=table_description or f"BigLake Iceberg for {provider}.{table}",
-        column_descriptions=column_descriptions,
-    )
-    if not sources_path.exists():
-        content = _render(
-            "sources_bigquery.yml.j2",
-            source_name=source_name,
-            tables_yaml=table_yaml + "\n",
-        )
-        detail = "create sources_bigquery.yml"
-        if dry_run:
-            actions.append(ScaffoldAction(path=sources_path, action="would_write", detail=detail))
-            return
-        sources_path.parent.mkdir(parents=True, exist_ok=True)
-        sources_path.write_text(content, encoding="utf-8")
-        actions.append(ScaffoldAction(path=sources_path, action="write", detail=detail))
-        return
-
-    text = sources_path.read_text(encoding="utf-8")
-    if not _sources_has_source(text, source_name):
-        block = _render(
-            "sources_bigquery.yml.j2",
-            source_name=source_name,
-            tables_yaml=table_yaml + "\n",
-        )
-        source_only = block.split("sources:\n", 1)[-1].rstrip() + "\n"
-        text = _insert_source_block(text, source_only, source_name=source_name)
-        detail = f"add source {source_name}"
-        if dry_run:
-            actions.append(ScaffoldAction(path=sources_path, action="would_patch", detail=detail))
-            return
-        sources_path.write_text(text, encoding="utf-8")
-        actions.append(ScaffoldAction(path=sources_path, action="write", detail=detail))
-        return
-
-    if _sources_has_table(text, table):
-        if not force:
-            actions.append(
-                ScaffoldAction(path=sources_path, action="skip", detail=f"table {table} exists")
-            )
-            return
-        start_m = re.search(
-            rf"(?m)^(?P<indent>\s*)- name:\s*{re.escape(table)}\s*$", text
-        )
-        if start_m is None:
-            actions.append(
-                ScaffoldAction(
-                    path=sources_path,
-                    action="skip",
-                    detail=f"could not replace table {table}",
-                )
-            )
-            return
-        indent = start_m.group("indent")
-        indent_len = len(indent)
-        pattern = re.compile(
-            rf"(?m)^{re.escape(indent)}- name:\s*{re.escape(table)}\s*\n"
-            rf"(?:(?!^\s{{0,{indent_len}}}- name:)[^\n]*\n)*"
-        )
-        new_text, n = pattern.subn(table_yaml + "\n", text, count=1)
-        if n == 0:
-            actions.append(
-                ScaffoldAction(
-                    path=sources_path,
-                    action="skip",
-                    detail=f"could not replace table {table}",
-                )
-            )
-            return
-        detail = "replace table"
-        text = new_text
-    else:
-        text = _append_table_under_source(text, source_name, table_yaml)
-        detail = "add table"
-
-    if dry_run:
-        actions.append(ScaffoldAction(path=sources_path, action="would_patch", detail=detail))
-        return
-    sources_path.write_text(text, encoding="utf-8")
-    actions.append(ScaffoldAction(path=sources_path, action="write", detail=detail))
 
 
 def _append_table_under_source(text: str, source_name: str, table_yaml: str) -> str:
@@ -1196,18 +1057,6 @@ def scaffold_dbt(
         column_descriptions=schema_descs,
         schema_properties=props,
         bronze_source=config.destination.type,
-    )
-    _merge_sources_bigquery_table(
-        models_dir / "sources_bigquery.yml",
-        source_name=sql_schema,
-        provider=provider,
-        table=sql_table,
-        required=required,
-        force=force,
-        dry_run=dry_run,
-        actions=actions,
-        table_description=root_desc,
-        column_descriptions=schema_descs,
     )
     _merge_silver_models_yml(
         models_dir / "_silver__models.yml",

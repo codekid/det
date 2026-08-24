@@ -42,6 +42,11 @@ def test_ops_models_tagged(project_root: Path):
     )
     assert "iceberg_scan" in sources
     assert "ops/run_receipts" in sources
+    assert "target.name == 'bigquery'" in sources
+    assert "target.name != 'bigquery'" in sources
+    assert not (
+        project_root / "dbt" / "models" / "ops" / "sources_bigquery.yml"
+    ).exists()
     project = (project_root / "dbt" / "dbt_project.yml").read_text(encoding="utf-8")
     assert "ops:" in project
     assert "ops_slo_expected" in project
@@ -61,6 +66,9 @@ def test_ops_models_tagged(project_root: Path):
         text = (tests_dir / name).read_text(encoding="utf-8")
         assert "tags=['ops']" in text or 'tags=["ops"]' in text
         assert "ops_slo_expected" in text
+        # BQ-safe interval helper (smoke: dirty receipts fail SLO, not SQL).
+        assert "det_timestamp_minus_hours" in text
+        assert "interval '1 hour'" not in text
     fail_closed = (tests_dir / "assert_ops_slo_fail_closed.sql").read_text(encoding="utf-8")
     assert "schema_invalid" in fail_closed
     assert "integrity_error" in fail_closed

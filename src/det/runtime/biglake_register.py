@@ -198,6 +198,81 @@ def build_biglake_register_plan(
     )
 
 
+def _lake_bucket(lake_uri: str) -> str:
+    """Parse gs://bucket/prefix → bucket name."""
+    if not lake_uri.startswith("gs://"):
+        raise ValueError(f"Expected gs:// lake URI (got {lake_uri!r})")
+    rest = lake_uri[5:]
+    bucket, _, _ = rest.partition("/")
+    if not bucket:
+        raise ValueError(f"Missing bucket in lake URI {lake_uri!r}")
+    return bucket
+
+
+def _lookup_connection_sa(project: str, location: str, connection: str) -> str | None:
+    """Best-effort connection SA lookup; None when offline or connection missing."""
+    try:
+        from google.cloud import bigquery
+    except ImportError:
+        return None
+
+    try:
+        client = bigquery.Client(project=project)
+        conn_name = f"projects/{project}/locations/{location}/connections/{connection}"
+        conn = client.get_connection(conn_name)
+    except Exception:
+        return None
+
+    sa = getattr(conn, "service_account_id", None) or getattr(conn, "serviceAccountId", None)
+    if sa:
+        return str(sa).strip() or None
+    if isinstance(getattr(conn, "cloud_resource", None), dict):
+        sa = conn.cloud_resource.get("serviceAccountId")
+        if sa:
+            return str(sa).strip() or None
+    return None
+
+
+def build_iam_hint(plan: BigLakeRegisterPlan) -> dict[str, Any]:
+    """Structured IAM prerequisites for dry-run / MCP (never grants IAM)."""
+    bucket = _lake_bucket(plan.lake_uri)
+    connection_sa = _lookup_connection_sa(plan.project, plan.location, plan.connection)
+    hint: dict[str, Any] = {
+        "bucket": bucket,
+        "connection": plan.connection,
+        "lake_uri": plan.lake_uri,
+    }
+    if connection_sa:
+        hint["connection_sa"] = connection_sa
+        hint["gcloud_command"] = (
+            f'gcloud storage buckets add-iam-policy-binding "gs://{bucket}" '
+            f'--member="serviceAccount:{connection_sa}" '
+            f'--role="roles/storage.objectViewer"'
+        )
+    else:
+        hint["note"] = (
+            "Connection SA not resolved (connection missing, no ADC, or offline). "
+            "Create the connection with bq mk --connection, then grant "
+            "roles/storage.objectViewer on the lake bucket to the connection SA. "
+            "See docs/gcp-biglake.md#prerequisites-before-first-register."
+        )
+    return hint
+
+
+def format_iam_hint(plan: BigLakeRegisterPlan) -> str:
+    """Human-readable IAM hint block for CLI dry-run."""
+    hint = build_iam_hint(plan)
+    lines = ["IAM hint:"]
+    lines.append(f"  bucket=gs://{hint['bucket']}")
+    lines.append(f"  connection={hint['connection']}")
+    if "connection_sa" in hint:
+        lines.append(f"  connection_sa={hint['connection_sa']}")
+        lines.append(f"  gcloud={hint['gcloud_command']}")
+    else:
+        lines.append(f"  note={hint['note']}")
+    return "\n".join(lines)
+
+
 def external_table_ddl(plan: BigLakeRegisterPlan, table: BigLakeTablePlan) -> str:
     conn_fqn = f"`{plan.project}.{plan.location}.{plan.connection}`"
     table_fqn = f"`{plan.project}.{table.bq_dataset}.{table.bq_table}`"
@@ -297,6 +372,8 @@ def format_dry_run(plan: BigLakeRegisterPlan, argv: list[str]) -> str:
             f"  {table.bq_dataset}.{table.bq_table} ({table.kind}) "
             f"metadata={table.metadata_uri}"
         )
+    lines.append("")
+    lines.append(format_iam_hint(plan))
     lines.append("")
     lines.append("approval_plan:")
     lines.append(json.dumps(approval_plan_for_register(plan, argv).to_dict(), indent=2))

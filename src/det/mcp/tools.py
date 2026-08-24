@@ -1104,6 +1104,7 @@ def biglake_register_dry_run(
     )
     return {
         **plan.to_dict(),
+        "iam_hint": build_iam_hint(plan),
         "approval_plan": _approval_plan("biglake-register", argv),
         "note": (
             "Dry-run only — no BigLake tables created. Operator: det approve --plan "

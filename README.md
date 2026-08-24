@@ -163,6 +163,7 @@ target `duckdb_s3` (httpfs + S3 secret from the same `AWS_*` as extract/load).
 On `gs://`, it does **not** force DuckDB S3 — set `DET_DBT_TARGET=bigquery` /
 `--target bigquery` for BigLake-backed silver/gold/ops ([docs/gcp-biglake.md](docs/gcp-biglake.md)).
 Register BigLake tables with `det biglake-register` (dry-run → `det approve` → `--apply`).
+See [docs/gcp-biglake.md](docs/gcp-biglake.md) for connection IAM and sandbox teardown.
 Layout contract: [docs/lake-layout.md](docs/lake-layout.md).
 
 ---

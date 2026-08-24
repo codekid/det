@@ -31,10 +31,105 @@ SourcePlugin → extract → raw on gs:// → load → Iceberg bronze on gs://
 
 **IAM sketch** (sandbox SA):
 
-- GCS: object Admin (or finer read/write) on the lake bucket prefix.
-- BigQuery: Job User + Data Editor on silver/gold/ops datasets.
-- BigLake / connection: use a Cloud resource connection that can read the GCS
-  Iceberg warehouse (see Google BigLake Iceberg docs for the current connector).
+- GCS: object Admin (or finer read/write) on the lake bucket for **your** ADC /
+  workload SA (`det extract` / `det load`).
+- BigQuery: Job User + Data Editor on silver/gold/ops datasets for dbt.
+- BigLake connection SA: **`roles/storage.objectViewer`** on the lake bucket —
+  separate from your user; see [Prerequisites](#prerequisites-before-first-register).
+
+## Prerequisites (before first register)
+
+Three principals — operators often set up only the first:
+
+| Principal | Needs | Used for |
+| --- | --- | --- |
+| Operator ADC / workload SA | GCS write on lake bucket | `det extract` / `det load` |
+| **Connection SA** (`bqcx-…@gcp-sa-bigquery-condel.iam.gserviceaccount.com`) | GCS **read** on lake bucket | BigLake external tables, `SELECT` on bronze/ops |
+| Same identity as dbt | BQ Job User + dataset permissions | dbt silver/gold/ops builds |
+
+DET does **not** auto-create connections or auto-grant IAM — operator-owned
+provisioning.
+
+**1. Create the BigLake connection** (once per project/region; default
+`DET_BQ_CONNECTION=det-lake-conn`):
+
+```bash
+export DET_GCP_PROJECT=your-project
+export DET_BQ_LOCATION=US
+export DET_BQ_CONNECTION=det-lake-conn
+
+# Follow current Google docs for exact flags; example shape:
+bq mk --connection --connection_type=CLOUD_RESOURCE \
+  --location="$DET_BQ_LOCATION" --project_id="$DET_GCP_PROJECT" \
+  "$DET_BQ_CONNECTION"
+```
+
+**2. Resolve the connection service account:**
+
+```bash
+bq show --connection --location="$DET_BQ_LOCATION" \
+  --project_id="$DET_GCP_PROJECT" "$DET_BQ_CONNECTION"
+# → serviceAccountId (field name may vary by bq version)
+```
+
+**3. Grant bucket read** (minimum for Iceberg metadata + data):
+
+```bash
+export DET_GCS_BUCKET=your-bucket   # from DET_LAKE_PATH=gs://BUCKET/det-lake
+
+gcloud storage buckets add-iam-policy-binding "gs://${DET_GCS_BUCKET}" \
+  --member="serviceAccount:CONNECTION_SA_EMAIL" \
+  --role="roles/storage.objectViewer"
+```
+
+Run `det biglake-register --dry-run` before `--apply` — it prints an IAM hint
+(with copy-paste `gcloud` when the connection already exists).
+
+## Troubleshooting
+
+- **403 on register or `SELECT` on bronze/ops:** connection SA missing
+  `storage.objectViewer` on the bucket, or wrong bucket / connection name.
+- **Connection not found:** create with `bq mk --connection` before `--apply`.
+- **dbt dataset not found:** run register + dbt; register auto-creates bronze/ops
+  **datasets**; dbt creates silver/gold/ops **native** tables.
+
+## Teardown (full disposable sandbox)
+
+Manual only — no `det biglake-teardown`. Iceberg bytes live in GCS; deleting
+the bucket removes lake data.
+
+```bash
+export DET_GCP_PROJECT=your-project
+export DET_BQ_LOCATION=US
+export DET_BQ_CONNECTION=det-lake-conn
+export DET_GCS_BUCKET=your-bucket   # from DET_LAKE_PATH=gs://BUCKET/…
+```
+
+1. **BQ datasets** — drop everything created by register + dbt (adjust if you
+   only ran a subset):
+
+```bash
+# External tables from register: bronze_*, ops (BigLake)
+# Native tables from dbt: silver_*, gold, ops (dbt may replace ops.run_receipts)
+for ds in bronze_example_api bronze_noaa bronze_openlibrary \
+          silver_example_api silver_noaa silver_openlibrary ops gold; do
+  bq rm -r -f -d "${DET_GCP_PROJECT}:${ds}" 2>/dev/null || true
+done
+```
+
+2. **BigLake connection:**
+
+```bash
+bq rm --connection --location="$DET_BQ_LOCATION" \
+  --project_id="$DET_GCP_PROJECT" "$DET_BQ_CONNECTION"
+```
+
+3. **GCS bucket:**
+
+```bash
+gcloud storage rm -r "gs://${DET_GCS_BUCKET}/**" || true
+gcloud storage buckets delete "gs://${DET_GCS_BUCKET}" --quiet
+```
 
 ## Lake + pipeline
 
@@ -70,6 +165,7 @@ export DET_BQ_LOCATION=US
 export DET_BQ_CONNECTION=det-lake-conn   # optional; default det-lake-conn
 
 det biglake-register --dry-run --lake-path gs://YOUR_BUCKET/det-lake
+# Prints table plan + IAM hint (connection SA bucket binding when connection exists)
 ```
 
 Apply after approval:
@@ -97,8 +193,9 @@ MCP inspect: `biglake_register_dry_run` (never writes).
 SELECT COUNT(*) FROM `project.bronze_example_api.events_v1`;
 ```
 
-4. dbt reads via `sources_bigquery.yml` when `--target bigquery` (no DuckDB
-   `iceberg_scan`).
+4. dbt reads BigLake table refs from the same `sources.yml` when
+   `--target bigquery` (DuckDB `iceberg_scan` / `read_json` meta is Jinja-gated
+   off for that target).
 
 ## dbt-bigquery
 
@@ -114,21 +211,32 @@ Profile target `bigquery` is defined in `dbt/profiles.yml`. On `gs://` lakes,
 `det dbt` does **not** force `duckdb_s3` — set `DET_DBT_TARGET=bigquery` (or
 `--target bigquery`) for the GCP path. Keep DuckDB targets for local/MinIO.
 
-**Dual sources:** `dbt/models/silver/sources.yml` (DuckDB `iceberg_scan`, enabled
-when target ≠ bigquery) and `dbt/models/silver/sources_bigquery.yml` (BigLake BQ
-tables, enabled when target = bigquery). Same pattern for ops:
-`dbt/models/ops/sources.yml` vs `sources_bigquery.yml`.
+**Single sources file:** `dbt/models/silver/sources.yml` and
+`dbt/models/ops/sources.yml` cover both engines. Inline Jinja sets
+`database` / schema for BigQuery and leaves DuckDB `meta.external_location`
+(`iceberg_scan` / `read_json`) empty when `target.name == 'bigquery'`. Do **not**
+add a parallel `sources_bigquery.yml` with the same source names — dbt 1.12
+parses both and errors on duplicates (`config.enabled` does not prevent that).
 
 **Ops on GCS:** materialize receipts, register BigLake `ops.run_receipts`, then:
 
 ```bash
 det runs-materialize
 det biglake-register --apply …   # includes ops unless --skip-ops
-det dbt --select tag:ops         # uses bigquery when DET_DBT_TARGET=bigquery
+# Models only (infra smoke): SLO tests need clean seeded receipts
+det dbt --select 'tag:ops,resource_type:model'
+# Full ops + SLO tests (after green extract/load for pipelines in ops_slo_expected)
+det dbt --select tag:ops
 ```
 
-Macros (`det_bronze_cast`, `det_json_path`, `det_dedupe_latest_run`) and silver
-incremental models branch on `target.name == 'bigquery'`.
+`DET_DBT_TARGET=bigquery` makes `tag:ops` use the BigQuery profile (not DuckDB
+`ops`). Seeded SLOs (`ops_slo_expected`, from pipeline `slo:`) fail closed on
+error receipts / missing ok attempts — mixed smoke failures will fail those
+tests even when models build.
+
+Macros (`det_bronze_cast`, `det_json_path`, `det_dedupe_latest_run`,
+`det_sql_compat`) and silver incremental models branch on
+`target.name == 'bigquery'`.
 
 ## CI / emulator
 

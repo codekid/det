@@ -65,9 +65,15 @@ is still the authority for what landed.
    disables writing. A write failure never fails extract/load.
 6. Warehouse projection: `det runs-materialize` (or DAG `det_ops_receipts`) writes
    Iceberg `{lake}/ops/run_receipts`. Local: dbt `tag:ops` / `--target ops` →
-   `DET_OPS_DUCKDB`. GCS: register BigLake `ops.run_receipts` (`det biglake-register`),
-   set `DET_DBT_TARGET=bigquery`, then `det dbt --select tag:ops`. JSON under
-   `runs/` remains the attempt log.
+   `DET_OPS_DUCKDB`. GCS: prerequisites in [gcp-biglake.md](../../../docs/gcp-biglake.md)
+   (connection + bucket IAM) — run `det biglake-register --dry-run` for IAM hint,
+   then register BigLake `ops.run_receipts` (`det biglake-register --apply`),
+   set `DET_DBT_TARGET=bigquery`, then `det dbt --select tag:ops`. For infra-only
+   smoke (models without SLO tests), use
+   `det dbt --select 'tag:ops,resource_type:model'` — mixed failed receipts fail
+   seeded SLO tests even when models succeed. Disposable sandbox teardown:
+   [gcp-biglake.md#teardown-full-disposable-sandbox](../../../docs/gcp-biglake.md#teardown-full-disposable-sandbox).
+   JSON under `runs/` remains the attempt log.
 
 ## Fleet metrics (ops DuckDB / BigQuery / Cube)
 
