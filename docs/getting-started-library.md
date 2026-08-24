@@ -1,12 +1,36 @@
 # Library getting started (embedders)
 
-DET as a library: install the package, put pipelines under **your** project root,
-and call `PipelineRunner` (or the `det` CLI with `--project-root`).
+DET as a library: install the package under **your** project, write a source
+plugin, and call `PipelineRunner`. This repo’s CLI / dbt / Airflow / MCP path
+is separate — see the [operator README](../README.md).
 
-Operator-oriented walkthrough for this monorepo: [../README.md](../README.md).
-Public SemVer surface: [api.md](api.md).
+| Doc | Use |
+| --- | --- |
+| This page | First hour for embedders |
+| [api.md](api.md) | SemVer surface (`det.__all__`), concurrency, errors |
+| [lake-layout.md](lake-layout.md) | Hive paths, `__*` meta, `lake_layout` |
 
-## Layout
+## 1. Install
+
+Python 3.12–3.13. Until PyPI (`det-elt`), install from git:
+
+```bash
+uv pip install "det[iceberg] @ git+https://github.com/codekid/det.git"
+# or editable checkout:
+uv pip install -e ".[iceberg]"
+```
+
+`iceberg` is the recommended lake bronze. Add extras as needed:
+
+| Extra | When |
+| --- | --- |
+| `examples` | Import in-tree demos (`example_api`, NOAA HTTP helpers that pull `dlt`) |
+| `duckdb` / `postgres` / `s3` / `gcs` | Those destinations / object lakes |
+| `scaffold` | Jinja scaffolds (`det init-pipeline` templates) |
+
+Base install already includes the runtime, CLI, and `det.testing`.
+
+## 2. Project layout
 
 ```text
 {project_root}/
@@ -17,10 +41,12 @@ Public SemVer surface: [api.md](api.md).
 
 Pass `project_root` explicitly (or set `DET_PROJECT_ROOT`). Prefer
 `DetSettings.from_env(project_root=…)` then `PipelineRunner(settings=settings)`.
+Relative lake paths are fine for demos; production should use an absolute path
+or `s3://` / `gs://` with `DET_LAKE_MODE=cloud`.
 
-## Project-local sources
+## 3. Plugin + registration
 
-Day-1 plugins do **not** need a published package or entry points:
+Day-1: project-local file (no package publish):
 
 ```bash
 det init-source -n myco.feed --project-root .
@@ -29,115 +55,119 @@ det init-source -n myco.feed --project-root .
 
 Discovery order (ids must not collide):
 
-1. In-tree examples shipped with DET (`det.sources.*`)
+1. In-tree examples shipped with DET (`det.sources.*`) — needs `det[examples]` to
+   *import* HTTP-heavy demos; discovery of ids still sees them when installed
 2. `{project_root}/sources/<provider>/<source>.py` (`cls.name` == `provider.source`)
 3. Entry points `det.sources` / `det.mappers` for installable shared plugins
 
+Implement `defaults`, `extract_to_raw`, `records_from_raw` (see
+`det.sources.base.SourcePlugin`). Optional migrate mapper: `@mapper("…")` in the
+same module. HTTP: `det.sources.http_json` / `http` helpers are fine; **never**
+`dlt.pipeline` / `pipeline.run` for landing (DET refuse-closes on `_dlt_*`).
+
+## 4. Pipeline YAML + schema + secrets
+
+Canonical id is `provider.source`. YAML holds secret **names** only:
+
+```yaml
+name: myco.feed
+source:
+  type: myco.feed
+  overrides:
+    auth_env: MYCO_API_TOKEN   # name; value from env / DetSettings.resolve_secret
+schema: schemas/myco/feed/feed.schema.yaml
+destination:
+  type: iceberg                # or filesystem for JSONL smoke
+  path: ./data/lake            # demo; prefer absolute / s3:// in prod
+wire_version: 1
+```
+
+Schema is a JSON Schema file on disk (v1). Lake object-store credentials stay
+AWS_/GCP env conventions — not on `DetSettings`.
+
+## 5. `DetSettings` + `PipelineRunner`
+
 ```python
-from det import DetSettings, PipelineRunner, list_sources
+from det import DetSettings, PipelineRunner, list_sources, DetError, configure_logging
+
+configure_logging()  # process edge; or BYO structlog + drop_secrets / scrub_secrets
 
 settings = DetSettings.from_env(project_root=".")
 assert "myco.feed" in list_sources(project_root=settings.project_root)
-PipelineRunner(settings=settings).run("myco.feed", interval_start="2026-01-01")
+
+try:
+    PipelineRunner(settings=settings).run("myco.feed", interval_start="2026-01-01")
+except DetError:
+    raise
 ```
 
-Catch operational failures with `except DetError`. Call `configure_logging()` at
-the process edge (or BYO structlog + `drop_secrets` / `scrub_secrets`).
+Interval: start inclusive, end exclusive (default start + 1 day). Canonical
+pipeline ids work on the runner (same as the CLI).
 
-Lake object-store credentials stay AWS_/GCP env conventions — not on `DetSettings`.
-
-## Lake lifecycle (library)
-
-These are on `det.__all__`. Approvals are **not** part of the library path —
-call apply/migrate/run directly. Use `det approve` only for CLI/agent gated
-writes.
+Custom secrets (no process-env mutation):
 
 ```python
-from det import (
-    DetSettings,
-    PipelineRunner,
-    BronzeMigrator,
-    BronzePruner,
-    check_project,
-    open_lake,
-    list_receipts,
-    inspect_lease,
-    release_lock,
-    has_errors,
+settings = DetSettings.from_env(
+    project_root=".",
+    resolve_secret=lambda name: {"MYCO_API_TOKEN": "…"}).get(name),
 )
+```
 
-settings = DetSettings.from_env(project_root=".")
+Each `DetSettings` instance has its own secret cache (see [concurrency](api.md#concurrency)).
 
-# Structure check (no lake writes)
-findings = check_project(settings.project_root, pipeline="myco.feed")
-assert not has_errors(findings)
+## 6. `det.testing` smoke
 
-# Extract + load (canonical id)
-PipelineRunner(settings=settings).run("myco.feed", interval_start="2026-01-01")
+```python
+from det.testing import TestProject, run_extract_load, assert_raw_contract
 
-# Rebuild bronze after a schema/mapper change (dry-run first)
-migrator = BronzeMigrator(settings=settings)
-plan = migrator.migrate(
+def test_feed(tmp_path):
+    proj = TestProject(tmp_path)
+    # register plugin or write sources/… then:
+    proj.write_minimal_pipeline("myco.feed", fixture_rows=[{"id": 1}])
+    result = run_extract_load(proj, "myco.feed", interval_start="2026-08-06")
+    assert result.rows == 1
+    assert_raw_contract(result.raw_dir)
+```
+
+Optional: `pytest_plugins = ["det.testing.pytest"]` for autouse registry isolation.
+More helpers: [api.md](api.md) stable submodule `det.testing`.
+
+## 7. Day-2: migrate, check, prune
+
+Library callers are trusted — no approval files on
+`PipelineRunner` / `BronzeMigrator` / `BronzePruner.apply`. Operators/agents use
+`det approve` for CLI gating only.
+
+```python
+from det import BronzeMigrator, BronzePruner, check_project, has_errors
+
+assert not has_errors(check_project(settings.project_root, pipeline="myco.feed"))
+
+BronzeMigrator(settings=settings).migrate(
     pipeline="myco.feed",
     to_bronze="myco.feed_v2",
     schema_path="schemas/myco/feed/feed.schema.yaml",
     mapper_name="identity",
     interval_start="2026-01-01",
-    dry_run=True,
+    dry_run=True,  # then dry_run=False when ready
 )
-# migrator.migrate(..., dry_run=False) when ready — no approval file
 
-# Bronze retention only (never raw)
 pruner = BronzePruner(settings=settings)
-prune_plan = pruner.plan("myco.feed", interval_start="2026-01-01", keep=3)
-pruner.apply("myco.feed", prune_plan)
-
-# Receipts (read-only)
-lake = open_lake(settings.lake_path or "data/lake", settings.project_root)
-list_receipts(lake, pipeline="myco.feed", limit=20)
+plan = pruner.plan("myco.feed", interval_start="2026-01-01", keep=3)
+pruner.apply("myco.feed", plan)  # bronze-only; never deletes raw
 ```
 
-Locks: `inspect_lease` / `release_lock` are the public names (wrappers over
-`read_lock` / `force_release_lock`). Build the lock object path with
-`det.runtime.lease.lock_path` when you need to inspect a held lease.
+Concurrency (leases, processes vs threads): [api.md § Concurrency](api.md#concurrency).
 
-**dlt:** helpers OK inside `extract_to_raw`; never `dlt.pipeline` for landing.
-DET fail-closes on `_dlt_*` keys / state paths (see [api.md](api.md)).
+## 8. Out of scope for the library path
 
-## Testing plugins
+| Product piece | Where to look |
+| --- | --- |
+| dbt silver/gold, `det dbt` | [README](../README.md), [det-dbt skill](../.cursor/skills/det-dbt/SKILL.md) |
+| MCP inspect / dry-run | [AGENTS.md](../AGENTS.md), [README MCP](../README.md#mcp-cursor) |
+| Airflow Compose DAGs | [README Airflow](../README.md), [det-airflow skill](../.cursor/skills/det-airflow/SKILL.md) |
+| Approvals / `det approve` | CLI/agent only — not on embedder runners |
+| Cube metrics | Operator product |
 
-`det.testing` ships in the base install (no extra). Framework-neutral helpers
-plus optional pytest fixtures:
-
-```python
-from det.testing import (
-    TestProject,
-    run_extract_load,
-    assert_raw_contract,
-    assert_no_dlt_artifacts,
-    register_source_for_tests,
-    isolated_registries,
-)
-
-def test_acme_smoke(tmp_path):
-    # project-local plugin already at sources/acme/tickets.py, or:
-    with isolated_registries():
-        register_source_for_tests("acme.tickets", AcmeTicketsSource)
-        proj = TestProject(tmp_path)
-        proj.write_minimal_pipeline(
-            "acme.tickets",
-            fixture_rows=[{"id": "t1", "status": "open"}],
-        )
-        result = run_extract_load(proj, "acme.tickets", interval_start="2026-08-06")
-        assert result.rows == 1
-        assert_raw_contract(result.raw_dir)
-        assert_no_dlt_artifacts(result.raw_dir)
-```
-
-Unit-only (no lake): `extract_fixture` / `records_from_fixture`. Secrets without
-mutating env: `secrets_map({"ACME_TOKEN": "x"})` passed to `TestProject.runner`.
-
-Pytest autouse isolation (optional)::
-
-    # conftest.py
-    pytest_plugins = ["det.testing.pytest"]
+Epic checklist and publish notes (`det-elt`, MIT):
+[#24](https://github.com/codekid/det/issues/24).

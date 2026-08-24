@@ -3,9 +3,8 @@
 Names in **`det.__all__`** follow SemVer. Anything else under `det.*` is internal
 and may move in any release unless a submodule is listed below as stable.
 
-Embedder quickstart (when published): [getting-started-library.md](getting-started-library.md)
-(issue [#33](https://github.com/codekid/det/issues/33)). Lake paths and `__*` meta:
-[lake-layout.md](lake-layout.md).
+Embedder quickstart: [getting-started-library.md](getting-started-library.md).
+Lake paths and `__*` meta: [lake-layout.md](lake-layout.md).
 
 ---
 
@@ -140,6 +139,41 @@ internally; prefer catching the public `Det*` types.
 
 ---
 
+## Concurrency
+
+### Supported (v1)
+
+| Pattern | Notes |
+| --- | --- |
+| **Many processes**, one lake | Leases serialize the same `pipeline` + interval; other pipelines may run in parallel |
+| **One process, sequential** runs | Call `PipelineRunner` / migrator / pruner one after another |
+
+Catch `LeaseHeldError` (or `DetConflictError`) when another writer holds the lock;
+retry or wait — do not disable locks in production (`DET_LOCK=0` is for tests).
+
+### Unsupported (v1)
+
+- Overlapping **threads** or in-process parallel runners on the same settings /
+  registries — use **processes** instead.
+- Async-native `PipelineRunner`.
+
+Plugin registries and the process-wide secret scrub set are process-scoped.
+`det.testing.isolated_registries` / pytest fixtures isolate registries in tests.
+
+### Secrets naming and caches
+
+| Situation | Approach |
+| --- | --- |
+| Same source, many tables | Shared `auth_env` / provider secret name — preferred |
+| Different tenants / envs | Distinct secret names, a tenant-aware `resolve_secret`, or separate processes |
+
+Each `DetSettings` instance owns its **own** secret-lookup cache. Two settings
+objects with different resolvers do not share cached values. Call
+`settings.clear_secret_cache()` after forced rotation. The module-level
+`det.runtime.secrets` cache is separate (default env/file path without settings).
+
+---
+
 ## Stable submodules (not on top-level `det`)
 
 These have their own `__all__` and are SemVer-stable for plugin authors:
@@ -175,6 +209,6 @@ pytest; not imported by the core helpers).
 
 | Feature | Issue |
 | --- | --- |
-| Operator vs library getting started polish | [#33](https://github.com/codekid/det/issues/33) |
+| Thin `det.http_json` recipe + eject (optional) | [#35](https://github.com/codekid/det/issues/35) |
 
 Epic: [#24](https://github.com/codekid/det/issues/24).
