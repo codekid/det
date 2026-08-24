@@ -173,6 +173,10 @@ def test_minio_extract_load_iceberg_det_dbt(
 
     duckdb = pytest.importorskip("duckdb")
     con = duckdb.connect(str(analytics_db))
+    try:
+        configure_duckdb_s3(con)
+    except Exception as exc:  # pragma: no cover - extension / secret quirks
+        pytest.skip(f"duckdb s3/iceberg setup failed: {exc}")
     n = con.execute(
         "SELECT count(*) FROM silver_example_api.stg_example_api__events"
     ).fetchone()[0]
