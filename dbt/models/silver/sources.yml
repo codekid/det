@@ -8,15 +8,14 @@ sources:
       DuckDB native tables use det_bronze_from when DET_BRONZE_SOURCE=duckdb
       (set by det dbt --pipeline).
     schema: bronze_example_api
+
+    database: "{% if target.name == 'bigquery' %}{{ env_var('DET_GCP_PROJECT') }}{% endif %}"
     tables:
       - name: events_v1
         description: Bronze contract for example_api events. Wire-faithful typed landing; analytics renames/coalesce live in dbt.stg.
         meta:
-          # Iceberg bronze: DuckDB iceberg_scan of the table location
-          # (Hadoop catalog on the lake). Not a JSONL hive glob.
-          formatter: template
-          external_location: >-
-            iceberg_scan('{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/example_api/events_v1')
+          formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
+          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH', '../data/lake') }}/bronze/example_api/events_v1'){% endif %}"
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.
@@ -45,11 +44,8 @@ sources:
       - name: orders_v1
         description: DET bronze example_api.orders_v1
         meta:
-          # Iceberg bronze: DuckDB iceberg_scan of the table location
-          # (Hadoop catalog on the lake). Not a JSONL hive glob.
-          formatter: template
-          external_location: >-
-            iceberg_scan('{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/example_api/orders_v1')
+          formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
+          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH', '../data/lake') }}/bronze/example_api/orders_v1'){% endif %}"
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.
@@ -65,15 +61,14 @@ sources:
       DuckDB native tables use det_bronze_from when DET_BRONZE_SOURCE=duckdb
       (set by det dbt --pipeline).
     schema: bronze_noaa
+
+    database: "{% if target.name == 'bigquery' %}{{ env_var('DET_GCP_PROJECT') }}{% endif %}"
     tables:
       - name: storm_events_v1
         description: 'NOAA Storm Events details (StormEvents_details CSV). Bronze contract: snake_case names and typed values. DET coerces source strings to these types before validation. Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.'
         meta:
-          # Iceberg bronze: DuckDB iceberg_scan of the table location
-          # (Hadoop catalog on the lake). Not a JSONL hive glob.
-          formatter: template
-          external_location: >-
-            iceberg_scan('{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/storm_events_v1')
+          formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
+          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH', '../data/lake') }}/bronze/noaa/storm_events_v1'){% endif %}"
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.
@@ -190,11 +185,8 @@ sources:
       - name: fatalities_v1
         description: 'NOAA Storm Events fatalities (StormEvents_fatalities CSV). Bronze contract: snake_case names and typed values. DET coerces source strings to these types before validation. Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.'
         meta:
-          # Iceberg bronze: DuckDB iceberg_scan of the table location
-          # (Hadoop catalog on the lake). Not a JSONL hive glob.
-          formatter: template
-          external_location: >-
-            iceberg_scan('{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/fatalities_v1')
+          formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
+          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH', '../data/lake') }}/bronze/noaa/fatalities_v1'){% endif %}"
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.
@@ -227,11 +219,8 @@ sources:
       - name: locations_v1
         description: 'NOAA Storm Events locations (StormEvents_locations CSV). Bronze contract: snake_case names and typed values. DET coerces source strings to these types before validation. Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.'
         meta:
-          # Iceberg bronze: DuckDB iceberg_scan of the table location
-          # (Hadoop catalog on the lake). Not a JSONL hive glob.
-          formatter: template
-          external_location: >-
-            iceberg_scan('{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/noaa/locations_v1')
+          formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
+          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH', '../data/lake') }}/bronze/noaa/locations_v1'){% endif %}"
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.
@@ -271,23 +260,14 @@ sources:
       DET_BRONZE_SOURCE=duckdb (set by det dbt --pipeline). Iceberg bronze uses
       iceberg_scan when DET_BRONZE_SOURCE=iceberg.
     schema: bronze_openlibrary
+
+    database: "{% if target.name == 'bigquery' %}{{ env_var('DET_GCP_PROJECT') }}{% endif %}"
     tables:
       - name: subjects_v1
         description: DET bronze openlibrary.subjects_v1
         meta:
-          # Schema-aware columns avoid read_json_auto promoting mixed
-          # partitions to JSON (values that look like "48" / "").
-          # formatter=template: columns={...} braces must not go through
-          # str.format_map (dbt-duckdb default newstyle).
-          # hive_partitioning=false: partition keys are also payload cols.
-          formatter: template
-          external_location: >-
-            read_json(
-              '{{ env_var("DET_LAKE_PATH", "../data/lake") }}/bronze/openlibrary/subjects_v1/**/data.jsonl',
-              columns={'key': 'VARCHAR', 'subject_key': 'VARCHAR', 'title': 'VARCHAR', 'edition_count': 'INTEGER', 'cover_id': 'INTEGER', 'cover_edition_key': 'VARCHAR', 'first_publish_year': 'INTEGER', 'has_fulltext': 'BOOLEAN', 'public_scan': 'BOOLEAN', 'printdisabled': 'BOOLEAN', 'ia': 'VARCHAR', 'lending_edition': 'VARCHAR', 'lending_identifier': 'VARCHAR', 'authors': 'JSON', 'subject': 'JSON', 'ia_collection': 'JSON', 'availability': 'JSON', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'},
-              union_by_name=true,
-              hive_partitioning=false
-            )
+          formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
+          external_location: "{% if target.name != 'bigquery' %}read_json('{{ env_var('DET_LAKE_PATH', '../data/lake') }}/bronze/openlibrary/subjects_v1/**/data.jsonl', columns={'key': 'VARCHAR', 'subject_key': 'VARCHAR', 'title': 'VARCHAR', 'edition_count': 'INTEGER', 'cover_id': 'INTEGER', 'cover_edition_key': 'VARCHAR', 'first_publish_year': 'INTEGER', 'has_fulltext': 'BOOLEAN', 'public_scan': 'BOOLEAN', 'printdisabled': 'BOOLEAN', 'ia': 'VARCHAR', 'lending_edition': 'VARCHAR', 'lending_identifier': 'VARCHAR', 'authors': 'JSON', 'subject': 'JSON', 'ia_collection': 'JSON', 'availability': 'JSON', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'}, union_by_name=true, hive_partitioning=false){% endif %}"
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.

@@ -42,6 +42,7 @@ def create_server():
             "Dry-runs that preview a write include approval_plan (command, argv, "
             "plan_digest). Operator: det approve --plan; agent writes later with "
             "--approval. Inspect unused records: list_approvals / describe_approval. "
+            "biglake_register_dry_run previews BigLake registration (never writes). "
             "Prompts det_ops / det_new_source / det_migrate / det_dbt / det_airflow "
             "load .cursor/skills playbooks. "
             "dlt is extraction only — never suggest dlt.pipeline for landing."
@@ -329,6 +330,25 @@ def create_server():
             recreate_iceberg=recreate_iceberg,
             all_raw=all_raw,
             all_raw_runs=all_raw_runs,
+        )
+
+    @mcp.tool()
+    def biglake_register_dry_run(
+        pipeline: p.PipelineRefOpt = None,
+        lake_path: p.LakePathOpt = None,
+        project: str | None = None,
+        location: str | None = None,
+        connection: str | None = None,
+        skip_ops: bool = False,
+    ) -> dict[str, Any]:
+        """Preview BigLake Iceberg registration for gs:// lakes (never creates BQ tables)."""
+        return t.biglake_register_dry_run(
+            pipeline=pipeline,
+            lake_path=lake_path,
+            project=project,
+            location=location,
+            connection=connection,
+            skip_ops=skip_ops,
         )
 
     @mcp.tool()

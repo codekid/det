@@ -1180,6 +1180,87 @@ def runs_materialize_cmd(
     )
 
 
+@app.command("biglake-register")
+def biglake_register_cmd(
+    pipeline: str | None = typer.Option(
+        None,
+        "--pipeline",
+        "-p",
+        help="Register one pipeline bronze table only (default: all bronze + ops)",
+    ),
+    lake_path: str | None = typer.Option(None, "--lake-path"),
+    project: str | None = typer.Option(None, "--project", help="GCP project (DET_GCP_PROJECT)"),
+    location: str | None = typer.Option(None, "--location", help="BQ location (DET_BQ_LOCATION)"),
+    connection: str | None = typer.Option(
+        None,
+        "--connection",
+        help="BigLake connection id (DET_BQ_CONNECTION)",
+    ),
+    skip_ops: bool = typer.Option(False, "--skip-ops", help="Do not register ops.run_receipts"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview registration plan only"),
+    apply: bool = typer.Option(False, "--apply", help="Create/update BigLake external tables"),
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+    approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
+) -> None:
+    """Register DET Iceberg tables as BigLake external tables in BigQuery (gs:// lakes)."""
+    from det.runtime.biglake_register import (
+        apply_biglake_register,
+        biglake_register_write_argv,
+        build_biglake_register_plan,
+        format_dry_run,
+    )
+
+    if dry_run == apply:
+        raise typer.BadParameter(
+            "exactly one of --dry-run or --apply is required",
+            param_hint="--dry-run/--apply",
+        )
+
+    root = _project_root(project_root)
+    pipe_path = None
+    if pipeline is not None:
+        pipe_path = _resolve_pipeline(pipeline, root).path
+
+    argv = biglake_register_write_argv(
+        lake_path=lake_path,
+        pipeline=pipeline,
+        project=project,
+        location=location,
+        connection=connection,
+        skip_ops=skip_ops or pipeline is not None,
+    )
+    try:
+        plan = build_biglake_register_plan(
+            project_root=root,
+            lake_path=lake_path,
+            pipeline=pipe_path,
+            project=project,
+            location=location,
+            connection=connection,
+            include_ops=not skip_ops and pipeline is None,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    if dry_run:
+        typer.echo(format_dry_run(plan, argv))
+        return
+
+    _gate_approval(root, "biglake-register", argv, approval, require_approval)
+    try:
+        result = apply_biglake_register(plan)
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _consume_approval(root, approval)
+    typer.echo(f"OK biglake-register applied={result['count']}")
+    for row in result["applied"]:
+        typer.echo(
+            f"  {row['bq_dataset']}.{row['bq_table']} metadata={row['metadata_uri']}"
+        )
+
+
 @app.command("lock-show")
 def lock_show(
     pipeline: str = typer.Option(..., "--pipeline", "-p", help=_PIPELINE_HELP),

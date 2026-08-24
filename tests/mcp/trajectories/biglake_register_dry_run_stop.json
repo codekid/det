@@ -1,0 +1,16 @@
+{
+  "id": "biglake_register_dry_run_stop",
+  "scenario": "biglake",
+  "expect": [],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "biglake_register_dry_run",
+          "arguments": {"lake_path": "gs://example/det-lake", "project": "test-project"}
+        }
+      ]
+    }
+  ]
+}

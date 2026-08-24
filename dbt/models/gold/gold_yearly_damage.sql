@@ -11,11 +11,17 @@ with d as (
 formatted as (
     select
         state,
-        substr(cast(begin_yearmonth as varchar), 1, 4) as event_year,
+        substr({{ det_cast_string('begin_yearmonth') }}, 1, 4) as event_year,
         damage_property,
+        {% if target.name == 'bigquery' %}
+        safe_cast(
+            regexp_replace(lower(coalesce(damage_property, '')), r'[a-z]', '') as float64
+        ) as damage_number,
+        {% else %}
         try_cast(
             regexp_replace(lower(coalesce(damage_property, '')), '[a-z]', '', 'g') as double
         ) as damage_number,
+        {% endif %}
         lower(right(coalesce(damage_property, ''), 1)) as damage_unit
     from d
 ),

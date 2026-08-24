@@ -145,8 +145,8 @@ On `s3://` lakes, `det dbt` selects profile target **`duckdb_s3`** (loads httpfs
 + DuckDB S3 secret). Local filesystem lakes keep target **`duckdb`**. On `gs://`,
 do **not** expect DuckDB S3 — set `DET_DBT_TARGET=bigquery` / `--target bigquery`
 after registering BigLake tables ([docs/gcp-biglake.md](../../../docs/gcp-biglake.md);
-example sources: `dbt/models/silver/sources_bigquery.yml.example`). Ops builds stay
-on local `DET_OPS_DUCKDB` only.
+sources: `dbt/models/silver/sources_bigquery.yml` + `dbt/models/ops/sources_bigquery.yml`).
+On `gs://` with `DET_DBT_TARGET=bigquery`, ops builds use the same BQ target (not DuckDB).
 
 Macro `det_bronze_from("table", "bronze_{provider}")` switches stg to a native
 DuckDB table when `DET_BRONZE_SOURCE=duckdb`. Iceberg bronze keeps `source()` and
@@ -158,16 +158,16 @@ not a DET destination — there is no `destination.type: bigquery`.
 ## Ops models
 
 - Models under `dbt/models/ops/` are tagged `ops` and use schema `ops`.
-- Source: Iceberg `{lake}/ops/run_receipts` via `iceberg_scan` (after `det runs-materialize`).
+- Source: Iceberg `{lake}/ops/run_receipts` — DuckDB `iceberg_scan` (local) or
+  BigLake `ops.run_receipts` (GCS + `--target bigquery`) after `det runs-materialize`.
 - Analytics builds (`det dbt`, `det_dbt_silver_gold`, MCP `dbt_dry_run`) always
   `--exclude tag:ops` unless `--select` explicitly targets ops (`tag:ops`,
   `stg_det__…`, `path:models/ops`).
-- Build ops with `det dbt --select tag:ops` (sets `--target ops`, `DET_LAKE_PATH`,
-  `DET_OPS_DUCKDB`) or Airflow DAG `det_ops_receipts`. Materialize first:
-  `det runs-materialize`. Query `data/det_ops.duckdb` schema `ops` (not
-  `analytics.duckdb`). Do not name the DuckDB file `ops.duckdb` — catalog stem
-  `ops` collides with schema `ops`. Raw `dbt` from repo root must set **absolute**
-  `DET_LAKE_PATH`.
+- Build ops with `det dbt --select tag:ops` — `--target ops` locally, or
+  `--target bigquery` / `DET_DBT_TARGET=bigquery` on GCS after BigLake registration.
+  Airflow DAG `det_ops_receipts` follows the same rule. Materialize first:
+  `det runs-materialize`. Local: query `data/det_ops.duckdb` schema `ops`.
+  GCS: query BQ `ops.*` tables.
 - **This run vs the fleet:** receipts answer “did this extract/load break?”;
   ops dbt answers “have opted-in pipelines been running often/well enough?”
   Declare policy with pipeline `slo:` (opt-in; omit → not in the expected set).

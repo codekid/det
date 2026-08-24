@@ -23,4 +23,4 @@ inner join expected e
   on e.pipeline = r.pipeline
  and e.command = r.command
 where r.error_code in ('schema_invalid', 'integrity_error', 'secret_not_set')
-  and r.started_at >= (current_timestamp - (e.score_hours * interval '1 hour'))
+  and r.started_at >= {{ det_timestamp_minus_hours('current_timestamp', 'e.score_hours') }}

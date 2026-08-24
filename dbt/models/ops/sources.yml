@@ -5,18 +5,16 @@ sources:
     description: >
       DET ops Iceberg tables under the lake (Hadoop catalog). Separate from
       bronze analytics sources; read via DuckDB iceberg_scan.
+    database: "{% if target.name == 'bigquery' %}{{ env_var('DET_GCP_PROJECT') }}{% endif %}"
+    schema: "{% if target.name == 'bigquery' %}ops{% else %}main{% endif %}"
     tables:
       - name: run_receipts
         description: >
           Materialized extract/load attempt receipts. Source of truth remains
           `{lake}/runs/*.json`; this table is a replace-by-attempt_date projection.
         meta:
-          formatter: template
-          # Require DET_LAKE_PATH (absolute). A relative default is resolved by
-          # DuckDB from process cwd, not dbt/, and yields a misleading
-          # "no version-hint" error when the table is actually at data/lake.
-          external_location: >-
-            iceberg_scan('{{ env_var("DET_LAKE_PATH") }}/ops/run_receipts')
+          formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
+          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH') }}/ops/run_receipts'){% endif %}"
         columns:
           - name: receipt_version
             description: Receipt schema version from the JSON body

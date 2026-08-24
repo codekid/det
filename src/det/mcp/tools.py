@@ -1062,3 +1062,52 @@ def summarize_runs(
     payload["lake"] = lake_display
     payload["note"] = _RECEIPT_NOTE
     return payload
+
+
+def biglake_register_dry_run(
+    *,
+    pipeline: str | None = None,
+    lake_path: str | None = None,
+    project: str | None = None,
+    location: str | None = None,
+    connection: str | None = None,
+    skip_ops: bool = False,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Preview BigLake registration plan (never creates BQ resources)."""
+    _prepare_tool()
+    from det.runtime.biglake_register import (
+        biglake_register_write_argv,
+        build_biglake_register_plan,
+    )
+
+    base = _root(root)
+    pipe_path = None
+    if pipeline:
+        _, pipe_path = _load_pipeline(pipeline, base)
+    argv = biglake_register_write_argv(
+        lake_path=lake_path,
+        pipeline=pipeline,
+        project=project,
+        location=location,
+        connection=connection,
+        skip_ops=skip_ops,
+    )
+    plan = build_biglake_register_plan(
+        project_root=base,
+        lake_path=lake_path,
+        pipeline=pipe_path,
+        project=project,
+        location=location,
+        connection=connection,
+        include_ops=not skip_ops and pipeline is None,
+    )
+    return {
+        **plan.to_dict(),
+        "approval_plan": _approval_plan("biglake-register", argv),
+        "note": (
+            "Dry-run only — no BigLake tables created. Operator: det approve --plan "
+            "<approval_plan> --approved-by <id>. Agent: det biglake-register --apply "
+            "--approval <id> in a later turn."
+        ),
+    }

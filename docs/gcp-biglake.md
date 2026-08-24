@@ -2,14 +2,14 @@
 
 **Bronze** stays Iceberg on `gs://` (DET owns extract/load/prune/migrate). **BigQuery**
 reads that table via **BigLake Iceberg** — no second bronze copy. **dbt-bigquery**
-builds **native** silver/gold in BQ.
+builds **native** silver/gold/ops in BQ.
 
 ```text
 SourcePlugin → extract → raw on gs:// → load → Iceberg bronze on gs://
                                               ↓
                                     BigLake Iceberg table (BQ)
                                               ↓
-                                    dbt-bigquery → native BQ silver/gold
+                                    dbt-bigquery → native BQ silver/gold/ops
 ```
 
 ## Non-goals
@@ -32,7 +32,7 @@ SourcePlugin → extract → raw on gs:// → load → Iceberg bronze on gs://
 **IAM sketch** (sandbox SA):
 
 - GCS: object Admin (or finer read/write) on the lake bucket prefix.
-- BigQuery: Job User + Data Editor on silver/gold datasets.
+- BigQuery: Job User + Data Editor on silver/gold/ops datasets.
 - BigLake / connection: use a Cloud resource connection that can read the GCS
   Iceberg warehouse (see Google BigLake Iceberg docs for the current connector).
 
@@ -55,9 +55,36 @@ Pipeline stays `destination.type: iceberg` (default). Physical table:
 
 SQL naming (BigLake registration): one BQ **dataset** per provider
 `bronze_{provider}`, table leaf `{source}_vN` — same contract as
-[lake-layout.md](lake-layout.md).
+[lake-layout.md](lake-layout.md). Ops receipts register as dataset **`ops`**, table
+**`run_receipts`**.
 
-## Register BigLake (operator)
+## Register BigLake
+
+### CLI (recommended)
+
+Dry-run (agents / operators preview):
+
+```bash
+export DET_GCP_PROJECT=your-project
+export DET_BQ_LOCATION=US
+export DET_BQ_CONNECTION=det-lake-conn   # optional; default det-lake-conn
+
+det biglake-register --dry-run --lake-path gs://YOUR_BUCKET/det-lake
+```
+
+Apply after approval:
+
+```bash
+det approve --plan '<approval_plan JSON>' --approved-by you
+det biglake-register --apply --lake-path gs://YOUR_BUCKET/det-lake --approval apr_…
+```
+
+Register one pipeline only: `--pipeline example_api.events` (skips ops). Skip ops on
+full-lake register: `--skip-ops`.
+
+MCP inspect: `biglake_register_dry_run` (never writes).
+
+### Manual (operator)
 
 1. Create dataset `bronze_{provider}` in the GCP project (once per provider).
 2. Create a BigLake Iceberg table whose storage URI is the Iceberg warehouse
@@ -70,30 +97,15 @@ SQL naming (BigLake registration): one BQ **dataset** per provider
 SELECT COUNT(*) FROM `project.bronze_example_api.events_v1`;
 ```
 
-4. Point dbt `source()` at that BQ table (no DuckDB `iceberg_scan`).
-
-Example dbt source fragment (BigQuery target; not used by the default DuckDB
-`sources.yml`):
-
-```yaml
-version: 2
-sources:
-  - name: bronze_example_api
-    database: "{{ env_var('DET_GCP_PROJECT') }}"
-    schema: bronze_example_api
-    tables:
-      - name: events_v1
-        description: BigLake Iceberg over gs://…/bronze/example_api/events_v1
-```
-
-See also `dbt/models/silver/sources_bigquery.yml.example` in this repo.
+4. dbt reads via `sources_bigquery.yml` when `--target bigquery` (no DuckDB
+   `iceberg_scan`).
 
 ## dbt-bigquery
 
 ```bash
 uv pip install -e ".[dbt,bigquery]"   # or: uv pip install dbt-bigquery
-export DET_DBT_TARGET=bigquery
 export DET_GCP_PROJECT=your-project
+export DET_DBT_TARGET=bigquery
 # DET_BQ_DATASET optional (default analytics / silver schema via dbt)
 det dbt -p example_api.events --target bigquery
 ```
@@ -102,7 +114,21 @@ Profile target `bigquery` is defined in `dbt/profiles.yml`. On `gs://` lakes,
 `det dbt` does **not** force `duckdb_s3` — set `DET_DBT_TARGET=bigquery` (or
 `--target bigquery`) for the GCP path. Keep DuckDB targets for local/MinIO.
 
-Ops / `tag:ops` remain DuckDB-only (`DET_OPS_DUCKDB`).
+**Dual sources:** `dbt/models/silver/sources.yml` (DuckDB `iceberg_scan`, enabled
+when target ≠ bigquery) and `dbt/models/silver/sources_bigquery.yml` (BigLake BQ
+tables, enabled when target = bigquery). Same pattern for ops:
+`dbt/models/ops/sources.yml` vs `sources_bigquery.yml`.
+
+**Ops on GCS:** materialize receipts, register BigLake `ops.run_receipts`, then:
+
+```bash
+det runs-materialize
+det biglake-register --apply …   # includes ops unless --skip-ops
+det dbt --select tag:ops         # uses bigquery when DET_DBT_TARGET=bigquery
+```
+
+Macros (`det_bronze_cast`, `det_json_path`, `det_dedupe_latest_run`) and silver
+incremental models branch on `target.name == 'bigquery'`.
 
 ## CI / emulator
 
@@ -113,7 +139,7 @@ Ops / `tag:ops` remain DuckDB-only (`DET_OPS_DUCKDB`).
 | `DET_GCS_BUCKET` | Bucket name (CI creates `det-ci`) |
 
 Marker: `pytest -m gcs`. Job: `.github/workflows/ci.yml` → **GCS Iceberg soak**.
-MinIO soak stays separate (`-m minio`).
+MinIO soak stays separate (`-m minio`). Optional manual sandbox: `pytest -m bigquery`.
 
 ## Related
 

@@ -2,7 +2,8 @@
 Airflow DAG: materialize run receipts → Iceberg, then dbt ops models.
 
 Standalone from ``det_dbt_silver_gold`` (analytics) and ``det_extract_bronze``.
-Uses ``DET_OPS_DUCKDB`` and ``--target ops``; never writes analytics.duckdb.
+Uses ``DET_OPS_DUCKDB`` and ``--target ops`` on local lakes; ``DET_DBT_TARGET=bigquery``
+on ``gs://`` lakes after BigLake registration.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from airflow.decorators import dag, task
-from det_env import ops_dbt_env, project_root
+from det_env import ops_dbt_env, ops_dbt_target, project_root
 
 PROJECT_ROOT = project_root()
 DBT_PROJECT = Path(os.environ.get("DET_DBT_PROJECT", str(PROJECT_ROOT / "dbt")))
@@ -58,13 +59,14 @@ def det_ops_receipts():
         for key, value in ops_dbt_env().items():
             os.environ[key] = value
 
+        target = ops_dbt_target()
         try:
             result = run_dbt(
                 project_root=PROJECT_ROOT,
                 command="build",
                 project_dir=DBT_PROJECT,
                 select=["tag:ops"],
-                target="ops",
+                target=target,
             )
         except DbtNotInstalledError:
             raise
@@ -78,6 +80,7 @@ def det_ops_receipts():
             "returncode": result.returncode,
             "select": list(result.select),
             "lake_path": result.lake_path,
+            "target": target,
         }
 
     dbt_ops_build(materialize_runs())

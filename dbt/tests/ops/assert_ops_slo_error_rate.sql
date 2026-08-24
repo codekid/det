@@ -24,7 +24,7 @@ windowed as (
     on d.pipeline = e.pipeline
    and d.command = e.command
    and d.attempt_date >= cast(
-     current_timestamp - (e.score_hours * interval '1 hour') as date
+     {{ det_timestamp_minus_hours('current_timestamp', 'e.score_hours') }} as date
    )
   group by 1, 2, 3
 )
@@ -37,8 +37,8 @@ select
   errors,
   case
     when attempts = 0 then null
-    else errors::double / attempts
+    else {{ det_try_cast_double('errors') }} / attempts
   end as error_rate
 from windowed
 where attempts = 0
-   or (errors::double / attempts) > max_error_rate
+   or ({{ det_try_cast_double('errors') }} / attempts) > max_error_rate

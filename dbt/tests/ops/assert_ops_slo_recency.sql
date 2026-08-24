@@ -30,4 +30,4 @@ left join latest_ok l
   on l.pipeline = e.pipeline
  and l.command = e.command
 where l.last_ok_at is null
-   or l.last_ok_at < (current_timestamp - (e.recency_hours * interval '1 hour'))
+   or l.last_ok_at < {{ det_timestamp_minus_hours('current_timestamp', 'e.recency_hours') }}

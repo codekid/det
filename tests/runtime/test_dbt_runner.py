@@ -88,13 +88,17 @@ def test_ops_dbt_target():
     assert ops_dbt_target(["stg_noaa__storm_events+"]) is None
     assert ops_dbt_target(["tag:ops"]) == "ops"
     assert ops_dbt_target(["stg_det__run_receipts"]) == "ops"
+    assert ops_dbt_target(["tag:ops"], "bigquery") == "bigquery"
+    assert ops_dbt_target(["tag:ops"], "duckdb") == "ops"
 
 
 def test_run_dbt_ops_select_uses_ops_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    monkeypatch.setenv("DET_LAKE_MODE", "local")
     monkeypatch.delenv("DET_LAKE_PATH", raising=False)
     monkeypatch.delenv("DET_OPS_DUCKDB", raising=False)
+    monkeypatch.delenv("DET_DBT_TARGET", raising=False)
     dbt_dir = tmp_path / "dbt"
     dbt_dir.mkdir()
     (dbt_dir / "dbt_project.yml").write_text("name: x\n", encoding="utf-8")
@@ -107,9 +111,27 @@ def test_run_dbt_ops_select_uses_ops_target(
     assert "--exclude" not in result.command
 
 
+def test_run_dbt_ops_select_honors_det_dbt_target_bigquery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("DET_LAKE_MODE", "local")
+    monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    monkeypatch.setenv("DET_DBT_TARGET", "bigquery")
+    dbt_dir = tmp_path / "dbt"
+    dbt_dir.mkdir()
+    (dbt_dir / "dbt_project.yml").write_text("name: x\n", encoding="utf-8")
+    result = run_dbt(
+        project_root=tmp_path,
+        select=["tag:ops"],
+        dry_run=True,
+    )
+    assert result.command[result.command.index("--target") + 1] == "bigquery"
+
+
 def test_run_dbt_dry_run_sets_lake_and_select(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    monkeypatch.setenv("DET_LAKE_MODE", "local")
     monkeypatch.delenv("DET_LAKE_PATH", raising=False)
     dbt_dir = tmp_path / "dbt"
     dbt_dir.mkdir()
@@ -148,6 +170,7 @@ destination:
 def test_run_dbt_sets_duckdb_bronze_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    monkeypatch.setenv("DET_LAKE_MODE", "local")
     monkeypatch.delenv("DET_LAKE_PATH", raising=False)
     monkeypatch.delenv("DET_BRONZE_SOURCE", raising=False)
     dbt_dir = tmp_path / "dbt"
@@ -180,6 +203,7 @@ destination:
 def test_run_dbt_sets_iceberg_bronze_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    monkeypatch.setenv("DET_LAKE_MODE", "local")
     monkeypatch.delenv("DET_LAKE_PATH", raising=False)
     monkeypatch.delenv("DET_BRONZE_SOURCE", raising=False)
     dbt_dir = tmp_path / "dbt"
@@ -234,6 +258,7 @@ def test_run_dbt_s3_lake_uses_duckdb_s3_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("DET_LAKE_MODE", "cloud")
+    monkeypatch.delenv("DET_DBT_TARGET", raising=False)
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
     monkeypatch.setenv("AWS_ENDPOINT_URL", "http://127.0.0.1:9000")
@@ -284,7 +309,9 @@ def test_run_dbt_gs_lake_honors_det_dbt_target_bigquery(
 def test_run_dbt_local_lake_keeps_duckdb_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    monkeypatch.setenv("DET_LAKE_MODE", "local")
     monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    monkeypatch.delenv("DET_DBT_TARGET", raising=False)
     dbt_dir = tmp_path / "dbt"
     dbt_dir.mkdir()
     (dbt_dir / "dbt_project.yml").write_text("name: x\n", encoding="utf-8")

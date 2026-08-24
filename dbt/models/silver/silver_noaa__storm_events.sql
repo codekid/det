@@ -3,7 +3,7 @@
         materialized="incremental",
         schema="silver_noaa",
         unique_key=["__row_hash"],
-        incremental_strategy="delete+insert",
+        incremental_strategy='merge' if target.name == 'bigquery' else 'delete+insert',
     )
 }}
 

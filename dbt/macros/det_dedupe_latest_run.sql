@@ -10,7 +10,7 @@
   `partition_by` / `order_by` are SQL fragments (column names or "col desc").
   `relation` is a CTE name or relation (e.g. base, or ref('stg_x')).
 #}
-select * exclude (__rn)
+select * {% if target.name == 'bigquery' %}except (__rn){% else %}exclude (__rn){% endif %}
 from (
     select
         *,

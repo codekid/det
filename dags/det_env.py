@@ -114,7 +114,7 @@ def dbt_env_for_pipeline() -> dict[str, str]:
 
 
 def ops_dbt_env() -> dict[str, str]:
-    """Env for ops dbt target (receipts Iceberg → DET_OPS_DUCKDB)."""
+    """Env for ops dbt target (receipts Iceberg → DuckDB or BigQuery)."""
     root = project_root()
     lake = os.environ.get("DET_LAKE_PATH")
     if not lake:
@@ -122,10 +122,26 @@ def ops_dbt_env() -> dict[str, str]:
     ops_db = os.environ.get("DET_OPS_DUCKDB")
     if not ops_db:
         ops_db = str((root / "data" / "det_ops.duckdb").resolve())
-    return {
+    env = {
         "DET_LAKE_PATH": lake,
         "DET_OPS_DUCKDB": ops_db,
     }
+    gcp = os.environ.get("DET_GCP_PROJECT", "").strip()
+    if gcp:
+        env["DET_GCP_PROJECT"] = gcp
+    dbt_target = os.environ.get("DET_DBT_TARGET", "").strip()
+    if dbt_target:
+        env["DET_DBT_TARGET"] = dbt_target
+    return env
+
+
+def ops_dbt_target() -> str:
+    """Profile target for ops DAG: bigquery on gs:// when DET_DBT_TARGET=bigquery."""
+    lake = os.environ.get("DET_LAKE_PATH", "")
+    env_target = (os.environ.get("DET_DBT_TARGET") or "").strip()
+    if lake.startswith("gs://") and env_target == "bigquery":
+        return "bigquery"
+    return "ops"
 
 
 def daily_logical_dates_for_interval(

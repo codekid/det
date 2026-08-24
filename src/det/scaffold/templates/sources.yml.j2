@@ -2,6 +2,8 @@ version: 2
 
 sources:
   - name: {{ source_name }}
+    config:
+      enabled: "{{ '{{' }} target.name != 'bigquery' {{ '}}' }}"
     description: >
       DET bronze for provider feeds under this SQL schema / lake prefix.
       Tables set schema-aware read_json(... columns={...}) or iceberg_scan(...)

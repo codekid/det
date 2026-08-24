@@ -168,9 +168,13 @@ def analytics_exclude(select: Sequence[str] | None) -> list[str] | None:
     return [OPS_TAG_EXCLUDE]
 
 
-def ops_dbt_target(select: Sequence[str] | None) -> str | None:
-    """Use profile target ``ops`` when select is ops-only."""
+def ops_dbt_target(
+    select: Sequence[str] | None, env_target: str | None = None
+) -> str | None:
+    """Use profile target ``ops`` when select is ops-only (unless BQ env target)."""
     if select and all(is_ops_selector(s) for s in select):
+        if env_target == "bigquery":
+            return "bigquery"
         return "ops"
     return None
 
@@ -221,7 +225,7 @@ def run_dbt(
     if target is not None:
         resolved_target = target
     else:
-        resolved_target = ops_dbt_target(resolved_select) or env_target
+        resolved_target = ops_dbt_target(resolved_select, env_target) or env_target
 
     profiles = (
         resolve_dbt_project_dir(root, profiles_dir)

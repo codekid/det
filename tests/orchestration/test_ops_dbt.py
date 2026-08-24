@@ -23,7 +23,7 @@ def test_ops_dag_file_exists(project_root: Path):
     text = (project_root / "dags" / "det_ops_dag.py").read_text(encoding="utf-8")
     assert 'dag_id="det_ops_receipts"' in text
     assert "tag:ops" in text
-    assert 'target="ops"' in text
+    assert "ops_dbt_target" in text
 
 
 def test_ops_models_tagged(project_root: Path):
@@ -34,7 +34,8 @@ def test_ops_models_tagged(project_root: Path):
     daily = (project_root / "dbt" / "models" / "ops" / "det__ops_run_daily.sql").read_text(
         encoding="utf-8"
     )
-    assert "quantile_cont" in daily
+    assert "quantile_cont" in daily or "approx_quantiles" in daily
+    assert "countif" in daily.lower() or "filter (where" in daily
     assert "stg_det__run_receipts" in daily
     sources = (project_root / "dbt" / "models" / "ops" / "sources.yml").read_text(
         encoding="utf-8"

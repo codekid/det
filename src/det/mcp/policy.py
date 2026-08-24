@@ -38,6 +38,7 @@ ALLOWED_MCP_TOOLS: frozenset[str] = frozenset(
         "describe_airflow_det_env",
         "preview_backfill_conf",
         "migrate_dry_run",
+        "biglake_register_dry_run",
         "list_runs",
         "summarize_runs",
         "list_models",
@@ -62,6 +63,7 @@ WRITING_CLI_COMMANDS: frozenset[str] = frozenset(
         "init-pipeline",
         "scaffold-dbt",
         "dbt",
+        "biglake-register",
         "lock-release",
     }
 )
@@ -71,6 +73,7 @@ SCENARIO_REQUIRED_MCP: dict[str, tuple[str, ...]] = {
     "ops_run": ("list_runs", "summarize_runs"),
     "migrate": ("migrate_dry_run", "mapper_from_diff_dry_run"),
     "prune": ("prune_dry_run",),
+    "biglake": ("biglake_register_dry_run",),
     "fleet_metrics": ("cube_load", "cube_meta"),
     "gold_metrics": ("cube_load", "cube_meta"),
     "new_source": ("list_sources",),

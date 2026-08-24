@@ -1,0 +1,20 @@
+{
+  "id": "biglake_register_chain_apply",
+  "scenario": "biglake",
+  "expect": ["dry_run_then_write"],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "biglake_register_dry_run",
+          "arguments": {"lake_path": "gs://example/det-lake", "project": "test-project"}
+        },
+        {
+          "type": "cli",
+          "argv": ["det", "biglake-register", "--apply", "--lake-path", "gs://example/det-lake"]
+        }
+      ]
+    }
+  ]
+}

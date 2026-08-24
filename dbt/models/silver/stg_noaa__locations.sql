@@ -12,7 +12,7 @@ select
 {{ det_as_integer('episode_id') }} as episode_id,
 {{ det_as_integer('event_id') }} as event_id,
 {{ det_as_integer('location_index') }} as location_index,
-{{ det_as_double('range') }} as range,
+{{ det_as_double('range') }} as {{ adapter.quote('range') }},
 {{ det_as_string('azimuth') }} as azimuth,
 {{ det_as_string('location') }} as location,
 {{ det_as_double('latitude') }} as latitude,

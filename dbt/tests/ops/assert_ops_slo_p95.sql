@@ -23,7 +23,7 @@ windowed as (
     on d.pipeline = e.pipeline
    and d.command = e.command
    and d.attempt_date >= cast(
-     current_timestamp - (e.score_hours * interval '1 hour') as date
+     {{ det_timestamp_minus_hours('current_timestamp', 'e.score_hours') }} as date
    )
   group by 1, 2, 3
 )

@@ -161,7 +161,8 @@ purge, then rewrite `-s`/`-e` or `--all-raw`; latest raw per interval unless
 in `sources.yml` for DuckDB). On `s3://` lakes, `det dbt` auto-selects profile
 target `duckdb_s3` (httpfs + S3 secret from the same `AWS_*` as extract/load).
 On `gs://`, it does **not** force DuckDB S3 — set `DET_DBT_TARGET=bigquery` /
-`--target bigquery` for BigLake-backed silver ([docs/gcp-biglake.md](docs/gcp-biglake.md)).
+`--target bigquery` for BigLake-backed silver/gold/ops ([docs/gcp-biglake.md](docs/gcp-biglake.md)).
+Register BigLake tables with `det biglake-register` (dry-run → `det approve` → `--apply`).
 Layout contract: [docs/lake-layout.md](docs/lake-layout.md).
 
 ---

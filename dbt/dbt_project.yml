@@ -25,7 +25,7 @@ models:
     ops:
       +tags: [ops]
       +schema: ops
-      # Table (not view): Iceberg scan is cwd-sensitive; persist rows in DET_OPS_DUCKDB.
+      # Table (not view): DuckDB iceberg_scan is cwd-sensitive; BQ ops uses BigLake.
       +materialized: table
 
 seeds:
@@ -34,10 +34,10 @@ seeds:
       +schema: ops
       +tags: [ops]
       +column_types:
-        pipeline: varchar
-        command: varchar
-        cadence: varchar
-        recency_hours: integer
-        score_hours: integer
-        max_error_rate: double
-        p95_ms: integer
+        pipeline: "{% if target.name == 'bigquery' %}string{% else %}varchar{% endif %}"
+        command: "{% if target.name == 'bigquery' %}string{% else %}varchar{% endif %}"
+        cadence: "{% if target.name == 'bigquery' %}string{% else %}varchar{% endif %}"
+        recency_hours: "{% if target.name == 'bigquery' %}int64{% else %}integer{% endif %}"
+        score_hours: "{% if target.name == 'bigquery' %}int64{% else %}integer{% endif %}"
+        max_error_rate: "{% if target.name == 'bigquery' %}float64{% else %}double{% endif %}"
+        p95_ms: "{% if target.name == 'bigquery' %}int64{% else %}integer{% endif %}"

@@ -64,12 +64,14 @@ is still the authority for what landed.
 5. Do not treat a missing receipt as a missing partition; `DET_RUN_RECEIPTS=0`
    disables writing. A write failure never fails extract/load.
 6. Warehouse projection: `det runs-materialize` (or DAG `det_ops_receipts`) writes
-   Iceberg `{lake}/ops/run_receipts`; dbt `tag:ops` / `--target ops` reads it into
-   `DET_OPS_DUCKDB`. JSON under `runs/` remains the attempt log.
+   Iceberg `{lake}/ops/run_receipts`. Local: dbt `tag:ops` / `--target ops` →
+   `DET_OPS_DUCKDB`. GCS: register BigLake `ops.run_receipts` (`det biglake-register`),
+   set `DET_DBT_TARGET=bigquery`, then `det dbt --select tag:ops`. JSON under
+   `runs/` remains the attempt log.
 
-## Fleet metrics (ops DuckDB / Cube)
+## Fleet metrics (ops DuckDB / BigQuery / Cube)
 
-Ops marts are in `DET_OPS_DUCKDB` (`data/det_ops.duckdb`, schema `ops`), not analytics.
+Ops marts live in `DET_OPS_DUCKDB` (local) or BQ dataset `ops` (GCS), not analytics.
 
 1. Certified fleet metrics: MCP `cube_load` on `run_daily` (`make cube-up`).
    Grain is `attempt_date`, `pipeline`, `command`. Do not re-sum `p50_ms` / `p95_ms`.
@@ -91,7 +93,8 @@ A paused extract DAG cannot self-check; `det_ops_receipts` is the walk-through.
 2. `det scaffold-dbt` always regenerates `dbt/seeds/ops_slo_expected.csv` from all
    pipelines. `det check` errors `slo_seed_stale` on drift. MCP
    `scaffold_dbt_dry_run` includes the seed action.
-3. Alert path: DAG `det_ops_receipts` → `dbt build --select tag:ops --target ops`
+3. Alert path: DAG `det_ops_receipts` → `dbt build --select tag:ops` (target `ops`
+   locally, `bigquery` on GCS when `DET_DBT_TARGET=bigquery`)
    (seed + `det__ops_run_daily` + recency / error-rate / p95 / fail-closed).
    Fail-closed codes: `schema_invalid`, `integrity_error`, `secret_not_set`
    (`lease_held` excluded). Extract/load never read SLOs.
