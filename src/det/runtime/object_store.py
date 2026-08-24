@@ -1,8 +1,12 @@
-"""Shared S3/MinIO settings for DET lake I/O and Iceberg FileIO.
+"""Shared S3/MinIO and GCS settings for DET lake I/O and Iceberg FileIO.
 
 ``AWS_ENDPOINT_URL`` is enough for s3fs/botocore, but PyIceberg/PyArrow FileIO
 only honors catalog properties (``s3.endpoint``, …). Map the same env once so
 raw and bronze stay aligned on MinIO or custom S3 APIs.
+
+GCS mirrors that pattern: ``STORAGE_EMULATOR_HOST`` / ADC /
+``GOOGLE_APPLICATION_CREDENTIALS`` for gcsfs, and ``gcs.*`` catalog props for
+PyIceberg FileIO on ``gs://`` warehouses.
 """
 
 from __future__ import annotations
@@ -80,6 +84,72 @@ def iceberg_s3_properties(env: Mapping[str, str] | None = None) -> dict[str, str
     token = (environ.get("AWS_SESSION_TOKEN") or "").strip()
     if token:
         props["s3.session-token"] = token
+    return props
+
+
+def gcs_emulator_host_from_env(env: Mapping[str, str] | None = None) -> str | None:
+    """
+    Normalize ``STORAGE_EMULATOR_HOST`` to ``protocol://host:port`` (no path).
+
+    gcsfs and PyIceberg ``gcs.service.host`` expect a URL; localgcp often sets
+    ``localhost:4443`` without a scheme.
+    """
+    text = (_env(env).get("STORAGE_EMULATOR_HOST") or "").strip()
+    if not text or text == "default":
+        return None
+    if not text.startswith(("http://", "https://")):
+        text = f"http://{text}"
+    parsed = urlparse(text)
+    if not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def gcs_project_from_env(env: Mapping[str, str] | None = None) -> str | None:
+    environ = _env(env)
+    for key in ("GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "GCP_PROJECT"):
+        text = (environ.get(key) or "").strip()
+        if text:
+            return text
+    return None
+
+
+def fsspec_gcs_kwargs(env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Kwargs for ``fsspec.filesystem(\"gcs\", …)`` (ADC or storage emulator)."""
+    environ = _env(env)
+    kwargs: dict[str, Any] = {}
+    endpoint = gcs_emulator_host_from_env(environ)
+    if endpoint:
+        kwargs["endpoint_url"] = endpoint
+        # Emulators reject real OAuth; anonymous is the usual localgcp / fake-gcs path.
+        kwargs.setdefault("token", "anon")
+    project = gcs_project_from_env(environ)
+    if project:
+        kwargs["project"] = project
+    elif endpoint:
+        kwargs.setdefault("project", "det-local")
+    token = (environ.get("GCS_OAUTH_TOKEN") or "").strip()
+    if token:
+        kwargs["token"] = token
+    # GOOGLE_APPLICATION_CREDENTIALS is read by google-auth when token is unset.
+    return kwargs
+
+
+def iceberg_gcs_properties(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """PyIceberg FileIO catalog properties for ``gs://`` warehouses."""
+    environ = _env(env)
+    props: dict[str, str] = {}
+    endpoint = gcs_emulator_host_from_env(environ)
+    if endpoint:
+        props["gcs.service.host"] = endpoint
+    project = gcs_project_from_env(environ)
+    if project:
+        props["gcs.project-id"] = project
+    elif endpoint:
+        props["gcs.project-id"] = "det-local"
+    token = (environ.get("GCS_OAUTH_TOKEN") or "").strip()
+    if token:
+        props["gcs.oauth2.token"] = token
     return props
 
 

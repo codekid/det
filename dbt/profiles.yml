@@ -38,3 +38,15 @@ analytics:
       extensions:
         - httpfs
         - iceberg
+    # GCS Iceberg bronze → BigLake → native BQ silver/gold (architecture C).
+    # Install: uv pip install -e ".[dbt,bigquery]". Auth: ADC or
+    # GOOGLE_APPLICATION_CREDENTIALS. See docs/gcp-biglake.md.
+    bigquery:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('DET_GCP_PROJECT') }}"
+      dataset: "{{ env_var('DET_BQ_DATASET', 'analytics') }}"
+      threads: 4
+      timeout_seconds: 300
+      location: "{{ env_var('DET_BQ_LOCATION', 'US') }}"
+      priority: interactive

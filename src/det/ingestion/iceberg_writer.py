@@ -55,12 +55,14 @@ def lake_ref_uri(ref: LakeRef) -> str:
 def hadoop_catalog(lake: LakeRef, *, env: Mapping[str, str] | None = None):
     _require_iceberg()
     from det.ingestion.iceberg_catalog import LakeHadoopCatalog
-    from det.runtime.object_store import iceberg_s3_properties
+    from det.runtime.object_store import iceberg_gcs_properties, iceberg_s3_properties
 
     warehouse = lake_ref_uri(lake)
     props: dict[str, str] = {"warehouse": warehouse}
     if warehouse.startswith("s3://"):
         props.update(iceberg_s3_properties(env))
+    elif warehouse.startswith("gs://"):
+        props.update(iceberg_gcs_properties(env))
     return LakeHadoopCatalog("det", **props)
 
 

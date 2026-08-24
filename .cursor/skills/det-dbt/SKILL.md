@@ -131,24 +131,29 @@ Bronze recreate after renames: identity migrate (no growing Python normalize map
 
 | Var | Role |
 | --- | --- |
-| `DET_LAKE_PATH` | Lake root for schema-aware `read_json` or `iceberg_scan` (default `./data/lake`; `s3://` for Iceberg bronze — dbt JSONL globs stay local) |
+| `DET_LAKE_PATH` | Lake root for schema-aware `read_json` or `iceberg_scan` (default `./data/lake`; `s3://` / `gs://` for Iceberg bronze) |
 | `DET_BRONZE_SOURCE` | `iceberg` (default lake), `filesystem` (JSONL opt-in), or `duckdb` |
 | `DET_BRONZE_SCHEMA` | SQL schema when bronze is DuckDB/Postgres |
 | `DET_ANALYTICS_DUCKDB` | Absolute analytics DB path (prefer in Airflow/Compose) |
 | `DET_OPS_DUCKDB` | Absolute ops DB path for `--target ops` (separate from analytics) |
+| `DET_DBT_TARGET` | Optional profile target when `--target` omitted (`bigquery` for GCS/BigLake) |
+| `DET_GCP_PROJECT` / `DET_BQ_DATASET` | Required for profile target `bigquery` |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Required for `det dbt` on `s3://` Iceberg lakes (same as extract/load) |
 | `AWS_ENDPOINT_URL` | MinIO / custom S3 API endpoint (sets `DET_DUCKDB_S3_ENDPOINT` for dbt) |
 
 On `s3://` lakes, `det dbt` selects profile target **`duckdb_s3`** (loads httpfs/iceberg
-+ DuckDB S3 secret). Local filesystem lakes keep target **`duckdb`**. Ops builds stay
++ DuckDB S3 secret). Local filesystem lakes keep target **`duckdb`**. On `gs://`,
+do **not** expect DuckDB S3 — set `DET_DBT_TARGET=bigquery` / `--target bigquery`
+after registering BigLake tables ([docs/gcp-biglake.md](../../../docs/gcp-biglake.md);
+example sources: `dbt/models/silver/sources_bigquery.yml.example`). Ops builds stay
 on local `DET_OPS_DUCKDB` only.
 
 Macro `det_bronze_from("table", "bronze_{provider}")` switches stg to a native
 DuckDB table when `DET_BRONZE_SOURCE=duckdb`. Iceberg bronze keeps `source()` and
-reads `iceberg_scan` from `sources.yml` when `DET_BRONZE_SOURCE=iceberg`. Pass the
-source name explicitly so multi-provider projects parse when `det dbt -p` sets
-`DET_BRONZE_SCHEMA`. BigQuery is a later **reader** of the Iceberg table (BigLake),
-not a DET destination.
+reads `iceberg_scan` from `sources.yml` when `DET_BRONZE_SOURCE=iceberg` (DuckDB).
+Pass the source name explicitly so multi-provider projects parse when `det dbt -p`
+sets `DET_BRONZE_SCHEMA`. BigQuery is a **reader** of the Iceberg table (BigLake),
+not a DET destination — there is no `destination.type: bigquery`.
 
 ## Ops models
 
