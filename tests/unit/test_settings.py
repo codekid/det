@@ -111,6 +111,33 @@ def test_runner_rejects_both_settings_and_project_root(tmp_path: Path) -> None:
         PipelineRunner(tmp_path, settings=settings)
 
 
+def test_settings_secret_caches_are_isolated(tmp_path: Path) -> None:
+    """Two DetSettings instances do not share a secret cache (#34)."""
+    calls_a: list[str] = []
+    calls_b: list[str] = []
+
+    def lookup_a(name: str) -> str | None:
+        calls_a.append(name)
+        return "a-tok" if name == "TOK" else None
+
+    def lookup_b(name: str) -> str | None:
+        calls_b.append(name)
+        return "b-tok" if name == "TOK" else None
+
+    settings_a = DetSettings.from_env(project_root=tmp_path, resolve_secret=lookup_a)
+    settings_b = DetSettings.from_env(project_root=tmp_path, resolve_secret=lookup_b)
+
+    with use_settings(settings_a):
+        assert resolve_secret("TOK", keys=("value",)) == "a-tok"
+        assert resolve_secret("TOK", keys=("value",)) == "a-tok"
+    with use_settings(settings_b):
+        assert resolve_secret("TOK", keys=("value",)) == "b-tok"
+        assert resolve_secret("TOK", keys=("value",)) == "b-tok"
+
+    assert calls_a == ["TOK"]
+    assert calls_b == ["TOK"]
+
+
 def test_det_exports_settings() -> None:
     assert "DetSettings" in det.__all__
     assert det.DetSettings is DetSettings

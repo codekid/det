@@ -3,8 +3,16 @@
 Extract → **raw** (wire bytes) → **bronze** (typed Iceberg). **dbt** owns silver and gold.
 **dlt never lands bronze** — it may help HTTP; DET owns validation, meta, and writers.
 
-This repo is the `det` CLI plus example pipelines (NOAA, example_api, Open Library),
-dbt models, optional local Airflow, and a read-only MCP server.
+## Choose your path
+
+| Audience | Start here |
+| --- | --- |
+| **Operator** (this monorepo: CLI, examples, dbt, Airflow, MCP) | [Try it](#try-it-fixtures-no-noaa-download) below |
+| **Library** (embed extract→raw→bronze in your app) | **[docs/getting-started-library.md](docs/getting-started-library.md)** · [docs/api.md](docs/api.md) |
+
+This checkout is the operator product **and** the library source. Embedders install
+the package (git today; PyPI name later: `det-elt`) and keep pipelines under
+*their* `project_root` — they do not need this monorepo’s dbt/Airflow layout.
 
 ---
 
@@ -234,11 +242,12 @@ Agent contract: [AGENTS.md](AGENTS.md). Tools + policy:
 ## Repo map
 
 ```text
-src/det/                 CLI, runtime, example sources, writers
+src/det/                 CLI, runtime, example sources, writers, det.testing
 configs/pipelines/       provider.source YAML
 schemas/                 bronze JSON Schema
-docs/lake-layout.md      hive / SQL compatibility
 docs/api.md              public Python API (SemVer / __all__)
+docs/getting-started-library.md  embedder first hour
+docs/lake-layout.md      hive / SQL compatibility
 dbt/                     silver + gold + ops
 cube/                    local Cube Core (gold + ops metrics)
 dags/ + airflow/         local Compose
