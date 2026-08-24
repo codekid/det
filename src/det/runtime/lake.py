@@ -121,8 +121,8 @@ def open_lake(
     validate_lake_mode(text, mode)
     if mode == "cloud" and not _CLOUD_EXPERIMENTAL_WARNED:
         logger.warning(
-            "object-store lake: CI MinIO soak covers extract→Iceberg→DuckDB "
-            "iceberg_scan; shared multi-writer / Glue catalogs are still out of scope",
+            "object-store lake: CI MinIO/GCS soaks cover extract→Iceberg; "
+            "shared multi-writer / Glue catalogs are still out of scope",
             lake_mode=mode,
             lake=text,
         )
@@ -140,8 +140,13 @@ def open_lake(
         )
     if text.startswith(("gs://", "gcs://")):
         fs = _import_fsspec("gcs")
+        from det.runtime.object_store import fsspec_gcs_kwargs
+
         rest = text.split("://", 1)[1].rstrip("/")
-        return LakeRef(_FsspecBackend(fs.filesystem("gcs"), "gs"), rest)
+        return LakeRef(
+            _FsspecBackend(fs.filesystem("gcs", **fsspec_gcs_kwargs(env)), "gs"),
+            rest,
+        )
     path = Path(text)
     if not path.is_absolute():
         path = (project_root / path).resolve()

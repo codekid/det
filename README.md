@@ -132,11 +132,13 @@ no `destination.type: s3`.
 | Mode | Allowed lake | Typical use |
 | --- | --- | --- |
 | `local` | filesystem path or `memory://` (tests) | laptop, CI default suite, Compose default |
-| `cloud` | `s3://…` or `gs://…` / `gcs://…` | object store; CI MinIO soak covers extract→Iceberg→`iceberg_scan` and `det dbt` |
+| `cloud` | `s3://…` or `gs://…` / `gcs://…` | object store; CI MinIO soak covers S3 extract→Iceberg→`iceberg_scan`/`det dbt`; GCS soak covers extract→Iceberg (PyIceberg) |
 
 `--lake-path` cannot bypass mode. `det check` errors on mismatch and warns when
 `mode=cloud`. Compose: `DET_LAKE_MODE` + overridable `DET_LAKE_PATH` (see
-`airflow/.env.example`). Analytics/ops DuckDB stay on the worker filesystem.
+`airflow/.env.example`). Local analytics/ops DuckDB stay on the worker filesystem.
+Prod on GCS: BigQuery reads Iceberg bronze via **BigLake** — see
+[docs/gcp-biglake.md](docs/gcp-biglake.md) (architecture C).
 
 | `destination.type` | Bronze |
 | --- | --- |
@@ -144,6 +146,9 @@ no `destination.type: s3`.
 | `filesystem` | Hive JSONL (thin / fixtures). Cannot share that path with Iceberg |
 | `duckdb` | `bronze_{provider}.{source}_vN` — needs `connection` |
 | `postgres` | Same SQL names — `connection_env: DET_POSTGRES_DSN` (never a DSN in YAML) |
+
+There is **no** `destination.type: bigquery`. On `gs://`, bronze stays Iceberg;
+BQ is a reader (BigLake), not a DET lander.
 
 Iceberg-only: `destination.partition` is `extract_run` (default — identity on
 `__extract_run_datetime` for load replace / silver watermark) or `none`
@@ -153,8 +158,11 @@ purge, then rewrite `-s`/`-e` or `--all-raw`; latest raw per interval unless
 `--all-raw-runs`) or a manual wipe. Not the raw hive layout.
 
 `det dbt -p …` sets `DET_BRONZE_SOURCE` from the pipeline (`iceberg` → `iceberg_scan`
-in `sources.yml`). On `s3://` lakes, `det dbt` auto-selects profile target
-`duckdb_s3` (httpfs + S3 secret from the same `AWS_*` as extract/load). Layout contract: [docs/lake-layout.md](docs/lake-layout.md).
+in `sources.yml` for DuckDB). On `s3://` lakes, `det dbt` auto-selects profile
+target `duckdb_s3` (httpfs + S3 secret from the same `AWS_*` as extract/load).
+On `gs://`, it does **not** force DuckDB S3 — set `DET_DBT_TARGET=bigquery` /
+`--target bigquery` for BigLake-backed silver ([docs/gcp-biglake.md](docs/gcp-biglake.md)).
+Layout contract: [docs/lake-layout.md](docs/lake-layout.md).
 
 ---
 
@@ -248,6 +256,7 @@ schemas/                 bronze JSON Schema
 docs/api.md              public Python API (SemVer / __all__)
 docs/getting-started-library.md  embedder first hour
 docs/lake-layout.md      hive / SQL compatibility
+docs/gcp-biglake.md      gs:// Iceberg + BigLake + dbt-BQ (architecture C)
 dbt/                     silver + gold + ops
 cube/                    local Cube Core (gold + ops metrics)
 dags/ + airflow/         local Compose
@@ -274,3 +283,4 @@ never `dlt.pipeline` for landing.
 | Cube MCP `cube_unavailable` | `make cube-up`; copy `cube/.env.example` → `cube/.env` |
 | DuckDB lock with Cube | Do not `det dbt` while Cube has that file open |
 | `DET_LAKE_MODE=local forbids…` / `requires an s3://` | Align mode and path: local + filesystem, or cloud + `s3://`/`gs://` |
+| GCS soak / localgcp | Set `STORAGE_EMULATOR_HOST` (`http://127.0.0.1:4443`), `GOOGLE_CLOUD_PROJECT`, `DET_GCS_BUCKET`; `pytest -m gcs`. BigLake needs a real GCP project — see [docs/gcp-biglake.md](docs/gcp-biglake.md) |

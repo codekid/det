@@ -34,6 +34,9 @@ dbt = [
     "dbt-core>=1.9",
     "dbt-duckdb>=1.9",
 ]
+bigquery = [
+    "dbt-bigquery>=1.9",
+]
 postgres = [
     "psycopg[binary]>=3.1",
 ]
@@ -79,6 +82,7 @@ markers = [
     "integration: slower end-to-end tests",
     "postgres: live Postgres (skipped unless DET_POSTGRES_DSN is set)",
     "minio: live MinIO/S3 (skipped unless AWS_ENDPOINT_URL is set)",
+    "gcs: live GCS emulator (skipped unless STORAGE_EMULATOR_HOST is set)",
 ]
 
 [tool.ruff]

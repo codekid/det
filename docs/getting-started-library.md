@@ -9,6 +9,7 @@ is separate — see the [operator README](../README.md).
 | This page | First hour for embedders |
 | [api.md](api.md) | SemVer surface (`det.__all__`), concurrency, errors |
 | [lake-layout.md](lake-layout.md) | Hive paths, `__*` meta, `lake_layout` |
+| [gcp-biglake.md](gcp-biglake.md) | Architecture C: `gs://` Iceberg bronze + BigLake + dbt-BQ |
 
 ## 1. Install
 
@@ -26,6 +27,7 @@ uv pip install -e ".[iceberg]"
 | --- | --- |
 | `examples` | Import in-tree demos (`example_api`, NOAA HTTP helpers that pull `dlt`) |
 | `duckdb` / `postgres` / `s3` / `gcs` | Those destinations / object lakes |
+| `dbt` / `bigquery` | Operator dbt (DuckDB local; dbt-bigquery for BigLake) |
 | `scaffold` | Jinja scaffolds (`det init-pipeline` templates) |
 
 Base install already includes the runtime, CLI, and `det.testing`.

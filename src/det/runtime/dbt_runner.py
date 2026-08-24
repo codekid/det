@@ -216,7 +216,12 @@ def run_dbt(
         resolved_select = default_select_for_pipeline(config)
 
     resolved_exclude = list(exclude) if exclude is not None else None
-    resolved_target = target if target is not None else ops_dbt_target(resolved_select)
+    env = os.environ.copy()
+    env_target = (env.get("DET_DBT_TARGET") or "").strip() or None
+    if target is not None:
+        resolved_target = target
+    else:
+        resolved_target = ops_dbt_target(resolved_select) or env_target
 
     profiles = (
         resolve_dbt_project_dir(root, profiles_dir)
@@ -224,7 +229,6 @@ def run_dbt(
         else dbt_dir
     )
 
-    env = os.environ.copy()
     spec = pick_lake_spec(
         cli_lake_path=str(lake_path).strip() if lake_path is not None else None,
         destination_path=config.destination.path if config is not None else None,
@@ -233,7 +237,13 @@ def run_dbt(
     lake = open_lake(spec, root)
     lake_uri = str(lake)
     env["DET_LAKE_PATH"] = lake_uri
-    if lake_uri.startswith("s3://") and resolved_target != "ops":
+    # MinIO/S3 lakes use DuckDB iceberg_scan + httpfs. GCS lakes keep bronze on
+    # gs:// Iceberg; prod analytics is BigQuery (DET_DBT_TARGET=bigquery) — never
+    # auto-select duckdb_s3 for gs://.
+    if (
+        lake_uri.startswith("s3://")
+        and resolved_target not in ("ops", "bigquery")
+    ):
         from det.runtime.object_store import duckdb_s3_profile_env
 
         env.update(duckdb_s3_profile_env(env))

@@ -1,9 +1,12 @@
-"""Unit tests for shared S3/MinIO env → fsspec / Iceberg property mapping."""
+"""Unit tests for shared S3/MinIO and GCS env → fsspec / Iceberg property mapping."""
 
 from __future__ import annotations
 
 from det.runtime.object_store import (
+    fsspec_gcs_kwargs,
     fsspec_s3_kwargs,
+    gcs_emulator_host_from_env,
+    iceberg_gcs_properties,
     iceberg_s3_properties,
     s3_endpoint_from_env,
 )
@@ -50,6 +53,53 @@ def test_iceberg_s3_defaults_region_when_endpoint_set():
     props = iceberg_s3_properties({"AWS_ENDPOINT_URL": "http://minio:9000"})
     assert props["s3.region"] == "us-east-1"
     assert "s3.access-key-id" not in props
+
+
+def test_gcs_emulator_host_adds_scheme():
+    assert gcs_emulator_host_from_env({}) is None
+    assert gcs_emulator_host_from_env({"STORAGE_EMULATOR_HOST": "localhost:4443"}) == (
+        "http://localhost:4443"
+    )
+    assert gcs_emulator_host_from_env(
+        {"STORAGE_EMULATOR_HOST": "https://127.0.0.1:4443"}
+    ) == ("https://127.0.0.1:4443")
+
+
+def test_fsspec_gcs_kwargs_emulator():
+    kwargs = fsspec_gcs_kwargs(
+        {
+            "STORAGE_EMULATOR_HOST": "127.0.0.1:4443",
+            "GOOGLE_CLOUD_PROJECT": "demo",
+        }
+    )
+    assert kwargs["endpoint_url"] == "http://127.0.0.1:4443"
+    assert kwargs["token"] == "anon"
+    assert kwargs["project"] == "demo"
+
+
+def test_fsspec_gcs_kwargs_adc_empty():
+    assert fsspec_gcs_kwargs({}) == {}
+
+
+def test_iceberg_gcs_properties_emulator():
+    props = iceberg_gcs_properties({"STORAGE_EMULATOR_HOST": "localhost:4443"})
+    assert props["gcs.service.host"] == "http://localhost:4443"
+    assert props["gcs.project-id"] == "det-local"
+    # PyArrow needs token+expiry together; without them ADC hangs on fake-gcs.
+    assert props["gcs.oauth2.token"] == "anon"
+    assert props["gcs.oauth2.token-expires-at"] == "4102444800000"
+
+
+def test_iceberg_gcs_properties_explicit_token():
+    props = iceberg_gcs_properties(
+        {
+            "STORAGE_EMULATOR_HOST": "localhost:4443",
+            "GCS_OAUTH_TOKEN": "ya29.test",
+            "GCS_OAUTH_TOKEN_EXPIRES_AT_MS": "999",
+        }
+    )
+    assert props["gcs.oauth2.token"] == "ya29.test"
+    assert props["gcs.oauth2.token-expires-at"] == "999"
 
 
 def test_duckdb_s3_endpoint_parts_minio():

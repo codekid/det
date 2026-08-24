@@ -206,13 +206,7 @@ destination:
     assert result.bronze_source == "iceberg"
 
 
-def test_run_dbt_s3_lake_uses_duckdb_s3_target(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    monkeypatch.setenv("DET_LAKE_MODE", "cloud")
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
-    monkeypatch.setenv("AWS_ENDPOINT_URL", "http://127.0.0.1:9000")
+def _mini_iceberg_pipeline(tmp_path: Path) -> Path:
     dbt_dir = tmp_path / "dbt"
     dbt_dir.mkdir()
     (dbt_dir / "dbt_project.yml").write_text("name: x\n", encoding="utf-8")
@@ -233,6 +227,17 @@ destination:
         "type: object\nproperties: {}\n",
         encoding="utf-8",
     )
+    return pipeline
+
+
+def test_run_dbt_s3_lake_uses_duckdb_s3_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("DET_LAKE_MODE", "cloud")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "http://127.0.0.1:9000")
+    pipeline = _mini_iceberg_pipeline(tmp_path)
     result = run_dbt(
         project_root=tmp_path,
         pipeline=pipeline,
@@ -241,6 +246,39 @@ destination:
     )
     assert result.command[result.command.index("--target") + 1] == "duckdb_s3"
     assert result.lake_path == "s3://det-ci/det-lake"
+
+
+def test_run_dbt_gs_lake_does_not_force_duckdb_s3(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    pytest.importorskip("gcsfs")
+    monkeypatch.setenv("DET_LAKE_MODE", "cloud")
+    monkeypatch.delenv("DET_DBT_TARGET", raising=False)
+    pipeline = _mini_iceberg_pipeline(tmp_path)
+    result = run_dbt(
+        project_root=tmp_path,
+        pipeline=pipeline,
+        lake_path="gs://det-ci/det-lake",
+        dry_run=True,
+    )
+    assert "--target" not in result.command
+    assert result.lake_path == "gs://det-ci/det-lake"
+
+
+def test_run_dbt_gs_lake_honors_det_dbt_target_bigquery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    pytest.importorskip("gcsfs")
+    monkeypatch.setenv("DET_LAKE_MODE", "cloud")
+    monkeypatch.setenv("DET_DBT_TARGET", "bigquery")
+    pipeline = _mini_iceberg_pipeline(tmp_path)
+    result = run_dbt(
+        project_root=tmp_path,
+        pipeline=pipeline,
+        lake_path="gs://det-ci/det-lake",
+        dry_run=True,
+    )
+    assert result.command[result.command.index("--target") + 1] == "bigquery"
 
 
 def test_run_dbt_local_lake_keeps_duckdb_target(

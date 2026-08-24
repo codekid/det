@@ -1,0 +1,38 @@
+# Example BigQuery sources for BigLake Iceberg bronze (architecture C).
+#
+# Default dbt/models/silver/sources.yml targets DuckDB `iceberg_scan` (local /
+# MinIO). For GCP, register BigLake tables over gs://…/bronze/… then either:
+#   - replace external_location entries with plain BQ table refs, or
+#   - copy this file alongside / instead of sources.yml when DET_DBT_TARGET=bigquery.
+#
+# Naming: dataset bronze_{provider}, table {source}_vN — docs/lake-layout.md.
+# Full recipe: docs/gcp-biglake.md
+
+version: 2
+
+sources:
+  - name: bronze_example_api
+    description: >
+      BigLake Iceberg over DET bronze on gs:// (no second bronze copy).
+      Requires DET_GCP_PROJECT and a registered BigLake table.
+    database: "{{ env_var('DET_GCP_PROJECT') }}"
+    schema: bronze_example_api
+    tables:
+      - name: events_v1
+        description: BigLake Iceberg for example_api.events_v1
+        columns:
+          - name: __row_hash
+            tests:
+              - not_null
+          - name: id
+            tests:
+              - not_null
+      - name: orders_v1
+        description: BigLake Iceberg for example_api.orders_v1
+        columns:
+          - name: __row_hash
+            tests:
+              - not_null
+          - name: id
+            tests:
+              - not_null

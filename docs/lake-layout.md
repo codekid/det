@@ -87,6 +87,10 @@ layout 1 does not change paths when switching JSONL ↔ Iceberg on the same data
   `det_bronze_from`, not in model filenames.
 - Top-level pipeline `dataset:` is **rejected**; use `wire_version` for lake/SQL
   era changes.
+- **BigLake / BigQuery:** register one BQ dataset per provider (`bronze_{provider}`)
+  and table `{source}_vN` over the Iceberg URI
+  `{lake}/bronze/{provider}/{source}_vN/`. DET does not land a BQ bronze copy —
+  see [gcp-biglake.md](gcp-biglake.md).
 
 ### DET meta columns (all bronze destinations)
 

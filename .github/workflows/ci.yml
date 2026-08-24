@@ -38,6 +38,11 @@ jobs:
       AWS_SECRET_ACCESS_KEY: minioadmin
       AWS_REGION: us-east-1
       DET_MINIO_BUCKET: det-ci
+      # GCS soak (tests/integration/test_gcs_iceberg_soak.py); fake-gcs-server /
+      # localgcp both honor STORAGE_EMULATOR_HOST.
+      STORAGE_EMULATOR_HOST: http://127.0.0.1:4443
+      GOOGLE_CLOUD_PROJECT: det-local
+      DET_GCS_BUCKET: det-ci
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
@@ -61,14 +66,31 @@ jobs:
           echo "minio failed to become healthy" >&2
           docker logs det-minio >&2 || true
           exit 1
+      - name: Start fake-gcs-server
+        # STORAGE_EMULATOR_HOST-compatible (same env as localgcp GCS).
+        run: |
+          docker run -d --name det-gcs \
+            -p 4443:4443 \
+            fsouza/fake-gcs-server:latest \
+            -scheme http -port 4443 -external-url http://127.0.0.1:4443
+          for i in $(seq 1 30); do
+            if curl -sf "http://127.0.0.1:4443/storage/v1/b"; then
+              echo "fake-gcs ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "fake-gcs failed to become healthy" >&2
+          docker logs det-gcs >&2 || true
+          exit 1
       - name: Install
         # mcp + examples/duckdb/scaffold: product extras; dbt + postgres match prod.
-        # s3 + iceberg: MinIO object-lake soak.
+        # s3 + gcs + iceberg: object-lake soaks.
         # avoid --system (PEP 668 on ubuntu-latest)
         run: >
           uv sync
           --extra dev --extra mcp --extra dbt --extra postgres
-          --extra iceberg --extra s3
+          --extra iceberg --extra s3 --extra gcs
           --extra examples --extra duckdb --extra scaffold
       - name: Lint
         run: uv run ruff check .
