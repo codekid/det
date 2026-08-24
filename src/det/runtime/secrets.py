@@ -15,9 +15,10 @@ import subprocess
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import parse_qsl, urlsplit
 
+from det.errors import DetConfigError
 from det.logging import get_logger, register_secret_value
 
 logger = get_logger(__name__)
@@ -57,7 +58,7 @@ _FILE_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
 _WARNED_EXTRAS: set[str] = set()
 
 
-class SecretError(RuntimeError):
+class SecretError(DetConfigError):
     """Base class for secret resolution failures."""
 
 
@@ -223,6 +224,8 @@ def resolve_secret(
 
     Env always wins; the optional file backend is a fallback. Pass
     ``backend="env"`` to pin process env (MCP inspect never touches a store).
+    When a ``DetSettings`` is active (``use_settings``), raw values come from
+    ``settings.resolve_secret`` (callable hook) instead of the process cache.
     Raises ``SecretNotSetError`` when nothing supplies the secret: a declared
     credential that cannot be resolved must fail the run, never downgrade
     to an unauthenticated request.
@@ -233,6 +236,12 @@ def resolve_secret(
         raise ValueError("resolve_secret requires at least one name")
     if not keys:
         raise ValueError("resolve_secret requires at least one key")
+
+    from det.runtime.settings import get_active_settings
+
+    settings = get_active_settings()
+    if settings is not None and backend is None:
+        return _resolve_via_settings(candidates, keys=keys, settings=settings)
 
     chosen = backend or resolve_secrets_backend(env)
     for name in candidates:
@@ -252,6 +261,35 @@ def resolve_secret(
     raise SecretNotSetError(
         f"secret is not set: tried {', '.join(candidates)} "
         f"(DET_SECRETS_BACKEND={chosen})"
+    )
+
+
+def _resolve_via_settings(
+    candidates: list[str],
+    *,
+    keys: Sequence[str],
+    settings: Any,
+) -> str:
+    for name in candidates:
+        raw = settings.resolve_secret(name)
+        if raw is None or not str(raw).strip():
+            continue
+        payload = parse_secret_payload(str(raw), name=name)
+        for value in payload.values():
+            register_secret_value(value)
+        for key in keys:
+            value = payload.get(key)
+            if value is not None and value.strip():
+                return value
+        raise SecretPayloadError(
+            f"{name}: no usable credential key (wanted {', '.join(keys)}; "
+            f"found {', '.join(sorted(payload)) or 'none'}). "
+            "DET does not assemble a DSN from parts."
+        )
+
+    raise SecretNotSetError(
+        f"secret is not set: tried {', '.join(candidates)} "
+        f"(DET_SECRETS_BACKEND={settings.secrets_backend})"
     )
 
 

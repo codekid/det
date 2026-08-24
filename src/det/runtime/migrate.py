@@ -20,8 +20,7 @@ from det.runtime.config import (
     PipelineConfig,
     SourceConfig,
     ValidationConfig,
-    load_pipeline_config,
-    resolve_path,
+    load_pipeline,
 )
 from det.runtime.ids import validate_canonical_id
 from det.runtime.lake import LakeRef
@@ -42,6 +41,7 @@ from det.runtime.meta import (
 )
 from det.runtime.naming import apply_naming
 from det.runtime.registry import get_ingestion, get_mapper, get_source
+from det.runtime.settings import DetSettings, use_settings
 from det.sources.base import merge_source_config
 from det.validation.jsonschema_validator import (
     SchemaValidationError,
@@ -191,8 +191,18 @@ def _rel(path: Path | LakeRef, root: Path) -> str:
 
 
 class BronzeMigrator:
-    def __init__(self, project_root: Path | None = None) -> None:
-        self.project_root = (project_root or Path.cwd()).resolve()
+    def __init__(
+        self,
+        project_root: Path | None = None,
+        *,
+        settings: DetSettings | None = None,
+    ) -> None:
+        if settings is not None and project_root is not None:
+            raise ValueError("pass settings= or project_root=, not both")
+        if settings is None:
+            settings = DetSettings.from_env(project_root=project_root)
+        self.settings = settings
+        self.project_root = settings.project_root
         load_plugins()
 
     def migrate(
@@ -245,12 +255,8 @@ class BronzeMigrator:
             raise ValueError("-s/--interval-start is required unless --all-raw")
 
         job_ts = format_extract_run_datetime()
-        config = (
-            pipeline
-            if isinstance(pipeline, PipelineConfig)
-            else load_pipeline_config(
-                resolve_path(self.project_root, str(pipeline)), overrides=overrides
-            )
+        config = load_pipeline(
+            pipeline, project_root=self.project_root, overrides=overrides
         )
         if lake_path is not None:
             config.destination = DestinationConfig(
@@ -288,14 +294,21 @@ class BronzeMigrator:
         else:
             window_start, window_end = resolve_interval(interval_start, interval_end)
 
-        with bound_run_context(
+        ctx_settings = (
+            self.settings
+            if lake_path is None
+            else self.settings.with_overrides(lake_override=lake_path)
+        )
+        with use_settings(ctx_settings), bound_run_context(
             command="migrate",
             pipeline=config.name,
             interval_start=window_start,
             interval_end=window_end,
             extract_run_datetime=job_ts,
             destination=config.destination.type,
-            lake=sanitize_lake_uri(str(lake_root(config.destination, self.project_root))),
+            lake=sanitize_lake_uri(
+                str(lake_root(config.destination, self.project_root, settings=ctx_settings))
+            ),
         ):
             raw_name = validate_canonical_id(from_raw or config.bronze_dataset())
             to_bronze_id = validate_canonical_id(to_bronze)
@@ -417,7 +430,9 @@ class BronzeMigrator:
                     all_raw_runs=all_raw_runs,
                 )
                 purge_iceberg_table(
-                    lake=lake_root(to_config.destination, self.project_root),
+                    lake=lake_root(
+                        to_config.destination, self.project_root, settings=ctx_settings
+                    ),
                     table_location=bronze_loc,
                     namespace=sql_schema,
                     table=sql_table,
@@ -434,12 +449,16 @@ class BronzeMigrator:
                 end_iso = str(manifest.get("interval_end") or window_end)
                 start_iso, end_iso = resolve_interval(start_iso, end_iso)
                 with pipeline_lease(
-                    lake_root(config.destination, self.project_root),
+                    lake_root(
+                        config.destination, self.project_root, settings=ctx_settings
+                    ),
                     pipeline=config.name,
                     interval_start=start_iso,
                     interval_end=end_iso,
                     command="migrate",
-                    ttl_sec=lock_ttl_sec,
+                    ttl_sec=ctx_settings.effective_lock_ttl(lock_ttl_sec),
+                    owner=ctx_settings.lock_owner,
+                    enabled=ctx_settings.locks_enabled,
                 ):
                     bronze_loaded_at = format_extract_run_datetime()
                     stream = iter_bronze_rows(

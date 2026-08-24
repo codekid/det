@@ -97,29 +97,51 @@ def sum_artifact_bytes(artifacts: Sequence[Any] | None) -> int:
 
 def classify_error(exc: BaseException) -> tuple[str, str, str]:
     """Return ``(error_code, error_class, error_message)``; most specific type first."""
+    from det.errors import (
+        DetConflictError,
+        DetContractError,
+        DetNotFoundError,
+        DetPluginError,
+    )
+
     error_class = type(exc).__name__
     message = _scrub_error_message(str(exc))
-    if isinstance(exc, HttpIntegrityError):
+    # Runner wraps plugin failures; classify the cause for stable error codes.
+    probe: BaseException = exc
+    if isinstance(exc, DetPluginError) and isinstance(exc.__cause__, BaseException):
+        probe = exc.__cause__
+
+    if isinstance(probe, HttpIntegrityError):
         return "integrity_error", error_class, message
-    if isinstance(exc, HttpError):
+    if isinstance(probe, HttpError):
         return "http_error", error_class, message
-    if isinstance(exc, LeaseHeldError):
+    if isinstance(probe, LeaseHeldError):
         return "lease_held", error_class, message
-    if isinstance(exc, SecretNotSetError):
+    if isinstance(probe, SecretNotSetError):
         return "secret_not_set", error_class, message
-    if isinstance(exc, SecretError):
+    if isinstance(probe, SecretError):
         return "secret_not_set", error_class, message
-    if isinstance(exc, CoerceError):
+    if isinstance(probe, CoerceError):
         return "schema_invalid", error_class, message
-    if isinstance(exc, JsonSchemaValidationError):
+    if isinstance(probe, JsonSchemaValidationError):
         return "schema_invalid", error_class, message
-    if isinstance(exc, FileNotFoundError):
-        return "raw_missing", error_class, message
-    if isinstance(exc, FileExistsError):
+    if isinstance(probe, DetContractError):
+        return "schema_invalid", error_class, message
+    if isinstance(probe, DetConflictError) and "already exists" in str(probe):
         return "raw_exists", error_class, message
-    if isinstance(exc, PydanticValidationError):
+    if isinstance(probe, DetConflictError):
+        return "conflict", error_class, message
+    if isinstance(probe, DetNotFoundError):
+        return "raw_missing", error_class, message
+    if isinstance(exc, DetPluginError):
+        return "plugin_error", error_class, message
+    if isinstance(probe, FileNotFoundError):
+        return "raw_missing", error_class, message
+    if isinstance(probe, FileExistsError):
+        return "raw_exists", error_class, message
+    if isinstance(probe, PydanticValidationError):
         return "config_invalid", error_class, message
-    if isinstance(exc, ValueError):
+    if isinstance(probe, ValueError):
         return "config_invalid", error_class, message
     return "unknown", error_class, message
 

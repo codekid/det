@@ -10,9 +10,11 @@ from det.destinations.models import (
     lake_root,
     raw_dataset_dir,
 )
+from det.errors import DetConflictError, DetNotFoundError, reraise_as_plugin
 from det.logging import bound_run_context, get_logger, sanitize_lake_uri, update_run_context
 from det.plugins import load_plugins
-from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
+from det.runtime.config import PipelineConfig, load_pipeline, resolve_path
+from det.runtime.dlt_hygiene import check_raw_hygiene
 from det.runtime.lake import LakeRef
 from det.runtime.layout import LAKE_LAYOUT
 from det.runtime.lease import pipeline_lease, refresh_lease
@@ -32,6 +34,7 @@ from det.runtime.meta import (
 )
 from det.runtime.receipts import record_attempt, sum_artifact_bytes
 from det.runtime.registry import get_ingestion, get_source
+from det.runtime.settings import DetSettings, use_settings
 from det.sources.base import Interval, merge_source_config
 from det.validation.jsonschema_validator import load_json_schema
 
@@ -59,11 +62,50 @@ class RunResult:
 
 
 class PipelineRunner:
-    def __init__(self, project_root: Path | None = None) -> None:
-        self.project_root = (project_root or Path.cwd()).resolve()
+    def __init__(
+        self,
+        project_root: Path | None = None,
+        *,
+        settings: DetSettings | None = None,
+    ) -> None:
+        if settings is not None and project_root is not None:
+            raise ValueError("pass settings= or project_root=, not both")
+        if settings is None:
+            settings = DetSettings.from_env(project_root=project_root)
+        self.settings = settings
+        self.project_root = settings.project_root
         load_plugins()
 
+    def _lake(self, destination):
+        return lake_root(destination, self.project_root, settings=self.settings)
+
+    def _lease_kwargs(self, lock_ttl_sec: int | None = None) -> dict:
+        return {
+            "ttl_sec": self.settings.effective_lock_ttl(lock_ttl_sec),
+            "owner": self.settings.lock_owner,
+            "enabled": self.settings.locks_enabled,
+        }
     def extract(
+        self,
+        pipeline: PipelineConfig | Path | str,
+        *,
+        interval_start: str,
+        interval_end: str | None = None,
+        overrides: Sequence[str] | None = None,
+        extract_run_datetime: str | None = None,
+        lock_ttl_sec: int | None = None,
+    ) -> ExtractResult:
+        with use_settings(self.settings):
+            return self._extract(
+                pipeline,
+                interval_start=interval_start,
+                interval_end=interval_end,
+                overrides=overrides,
+                extract_run_datetime=extract_run_datetime,
+                lock_ttl_sec=lock_ttl_sec,
+            )
+
+    def _extract(
         self,
         pipeline: PipelineConfig | Path | str,
         *,
@@ -79,7 +121,7 @@ class PipelineRunner:
         effective = merge_source_config(source.defaults(), config.source.overrides)
         start_iso, end_iso = resolve_interval(interval_start, interval_end)
         interval = Interval(start=start_iso, end=end_iso)
-        lake = lake_root(config.destination, self.project_root)
+        lake = self._lake(config.destination)
 
         raw_dir = hive_partition_dir(
             raw_dataset_dir(config, self.project_root),
@@ -98,7 +140,7 @@ class PipelineRunner:
             destination=config.destination.type,
         ) as receipt:
             if is_committed_raw_dir(raw_dir):
-                raise FileExistsError(
+                raise DetConflictError(
                     f"Committed raw extract already exists at {raw_dir}; "
                     "re-extract with a new __extract_run_datetime "
                     "(do not copy data to publish)"
@@ -118,7 +160,7 @@ class PipelineRunner:
                 interval_start=start_iso,
                 interval_end=end_iso,
                 command="extract",
-                ttl_sec=lock_ttl_sec,
+                **self._lease_kwargs(lock_ttl_sec),
             ) as lease:
                 with bound_run_context(
                     command="extract",
@@ -135,9 +177,15 @@ class PipelineRunner:
                         raw_dir=str(raw_dir),
                     )
                     try:
-                        artifacts = source.extract_to_raw(
-                            config=effective, interval=interval, data_dir=data_dir
-                        )
+                        try:
+                            artifacts = source.extract_to_raw(
+                                config=effective, interval=interval, data_dir=data_dir
+                            )
+                        except Exception as exc:
+                            reraise_as_plugin(
+                                exc, plugin=source.name, action="extract_to_raw"
+                            )
+                        check_raw_hygiene(raw_dir, artifacts)
                         refresh_lease(lease)
                         logger.info(
                             "writing raw manifest",
@@ -186,12 +234,32 @@ class PipelineRunner:
         extract_run_datetime: str | None = None,
         lock_ttl_sec: int | None = None,
     ) -> RunResult:
+        with use_settings(self.settings):
+            return self._load(
+                pipeline,
+                interval_start=interval_start,
+                interval_end=interval_end,
+                overrides=overrides,
+                extract_run_datetime=extract_run_datetime,
+                lock_ttl_sec=lock_ttl_sec,
+            )
+
+    def _load(
+        self,
+        pipeline: PipelineConfig | Path | str,
+        *,
+        interval_start: str,
+        interval_end: str | None = None,
+        overrides: Sequence[str] | None = None,
+        extract_run_datetime: str | None = None,
+        lock_ttl_sec: int | None = None,
+    ) -> RunResult:
         config = self._load_config(pipeline, overrides)
         schema = load_json_schema(resolve_path(self.project_root, config.schema_path))
         source = get_source(config.source.type)
         effective = merge_source_config(source.defaults(), config.source.overrides)
         start_iso, end_iso = resolve_interval(interval_start, interval_end)
-        lake = lake_root(config.destination, self.project_root)
+        lake = self._lake(config.destination)
 
         with record_attempt(
             lake,
@@ -209,7 +277,7 @@ class PipelineRunner:
                 interval_start=start_iso,
                 interval_end=end_iso,
                 command="load",
-                ttl_sec=lock_ttl_sec,
+                **self._lease_kwargs(lock_ttl_sec),
             ) as lease:
                 with bound_run_context(
                     command="load",
@@ -229,6 +297,7 @@ class PipelineRunner:
                     )
                     logger.info("resolved raw partition", raw_dir=str(raw_dir))
                     manifest = read_manifest(raw_dir)
+                    check_raw_hygiene(raw_dir, manifest.get("artifacts"))
                     extract_ts = str(
                         manifest.get("extract_run_datetime") or extract_run_datetime
                     )
@@ -237,42 +306,47 @@ class PipelineRunner:
                     refresh_lease(lease)
 
                     bronze_loaded_at = format_extract_run_datetime()
-                    counted = CountingIter(
-                        iter_bronze_rows(
-                            source.records_from_raw(
-                                config=effective, raw_dir=raw_dir, manifest=manifest
-                            ),
-                            schema=schema,
-                            naming=config.bronze.naming,
-                            extract_run_datetime=extract_ts,
+                    try:
+                        counted = CountingIter(
+                            iter_bronze_rows(
+                                source.records_from_raw(
+                                    config=effective,
+                                    raw_dir=raw_dir,
+                                    manifest=manifest,
+                                ),
+                                schema=schema,
+                                naming=config.bronze.naming,
+                                extract_run_datetime=extract_ts,
+                                interval_start_datetime=start_iso,
+                                interval_end_datetime=end_iso,
+                                bronze_loaded_at=bronze_loaded_at,
+                                log_every=config.ingestion.chunk_rows,
+                            )
+                        )
+
+                        partition = hive_partition_dir(
+                            bronze_dataset_dir(config, self.project_root),
                             interval_start_datetime=start_iso,
                             interval_end_datetime=end_iso,
-                            bronze_loaded_at=bronze_loaded_at,
-                            log_every=config.ingestion.chunk_rows,
+                            extract_run_datetime=extract_ts,
                         )
-                    )
-
-                    partition = hive_partition_dir(
-                        bronze_dataset_dir(config, self.project_root),
-                        interval_start_datetime=start_iso,
-                        interval_end_datetime=end_iso,
-                        extract_run_datetime=extract_ts,
-                    )
-                    backend = get_ingestion(config.ingestion.library)
-                    logger.info(
-                        "writing bronze partition",
-                        backend=config.ingestion.library,
-                        chunk_rows=config.ingestion.chunk_rows,
-                        partition=str(partition),
-                    )
-                    written = backend.write(
-                        counted,
-                        config=config,
-                        project_root=self.project_root,
-                        partition_dir=partition,
-                        destination=config.destination,
-                        chunk_rows=config.ingestion.chunk_rows,
-                    )
+                        backend = get_ingestion(config.ingestion.library)
+                        logger.info(
+                            "writing bronze partition",
+                            backend=config.ingestion.library,
+                            chunk_rows=config.ingestion.chunk_rows,
+                            partition=str(partition),
+                        )
+                        written = backend.write(
+                            counted,
+                            config=config,
+                            project_root=self.project_root,
+                            partition_dir=partition,
+                            destination=config.destination,
+                            chunk_rows=config.ingestion.chunk_rows,
+                        )
+                    except Exception as exc:
+                        reraise_as_plugin(exc, plugin=source.name, action="load")
                     schema_sha256 = sha256_file(
                         resolve_path(self.project_root, config.schema_path)
                     )
@@ -309,44 +383,43 @@ class PipelineRunner:
         overrides: Sequence[str] | None = None,
         lock_ttl_sec: int | None = None,
     ) -> RunResult:
-        extract_ts = format_extract_run_datetime()
-        config = self._load_config(pipeline, overrides)
-        start_iso, end_iso = resolve_interval(interval_start, interval_end)
-        lake = lake_root(config.destination, self.project_root)
-        with pipeline_lease(
-            lake,
-            pipeline=config.name,
-            interval_start=start_iso,
-            interval_end=end_iso,
-            command="run",
-            ttl_sec=lock_ttl_sec,
-        ):
-            extracted = self.extract(
-                config,
-                interval_start=interval_start,
-                interval_end=interval_end,
-                overrides=overrides,
-                extract_run_datetime=extract_ts,
-                lock_ttl_sec=lock_ttl_sec,
-            )
-            return self.load(
-                config,
-                interval_start=extracted.interval_start,
-                interval_end=extracted.interval_end,
-                overrides=overrides,
-                extract_run_datetime=extracted.extract_run_datetime,
-                lock_ttl_sec=lock_ttl_sec,
-            )
+        with use_settings(self.settings):
+            extract_ts = format_extract_run_datetime()
+            config = self._load_config(pipeline, overrides)
+            start_iso, end_iso = resolve_interval(interval_start, interval_end)
+            lake = self._lake(config.destination)
+            with pipeline_lease(
+                lake,
+                pipeline=config.name,
+                interval_start=start_iso,
+                interval_end=end_iso,
+                command="run",
+                **self._lease_kwargs(lock_ttl_sec),
+            ):
+                extracted = self._extract(
+                    config,
+                    interval_start=interval_start,
+                    interval_end=interval_end,
+                    overrides=overrides,
+                    extract_run_datetime=extract_ts,
+                    lock_ttl_sec=lock_ttl_sec,
+                )
+                return self._load(
+                    config,
+                    interval_start=extracted.interval_start,
+                    interval_end=extracted.interval_end,
+                    overrides=overrides,
+                    extract_run_datetime=extracted.extract_run_datetime,
+                    lock_ttl_sec=lock_ttl_sec,
+                )
 
     def _load_config(
         self,
         pipeline: PipelineConfig | Path | str,
         overrides: Sequence[str] | None,
     ) -> PipelineConfig:
-        if isinstance(pipeline, PipelineConfig):
-            return pipeline
-        return load_pipeline_config(
-            resolve_path(self.project_root, str(pipeline)), overrides=overrides
+        return load_pipeline(
+            pipeline, project_root=self.project_root, overrides=overrides
         )
 
     def _resolve_raw_dir(
@@ -367,16 +440,16 @@ class PipelineRunner:
                 base / f"__extract_run_datetime={to_partition_value(extract_run_datetime)}"
             )
             if not is_committed_raw_dir(target):
-                raise FileNotFoundError(
+                raise DetNotFoundError(
                     f"No committed raw extract at {target} "
                     "(incomplete extract has no meta/manifest.json)"
                 )
             return target
         if not base.exists():
-            raise FileNotFoundError(f"No raw partitions under {base}")
+            raise DetNotFoundError(f"No raw partitions under {base}")
         from det.runtime.manifest import committed_extract_run_dirs
 
         runs = committed_extract_run_dirs(base)
         if not runs:
-            raise FileNotFoundError(f"No committed extract runs under {base}")
+            raise DetNotFoundError(f"No committed extract runs under {base}")
         return runs[-1]

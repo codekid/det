@@ -5,12 +5,11 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
-import duckdb
-
 from det.ingestion.chunks import iter_chunks
 from det.ingestion.sql_ddl import ensure_bronze_table
 from det.ingestion.sql_replace import delete_extract_run_sql, require_bronze_run_identity
 from det.logging import get_logger
+from det.optional_deps import require_duckdb
 from det.runtime.sql_types import bronze_sql_columns, quote_ident
 
 logger = get_logger(__name__)
@@ -51,6 +50,7 @@ def write_duckdb_table(
     table_sql = quote_ident(table)
     qualified = f"{schema_sql}.{table_sql}"
 
+    duckdb = require_duckdb()
     con = duckdb.connect(str(connection_path))
     total = 0
     try:

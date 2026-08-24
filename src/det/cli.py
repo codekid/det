@@ -75,6 +75,26 @@ def _project_root(explicit: Path | None) -> Path:
     return resolve_project_root(explicit)
 
 
+def _settings(
+    project_root: Path | None,
+    *,
+    lake_path: str | None = None,
+    lock_ttl_sec: int | None = None,
+):
+    """Build DetSettings from env, then apply CLI flag overrides."""
+    from det.runtime.settings import DetSettings
+
+    settings = DetSettings.from_env(project_root=project_root)
+    overrides: dict = {}
+    if lake_path is not None:
+        overrides["lake_override"] = lake_path
+    if lock_ttl_sec is not None:
+        overrides["lock_ttl_sec"] = lock_ttl_sec
+    if overrides:
+        settings = settings.with_overrides(**overrides)
+    return settings
+
+
 def _resolve_pipeline(ref: str, root: Path):
     """Resolve pipeline ref; log and echo the resolved path for auditability."""
     from det.runtime.pipelines import PipelineRefError, resolve_pipeline_ref
@@ -144,6 +164,7 @@ def extract_raw(
     interval_start: str = typer.Option(..., "--interval-start", "-s"),
     interval_end: str | None = typer.Option(None, "--interval-end", "-e"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+    lake_path: str | None = typer.Option(None, "--lake-path"),
     set_: list[str] = typer.Option([], "--set"),
     lock_ttl_sec: int | None = typer.Option(
         None,
@@ -169,12 +190,13 @@ def extract_raw(
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
     try:
-        result = PipelineRunner(root).extract(
+        result = PipelineRunner(
+            settings=_settings(root, lake_path=lake_path, lock_ttl_sec=lock_ttl_sec)
+        ).extract(
             resolved.path,
             interval_start=start_iso,
             interval_end=end_iso,
             overrides=set_,
-            lock_ttl_sec=lock_ttl_sec,
         )
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
@@ -196,6 +218,7 @@ def load_bronze(
         help="Raw run to load. Defaults to the latest run for the interval.",
     ),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+    lake_path: str | None = typer.Option(None, "--lake-path"),
     set_: list[str] = typer.Option([], "--set"),
     lock_ttl_sec: int | None = typer.Option(
         None,
@@ -221,13 +244,14 @@ def load_bronze(
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
     try:
-        result = PipelineRunner(root).load(
+        result = PipelineRunner(
+            settings=_settings(root, lake_path=lake_path, lock_ttl_sec=lock_ttl_sec)
+        ).load(
             resolved.path,
             interval_start=start_iso,
             interval_end=end_iso,
             overrides=set_,
             extract_run_datetime=extract_run_datetime,
-            lock_ttl_sec=lock_ttl_sec,
         )
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
@@ -244,6 +268,7 @@ def run_pipeline(
     interval_start: str = typer.Option(..., "--interval-start", "-s"),
     interval_end: str | None = typer.Option(None, "--interval-end", "-e"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+    lake_path: str | None = typer.Option(None, "--lake-path"),
     set_: list[str] = typer.Option([], "--set"),
     lock_ttl_sec: int | None = typer.Option(
         None,
@@ -270,12 +295,13 @@ def run_pipeline(
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
     print("det: run starting…", file=sys.stderr, flush=True)
     try:
-        result = PipelineRunner(root).run(
+        result = PipelineRunner(
+            settings=_settings(root, lake_path=lake_path, lock_ttl_sec=lock_ttl_sec)
+        ).run(
             resolved.path,
             interval_start=start_iso,
             interval_end=end_iso,
             overrides=set_,
-            lock_ttl_sec=lock_ttl_sec,
         )
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
@@ -401,7 +427,9 @@ def migrate_bronze(
             param_hint="--validate-limit",
         )
     try:
-        result = BronzeMigrator(root).migrate(
+        result = BronzeMigrator(
+            settings=_settings(root, lake_path=lake_path, lock_ttl_sec=lock_ttl_sec)
+        ).migrate(
             pipeline=resolved.path,
             to_bronze=to_bronze,
             schema_path=schema if schema.is_absolute() else root / schema,
@@ -415,7 +443,6 @@ def migrate_bronze(
             dry_run=dry_run,
             validate_limit=validate_limit,
             wire_version=wire_version,
-            lock_ttl_sec=lock_ttl_sec,
             recreate_iceberg=recreate_iceberg,
             all_raw=all_raw,
             all_raw_runs=all_raw_runs,
@@ -571,6 +598,68 @@ def dbt_cmd(
         raise typer.Exit(code=result.returncode)
     _consume_approval(root, approval)
     typer.echo(f"OK dbt finished exit={result.returncode}")
+
+
+@app.command("init-source")
+def init_source_cmd(
+    name: str = typer.Option(
+        ...,
+        "--name",
+        "-n",
+        help="Canonical provider.source id (writes sources/<provider>/<source>.py)",
+    ),
+    destination_type: str = typer.Option(
+        "iceberg",
+        "--destination-type",
+        help="iceberg (default lake) | filesystem (JSONL) | duckdb | postgres",
+    ),
+    connection: str | None = typer.Option(
+        None,
+        "--connection",
+        help=(
+            "DuckDB file path, or for postgres the env var name holding the DSN "
+            "(e.g. DET_POSTGRES_DSN). Required for duckdb/postgres"
+        ),
+    ),
+    lake_path: str | None = typer.Option(None, "--lake-path"),
+    skip_pipeline: bool = typer.Option(
+        False,
+        "--skip-pipeline",
+        help="Only write the plugin file (no YAML / schema / dbt)",
+    ),
+    skip_dbt: bool = typer.Option(False, "--skip-dbt", help="Skip scaffold-dbt"),
+    force: bool = typer.Option(False, "--force"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+) -> None:
+    """Scaffold a project-local source plugin (+ pipeline YAML / schema by default)."""
+    from det.scaffold.init_source import init_source
+
+    if destination_type not in {"filesystem", "duckdb", "postgres", "iceberg"}:
+        raise typer.BadParameter(
+            "must be filesystem, duckdb, postgres, or iceberg",
+            param_hint="--destination-type",
+        )
+    root = _project_root(project_root)
+    try:
+        result = init_source(
+            name=name,
+            project_root=root,
+            force=force,
+            dry_run=dry_run,
+            skip_pipeline=skip_pipeline,
+            skip_dbt=skip_dbt,
+            destination_type=destination_type,
+            lake_path=lake_path,
+            connection=connection,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    mode = "DRY-RUN" if dry_run else "OK"
+    typer.echo(f"{mode} init-source name={result.name} plugin={result.plugin_path}")
+    for action in result.actions:
+        typer.echo(f"  {action.action}: {action.path} ({action.detail})")
 
 
 @app.command("init-pipeline")
@@ -770,7 +859,9 @@ def prune_bronze(
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
     config = load_pipeline_config(resolved.path, overrides=set_)
-    pruner = BronzePruner(root)
+    pruner = BronzePruner(
+        settings=_settings(root, lock_ttl_sec=lock_ttl_sec)
+    )
     plan = pruner.plan(
         config,
         interval_start=start_iso,
@@ -795,7 +886,6 @@ def prune_bronze(
             plan,
             interval_start=start_iso,
             interval_end=end_iso,
-            lock_ttl_sec=lock_ttl_sec,
         )
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
@@ -1354,10 +1444,13 @@ def list_pipelines_cmd(
 
 
 @app.command("list-sources")
-def list_sources_cmd() -> None:
+def list_sources_cmd(
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+) -> None:
     from det.runtime.registry import list_sources
 
-    for name in list_sources():
+    root = _project_root(project_root)
+    for name in list_sources(project_root=root):
         typer.echo(name)
 
 

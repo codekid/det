@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from det.logging import get_logger
+from det.optional_deps import require_jinja2
 from det.runtime.config import (
     DbtDocsConfig,
     DbtSilverConfig,
@@ -149,10 +149,11 @@ class ScaffoldResult:
         return [a.path for a in self.actions if a.action == "write"]
 
 
-def _env() -> Environment:
-    return Environment(
-        loader=FileSystemLoader(str(_TEMPLATES)),
-        autoescape=select_autoescape(enabled_extensions=()),
+def _env():
+    jinja2 = require_jinja2()
+    return jinja2.Environment(
+        loader=jinja2.FileSystemLoader(str(_TEMPLATES)),
+        autoescape=jinja2.select_autoescape(enabled_extensions=()),
         keep_trailing_newline=True,
     )
 

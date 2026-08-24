@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from det.logging import register_secret_value
 from det.runtime.config import DestinationConfig, MedallionConfig, PipelineConfig
@@ -16,18 +17,37 @@ from det.runtime.lake import LakeRef, open_lake, pick_lake_spec
 from det.runtime.meta import to_partition_value
 from det.runtime.secrets import DSN_KEYS, SecretsBackend, resolve_secret
 
+if TYPE_CHECKING:
+    from det.runtime.settings import DetSettings
+
 
 def lake_root(
     destination: DestinationConfig,
     project_root: Path,
     *,
     cli_lake_path: str | None = None,
+    settings: DetSettings | None = None,
 ) -> LakeRef:
+    active = settings
+    if active is None:
+        from det.runtime.settings import get_active_settings
+
+        active = get_active_settings()
+    override = cli_lake_path
+    settings_lake: str | None = None
+    mode = None
+    if active is not None:
+        if override is None or not str(override).strip():
+            override = active.lake_override
+        settings_lake = active.lake_path
+        mode = active.lake_mode
+        project_root = active.project_root
     spec = pick_lake_spec(
-        cli_lake_path=cli_lake_path,
+        cli_lake_path=override,
         destination_path=destination.path,
+        settings_lake_path=settings_lake,
     )
-    return open_lake(spec, project_root)
+    return open_lake(spec, project_root, lake_mode=mode)
 
 
 def duckdb_connection_path(destination: DestinationConfig, project_root: Path) -> Path:

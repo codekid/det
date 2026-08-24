@@ -559,10 +559,6 @@ name = "det"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "beautifulsoup4" },
-    { name = "dlt", extra = ["filesystem"] },
-    { name = "duckdb" },
-    { name = "jinja2" },
     { name = "jsonschema" },
     { name = "pendulum" },
     { name = "pydantic" },
@@ -582,6 +578,13 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
+duckdb = [
+    { name = "duckdb" },
+]
+examples = [
+    { name = "beautifulsoup4" },
+    { name = "dlt", extra = ["filesystem"] },
+]
 gcs = [
     { name = "gcsfs" },
 ]
@@ -598,16 +601,19 @@ postgres = [
 s3 = [
     { name = "s3fs" },
 ]
+scaffold = [
+    { name = "jinja2" },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "beautifulsoup4", specifier = ">=4.12.0" },
+    { name = "beautifulsoup4", marker = "extra == 'examples'", specifier = ">=4.12.0" },
     { name = "dbt-core", marker = "extra == 'dbt'", specifier = ">=1.9" },
     { name = "dbt-duckdb", marker = "extra == 'dbt'", specifier = ">=1.9" },
-    { name = "dlt", extras = ["filesystem"], specifier = ">=1.24.0" },
-    { name = "duckdb", specifier = ">=1.5.1" },
+    { name = "dlt", extras = ["filesystem"], marker = "extra == 'examples'", specifier = ">=1.24.0" },
+    { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=1.5.1" },
     { name = "gcsfs", marker = "extra == 'gcs'", specifier = ">=2024.0.0" },
-    { name = "jinja2", specifier = ">=3.1.0" },
+    { name = "jinja2", marker = "extra == 'scaffold'", specifier = ">=3.1.0" },
     { name = "jsonschema", specifier = ">=4.23.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2,<2" },
     { name = "pendulum", specifier = ">=3.0.0" },
@@ -624,7 +630,7 @@ requires-dist = [
     { name = "structlog", specifier = ">=25.1.0" },
     { name = "typer", specifier = ">=0.15.0" },
 ]
-provides-extras = ["dev", "dbt", "postgres", "s3", "gcs", "iceberg", "mcp"]
+provides-extras = ["dev", "examples", "duckdb", "scaffold", "dbt", "postgres", "s3", "gcs", "iceberg", "mcp"]
 
 [[package]]
 name = "dlt"

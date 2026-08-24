@@ -9,10 +9,9 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
-import duckdb
-
 from det.mcp.context import project_root
 from det.mcp.inspect import clamp_sample_limit
+from det.optional_deps import require_duckdb
 from det.runtime.lake import relpath as lake_relpath
 
 Warehouse = Literal["analytics", "ops"]
@@ -171,6 +170,7 @@ def query_analytics(
         }
 
     wrapped = f"select * from ({body}) as _det_q limit {capped + 1}"
+    duckdb = require_duckdb()
     con = duckdb.connect(str(db_path), read_only=True)
     try:
         result = con.execute(wrapped)

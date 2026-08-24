@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import duckdb
-
 from det.destinations.models import (
     bronze_dataset_dir,
     duckdb_connection_path,
@@ -13,11 +11,13 @@ from det.destinations.models import (
 )
 from det.ingestion.sql_replace import delete_extract_run_sql
 from det.logging import bound_run_context, get_logger, sanitize_lake_uri
-from det.runtime.config import PipelineConfig
+from det.optional_deps import require_duckdb
+from det.runtime.config import PipelineConfig, load_pipeline
 from det.runtime.ids import sql_names_for_config
 from det.runtime.lake import LakeRef
 from det.runtime.lease import pipeline_lease
 from det.runtime.meta import from_partition_value, identity_iso, resolve_interval
+from det.runtime.settings import DetSettings, use_settings
 
 logger = get_logger(__name__)
 
@@ -50,10 +50,44 @@ class PrunePlan:
 class BronzePruner:
     """Bronze-only retention. Never touches raw/."""
 
-    def __init__(self, project_root: Path) -> None:
-        self.project_root = project_root.resolve()
+    def __init__(
+        self,
+        project_root: Path | None = None,
+        *,
+        settings: DetSettings | None = None,
+    ) -> None:
+        if settings is not None and project_root is not None:
+            raise ValueError("pass settings= or project_root=, not both")
+        if settings is None:
+            if project_root is None:
+                raise TypeError("BronzePruner requires project_root= or settings=")
+            settings = DetSettings.from_env(project_root=project_root)
+        self.settings = settings
+        self.project_root = settings.project_root
+
+    def _lake(self, dest):
+        return lake_root(dest, self.project_root, settings=self.settings)
+
+    def _config(self, pipeline: PipelineConfig | Path | str) -> PipelineConfig:
+        return load_pipeline(pipeline, project_root=self.project_root)
 
     def plan(
+        self,
+        pipeline: PipelineConfig | Path | str,
+        *,
+        interval_start: str,
+        interval_end: str | None,
+        keep: int,
+    ) -> PrunePlan:
+        with use_settings(self.settings):
+            return self._plan(
+                self._config(pipeline),
+                interval_start=interval_start,
+                interval_end=interval_end,
+                keep=keep,
+            )
+
+    def _plan(
         self,
         config: PipelineConfig,
         *,
@@ -71,7 +105,7 @@ class BronzePruner:
             interval_start=window_start,
             interval_end=window_end,
             destination=dest.type,
-            lake=sanitize_lake_uri(str(lake_root(dest, self.project_root))),
+            lake=sanitize_lake_uri(str(self._lake(dest))),
         ):
             if dest.type == "filesystem":
                 return self._plan_filesystem(
@@ -96,6 +130,24 @@ class BronzePruner:
 
     def apply(
         self,
+        pipeline: PipelineConfig | Path | str,
+        plan: PrunePlan,
+        *,
+        interval_start: str | None = None,
+        interval_end: str | None = None,
+        lock_ttl_sec: int | None = None,
+    ) -> int:
+        with use_settings(self.settings):
+            return self._apply(
+                self._config(pipeline),
+                plan,
+                interval_start=interval_start,
+                interval_end=interval_end,
+                lock_ttl_sec=lock_ttl_sec,
+            )
+
+    def _apply(
+        self,
         config: PipelineConfig,
         plan: PrunePlan,
         *,
@@ -109,12 +161,14 @@ class BronzePruner:
         if interval_start is not None:
             start_iso, end_iso = resolve_interval(interval_start, interval_end)
             with pipeline_lease(
-                lake_root(dest, self.project_root),
+                self._lake(dest),
                 pipeline=config.name,
                 interval_start=start_iso,
                 interval_end=end_iso,
                 command="prune",
-                ttl_sec=lock_ttl_sec,
+                ttl_sec=self.settings.effective_lock_ttl(lock_ttl_sec),
+                owner=self.settings.lock_owner,
+                enabled=self.settings.locks_enabled,
             ):
                 return self._apply_body(config, plan)
         return self._apply_body(config, plan)
@@ -125,7 +179,7 @@ class BronzePruner:
             command="prune",
             pipeline=config.name,
             destination=dest.type,
-            lake=sanitize_lake_uri(str(lake_root(dest, self.project_root))),
+            lake=sanitize_lake_uri(str(self._lake(dest))),
         ):
             if dest.type == "filesystem":
                 return self._apply_filesystem(config, plan)
@@ -206,6 +260,7 @@ class BronzePruner:
 
         schema, table = sql_names_for_config(config)
         qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
+        duckdb = require_duckdb()
         con = duckdb.connect(str(db_path), read_only=True)
         try:
             exists = con.execute(
@@ -300,6 +355,7 @@ class BronzePruner:
         db_path = duckdb_connection_path(config.destination, self.project_root)
         schema, table = sql_names_for_config(config)
         qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
+        duckdb = require_duckdb()
         con = duckdb.connect(str(db_path))
         deleted_groups = 0
         try:
@@ -368,7 +424,7 @@ class BronzePruner:
 
         schema, table = sql_names_for_config(config)
         ice = load_iceberg_table(
-            lake=lake_root(config.destination, self.project_root),
+            lake=self._lake(config.destination),
             namespace=schema,
             table=table,
             table_location=bronze_dataset_dir(config, self.project_root),
@@ -385,7 +441,7 @@ class BronzePruner:
 
         schema, table = sql_names_for_config(config)
         ice = load_iceberg_table(
-            lake=lake_root(config.destination, self.project_root),
+            lake=self._lake(config.destination),
             namespace=schema,
             table=table,
             table_location=bronze_dataset_dir(config, self.project_root),

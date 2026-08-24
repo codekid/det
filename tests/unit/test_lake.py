@@ -7,6 +7,7 @@ import pytest
 import requests
 import yaml
 
+from det.errors import DetPluginError
 from det.runtime.lake import (
     DEFAULT_LAKE_REL,
     ENV_LAKE_MODE,
@@ -144,7 +145,7 @@ def test_memory_failed_extract_deletes_prefix(project_root: Path, tmp_path: Path
     runner = PipelineRunner(tmp_path)
     with (
         patch.object(ExampleApiSource, "extract_to_raw", boom),
-        pytest.raises(RuntimeError, match="download failed"),
+        pytest.raises(DetPluginError, match="download failed"),
     ):
         runner.extract(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
 

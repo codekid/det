@@ -89,17 +89,17 @@ def init_pipeline(
             f"name {name!r} must equal source_type {source_type!r} "
             "(canonical provider.source id)"
         )
-    known = set(list_sources())
+    root = project_root.resolve()
+    known = set(list_sources(project_root=root))
     if source_type not in known:
         raise ValueError(
             f"Unknown source type {source_type!r}. Registered: {sorted(known)}"
         )
     try:
-        get_source(source_type)
+        get_source(source_type, project_root=root)
     except PluginLoadError as exc:
         raise ValueError(str(exc)) from exc
 
-    root = project_root.resolve()
     provider, source_name = parse_canonical_id(name)
     parts = fs_dataset_parts(name)
     pipeline_path = root.joinpath("configs", "pipelines", *parts[:-1], f"{parts[-1]}.yaml")

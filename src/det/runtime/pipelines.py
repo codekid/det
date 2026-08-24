@@ -14,10 +14,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from det.errors import DetNotFoundError
 from det.runtime.ids import CANONICAL_ID_RE, fs_dataset_parts, validate_canonical_id
 
 
-class PipelineRefError(FileNotFoundError):
+class PipelineRefError(DetNotFoundError, FileNotFoundError):
     """Pipeline ref could not be resolved."""
 
 

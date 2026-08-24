@@ -7,8 +7,10 @@ import yaml
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
+from det.errors import DetContractError
 
-class SchemaValidationError(Exception):
+
+class SchemaValidationError(DetContractError):
     """Raised when one or more records fail strict JSON Schema validation."""
 
     def __init__(self, message: str, errors: list[str] | None = None) -> None:

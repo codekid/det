@@ -5,11 +5,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from dlt.sources.helpers.rest_client import RESTClient
-from dlt.sources.helpers.rest_client.auth import BearerTokenAuth
-from dlt.sources.helpers.rest_client.paginators import JSONLinkPaginator
-
 from det.logging import get_logger
+from det.optional_deps import require_dlt_rest
 from det.runtime.lake import LakeRef
 from det.sources.base import Interval, SourceRow, mapper
 from det.sources.http_json import (
@@ -65,11 +62,14 @@ class ExampleApiSource:
                 )
             ]
 
+        RESTClient, rest_auth, rest_paginators = require_dlt_rest()
         token = source_bearer_token(config, source_name=self.name)
         client = RESTClient(
             base_url=config["base_url"],
-            auth=BearerTokenAuth(token) if token else None,
-            paginator=JSONLinkPaginator(next_url_path=config.get("next_url_path")),
+            auth=rest_auth.BearerTokenAuth(token) if token else None,
+            paginator=rest_paginators.JSONLinkPaginator(
+                next_url_path=config.get("next_url_path")
+            ),
             data_selector=record_path or None,
         )
         params = {"start": interval.start, "end": interval.end}
