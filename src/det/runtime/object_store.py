@@ -135,6 +135,12 @@ def fsspec_gcs_kwargs(env: Mapping[str, str] | None = None) -> dict[str, Any]:
     return kwargs
 
 
+# PyArrow GcsFileSystem requires access_token + credential_token_expiration
+# together. Emulators ignore the token value; without it PyArrow falls through
+# to ADC and can hang for minutes (metadata server / real Google APIs).
+_GCS_EMULATOR_TOKEN_EXPIRES_MS = "4102444800000"  # 2100-01-01 UTC
+
+
 def iceberg_gcs_properties(env: Mapping[str, str] | None = None) -> dict[str, str]:
     """PyIceberg FileIO catalog properties for ``gs://`` warehouses."""
     environ = _env(env)
@@ -150,6 +156,13 @@ def iceberg_gcs_properties(env: Mapping[str, str] | None = None) -> dict[str, st
     token = (environ.get("GCS_OAUTH_TOKEN") or "").strip()
     if token:
         props["gcs.oauth2.token"] = token
+        expires = (environ.get("GCS_OAUTH_TOKEN_EXPIRES_AT_MS") or "").strip()
+        if expires:
+            props["gcs.oauth2.token-expires-at"] = expires
+    elif endpoint:
+        # fake-gcs / localgcp: dummy token so PyArrow never waits on ADC.
+        props["gcs.oauth2.token"] = "anon"
+        props["gcs.oauth2.token-expires-at"] = _GCS_EMULATOR_TOKEN_EXPIRES_MS
     return props
 
 

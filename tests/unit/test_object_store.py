@@ -85,6 +85,21 @@ def test_iceberg_gcs_properties_emulator():
     props = iceberg_gcs_properties({"STORAGE_EMULATOR_HOST": "localhost:4443"})
     assert props["gcs.service.host"] == "http://localhost:4443"
     assert props["gcs.project-id"] == "det-local"
+    # PyArrow needs token+expiry together; without them ADC hangs on fake-gcs.
+    assert props["gcs.oauth2.token"] == "anon"
+    assert props["gcs.oauth2.token-expires-at"] == "4102444800000"
+
+
+def test_iceberg_gcs_properties_explicit_token():
+    props = iceberg_gcs_properties(
+        {
+            "STORAGE_EMULATOR_HOST": "localhost:4443",
+            "GCS_OAUTH_TOKEN": "ya29.test",
+            "GCS_OAUTH_TOKEN_EXPIRES_AT_MS": "999",
+        }
+    )
+    assert props["gcs.oauth2.token"] == "ya29.test"
+    assert props["gcs.oauth2.token-expires-at"] == "999"
 
 
 def test_duckdb_s3_endpoint_parts_minio():
