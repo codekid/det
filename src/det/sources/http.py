@@ -6,9 +6,11 @@ SemVer-stable plugin helpers (not re-exported on top-level ``det``). See ``docs/
 from __future__ import annotations
 
 import gzip
+import ipaddress
 import random
 import tempfile
 import time
+import urllib.parse
 from collections.abc import Callable
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -24,14 +26,57 @@ DEFAULT_MAX_ATTEMPTS = 4
 BACKOFF_CAP_SECONDS = 60.0
 _STREAM_CHUNK = 256 * 1024
 
+# Default byte ceiling for streaming file downloads (2 GiB).
+# Override by passing max_bytes explicitly to http_get_file.
+DEFAULT_MAX_FILE_BYTES: int = 2 * 1024 * 1024 * 1024
+
 __all__ = [
     "DEFAULT_MAX_ATTEMPTS",
+    "DEFAULT_MAX_FILE_BYTES",
     "HttpError",
     "HttpIntegrityError",
+    "check_url",
     "http_get",
     "http_get_file",
     "verify_gzip",
 ]
+
+_ALLOWED_SCHEMES = frozenset({"http", "https"})
+
+
+def check_url(url: str) -> None:
+    """Raise HttpError when *url* has a disallowed scheme or is a private/loopback host.
+
+    Only schemes ``http`` and ``https`` are permitted.  When the hostname is a
+    literal IP address (not a DNS name) it is checked against IANA-reserved
+    ranges (loopback, private, link-local, reserved).  DNS-resolved addresses
+    are **not** checked here; use network-level egress controls for that.
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception as exc:
+        raise HttpError(f"invalid URL {url!r}: {exc}") from exc
+
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in _ALLOWED_SCHEMES:
+        raise HttpError(
+            f"URL scheme {scheme!r} is not allowed; use https (or http for local/CI endpoints)"
+        )
+
+    host = parsed.hostname or ""
+    if not host:
+        raise HttpError(f"URL {url!r} has no hostname")
+
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return  # hostname — DNS resolution not checked here
+
+    if addr.is_loopback or addr.is_link_local or addr.is_private or addr.is_reserved:
+        raise HttpError(
+            f"URL host {host!r} resolves to a non-routable address; "
+            "private/loopback/link-local addresses are blocked"
+        )
 
 
 class HttpError(Exception):
@@ -127,13 +172,19 @@ def http_get(
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     session: requests.Session | None = None,
     refresh_headers: Callable[[], dict[str, str]] | None = None,
+    skip_url_check: bool = False,
 ) -> requests.Response:
     """
     GET a small body with retry on 429/5xx and disconnects.
 
     ``refresh_headers`` re-resolves the credential once on a 401/403 so a rotation
     mid-backfill does not fail the run.
+
+    ``skip_url_check`` suppresses the ``check_url`` guard (use only in tests or
+    when the caller has already validated the URL).
     """
+    if not skip_url_check:
+        check_url(url)
     own_session = session is None
     sess = session or requests.Session()
     last_exc: BaseException | None = None
@@ -188,6 +239,8 @@ def http_get_file(
     encoding: str | None = None,
     session: requests.Session | None = None,
     refresh_headers: Callable[[], dict[str, str]] | None = None,
+    max_bytes: int = DEFAULT_MAX_FILE_BYTES,
+    skip_url_check: bool = False,
 ) -> int:
     """
     Stream GET to *dest* with retry. Unlink dest before each attempt.
@@ -197,7 +250,12 @@ def http_get_file(
 
     Object-store dests download to a local tempfile, verify, then upload so a
     truncated gzip is never PUT.
+
+    ``max_bytes`` caps the download size (default 2 GiB). Set to 0 to disable.
+    ``skip_url_check`` suppresses the ``check_url`` guard (use only in tests).
     """
+    if not skip_url_check:
+        check_url(url)
     if isinstance(dest, LakeRef) and not dest.is_local:
         return _http_get_file_remote(
             url,
@@ -209,6 +267,7 @@ def http_get_file(
             encoding=encoding,
             session=session,
             refresh_headers=refresh_headers,
+            max_bytes=max_bytes,
         )
     local = dest.to_path() if isinstance(dest, LakeRef) else Path(dest)
     return _http_get_file_local(
@@ -221,6 +280,7 @@ def http_get_file(
         encoding=encoding,
         session=session,
         refresh_headers=refresh_headers,
+        max_bytes=max_bytes,
     )
 
 
@@ -235,6 +295,7 @@ def _http_get_file_local(
     encoding: str | None,
     session: requests.Session | None,
     refresh_headers: Callable[[], dict[str, str]] | None = None,
+    max_bytes: int = DEFAULT_MAX_FILE_BYTES,
 ) -> int:
     own_session = session is None
     sess = session or requests.Session()
@@ -251,6 +312,7 @@ def _http_get_file_local(
                     timeout=timeout,
                     headers=headers,
                     log_every=log_every,
+                    max_bytes=max_bytes,
                 )
                 if _want_gzip(dest, encoding):
                     verify_gzip(dest)
@@ -306,6 +368,7 @@ def _http_get_file_remote(
     encoding: str | None,
     session: requests.Session | None,
     refresh_headers: Callable[[], dict[str, str]] | None = None,
+    max_bytes: int = DEFAULT_MAX_FILE_BYTES,
 ) -> int:
     own_session = session is None
     sess = session or requests.Session()
@@ -327,6 +390,7 @@ def _http_get_file_remote(
                         timeout=timeout,
                         headers=headers,
                         log_every=log_every,
+                        max_bytes=max_bytes,
                     )
                     if _want_gzip(dest, encoding):
                         verify_gzip(tmp_path)
@@ -389,6 +453,7 @@ def _stream_once(
     timeout: float | tuple[float, float],
     headers: dict[str, str] | None,
     log_every: int,
+    max_bytes: int = DEFAULT_MAX_FILE_BYTES,
 ) -> int:
     dest.parent.mkdir(parents=True, exist_ok=True)
     downloaded = 0
@@ -404,6 +469,10 @@ def _stream_once(
                 raise HttpIntegrityError(
                     f"{url}: invalid Content-Length {length_header!r}"
                 ) from exc
+            if max_bytes > 0 and expected > max_bytes:
+                raise HttpIntegrityError(
+                    f"{url}: Content-Length {expected} exceeds max_bytes={max_bytes}"
+                )
             logger.info("http download size", url=url, bytes=expected, dest=dest.name)
         with dest.open("wb") as out:
             for chunk in response.iter_content(chunk_size=_STREAM_CHUNK):
@@ -411,6 +480,10 @@ def _stream_once(
                     continue
                 out.write(chunk)
                 downloaded += len(chunk)
+                if max_bytes > 0 and downloaded > max_bytes:
+                    raise HttpIntegrityError(
+                        f"{url}: download exceeded max_bytes={max_bytes} after {downloaded} bytes"
+                    )
                 if log_every >= 1 and downloaded - last_logged >= log_every:
                     logger.info(
                         "http download progress",

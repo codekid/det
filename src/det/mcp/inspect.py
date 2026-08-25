@@ -15,6 +15,7 @@ from det.destinations.models import (
     raw_dataset_dir,
 )
 from det.mcp.context import PathSandboxError, project_root, resolve_under_root
+from det.mcp.errors import sanitize_detail
 from det.optional_deps import require_duckdb
 from det.plugins import load_plugins
 from det.runtime.coerce import CoerceError, coerce_record
@@ -246,8 +247,9 @@ def _list_bronze_sql_runs(
         try:
             dsn = postgres_dsn(dest, backend="env")
         except (SecretError, ValueError) as exc:
-            return [], str(exc)
-        with psycopg.connect(dsn) as conn:
+            return [], sanitize_detail(exc)
+        _ro = "-c default_transaction_read_only=on"
+        with psycopg.connect(dsn, options=_ro) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -1050,7 +1052,7 @@ def _sample_bronze_postgres(
         return {
             **base_out,
             "rows": [],
-            "errors": [{"message": str(exc)}],
+            "errors": [{"message": sanitize_detail(exc)}],
             "truncated": False,
         }
 
@@ -1065,7 +1067,8 @@ def _sample_bronze_postgres(
         f"order by __extract_run_datetime "
         f"limit %s"
     )
-    with psycopg.connect(dsn) as conn:
+    _ro = "-c default_transaction_read_only=on"
+    with psycopg.connect(dsn, options=_ro) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """

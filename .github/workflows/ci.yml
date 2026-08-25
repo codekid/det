@@ -86,12 +86,14 @@ jobs:
       - name: Install
         # mcp + examples/duckdb/scaffold: product extras; dbt + postgres match prod.
         # s3 + gcs + iceberg: object-lake soaks.
+        # bigquery: BigLake connection-SA lookup path (skipped without it).
         # avoid --system (PEP 668 on ubuntu-latest)
         run: >
           uv sync
           --extra dev --extra mcp --extra dbt --extra postgres
           --extra iceberg --extra s3 --extra gcs
           --extra examples --extra duckdb --extra scaffold
+          --extra bigquery
       - name: Lint
         run: uv run ruff check .
       - name: Structure check

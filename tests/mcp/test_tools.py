@@ -8,6 +8,7 @@ import yaml
 
 from det.mcp.context import PathSandboxError
 from det.mcp.tools import (
+    biglake_register_dry_run,
     check,
     describe_pipeline,
     init_pipeline_dry_run,
@@ -22,6 +23,7 @@ from det.mcp.tools import (
     scaffold_dbt_dry_run,
     summarize_runs,
 )
+from det.runtime.biglake_register import BigLakeRegisterPlan, BigLakeTablePlan
 from det.runtime.meta import to_partition_value
 
 
@@ -291,3 +293,50 @@ def test_list_approvals_empty_on_tmp_root(tmp_path: Path):
     listed = list_approvals(root=tmp_path)
     assert listed["approvals"] == []
     assert listed["project_root"] == str(tmp_path.resolve())
+
+
+def test_biglake_register_dry_run_returns_iam_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The success path must build an IAM hint and an approval plan.
+
+    A gs:// lake cannot be reached from a unit test, so the plan builder is
+    stubbed; ``build_iam_hint`` stays real so a missing import in the tool
+    module fails here instead of at the agent.
+    """
+    plan = BigLakeRegisterPlan(
+        project="proj",
+        location="US",
+        connection="det-lake-conn",
+        lake_uri="gs://b/lake",
+        tables=(
+            BigLakeTablePlan(
+                bq_dataset="bronze_example_api",
+                bq_table="events_v1",
+                table_location="gs://b/lake/bronze/example_api/events_v1",
+                metadata_uri=(
+                    "gs://b/lake/bronze/example_api/events_v1"
+                    "/metadata/00001-abc.metadata.json"
+                ),
+                kind="bronze",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "det.runtime.biglake_register.build_biglake_register_plan",
+        lambda **kwargs: plan,
+    )
+    monkeypatch.setattr(
+        "det.runtime.biglake_register._lookup_connection_sa",
+        lambda *a, **k: None,
+    )
+
+    payload = biglake_register_dry_run(lake_path="gs://b/lake", root=tmp_path)
+
+    assert payload["project"] == "proj"
+    assert payload["lake_uri"] == "gs://b/lake"
+    assert payload["tables"][0]["bq_table"] == "events_v1"
+    assert payload["iam_hint"]["bucket"] == "b"
+    assert payload["approval_plan"]["command"] == "biglake-register"
+    assert "--apply" in payload["approval_plan"]["argv"]
+    assert "no BigLake tables created" in payload["note"]

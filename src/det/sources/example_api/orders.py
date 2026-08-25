@@ -12,6 +12,7 @@ from det.sources.base import Interval, SourceRow
 from det.sources.http_json import (
     dig,
     nest_under_path,
+    paginate_capped,
     source_bearer_token,
     write_json_page,
 )
@@ -224,10 +225,13 @@ class ExampleApiOrdersSource:
         params = {"start": interval.start, "end": interval.end}
         logger.info("Fetching example API orders", path=config["path"], params=params)
         artifacts: list[dict[str, Any]] = []
-        page_num = 0
-        for page in client.paginate(config["path"], params=params):
+        max_pages = int(config.get("max_pages") or 2000)
+        for page_num, page in paginate_capped(
+            client.paginate(config["path"], params=params),
+            max_pages=max_pages,
+            source_name=self.name,
+        ):
             rows = [row for row in page if isinstance(row, dict)]
-            page_num += 1
             artifacts.append(
                 write_json_page(
                     pages_dir=pages_dir,

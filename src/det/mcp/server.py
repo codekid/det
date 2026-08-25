@@ -336,9 +336,9 @@ def create_server():
     def biglake_register_dry_run(
         pipeline: p.PipelineRefOpt = None,
         lake_path: p.LakePathOpt = None,
-        project: str | None = None,
-        location: str | None = None,
-        connection: str | None = None,
+        project: p.GcpProjectOpt = None,
+        location: p.BqLocationOpt = None,
+        connection: p.BqConnectionOpt = None,
         skip_ops: bool = False,
     ) -> dict[str, Any]:
         """Preview BigLake Iceberg registration for gs:// lakes (never creates BQ tables)."""

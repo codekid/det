@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 import requests
 
-from det.sources.http import HttpError, HttpIntegrityError, http_get, http_get_file
+from det.sources.http import (
+    HttpError,
+    HttpIntegrityError,
+    check_url,
+    http_get,
+    http_get_file,
+)
 
 
 class FakeResponse:
@@ -279,3 +285,86 @@ def test_http_get_does_not_retry_404(monkeypatch):
     with pytest.raises(requests.HTTPError):
         http_get("https://example/missing", timeout=1, max_attempts=4)
     assert calls["n"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# check_url — SSRF guard
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.example.com/v1",
+        "http://api.example.com/v1",
+        "https://10.0.0.1.evil.example.com/trick",
+    ],
+)
+def test_check_url_allows_valid_urls(url: str):
+    check_url(url)  # must not raise
+
+
+@pytest.mark.parametrize(
+    "url,match",
+    [
+        ("file:///etc/passwd", "scheme"),
+        ("ftp://ftp.example.com", "scheme"),
+        ("http://127.0.0.1/admin", "non-routable"),
+        ("https://169.254.169.254/latest/meta-data/", "non-routable"),
+        ("http://10.0.0.1/internal", "non-routable"),
+        ("https://192.168.1.100/secret", "non-routable"),
+        ("http://[::1]/loopback", "non-routable"),
+    ],
+)
+def test_check_url_blocks_bad_urls(url: str, match: str):
+    with pytest.raises(HttpError, match=match):
+        check_url(url)
+
+
+# --------------------------------------------------------------------------- #
+# Byte ceiling — _stream_once / http_get_file
+# --------------------------------------------------------------------------- #
+
+
+def test_http_get_file_enforces_max_bytes_via_content_length(monkeypatch, tmp_path: Path):
+    dest = tmp_path / "big.bin"
+    big = b"x" * 100
+    _patch_gets(
+        monkeypatch,
+        [FakeResponse(200, content=big, headers={"Content-Length": str(len(big))})],
+    )
+    with pytest.raises(HttpIntegrityError, match="exceeds max_bytes"):
+        http_get_file(
+            "https://example/big.bin",
+            dest,
+            timeout=1,
+            max_attempts=1,
+            max_bytes=50,
+        )
+
+
+def test_http_get_file_enforces_max_bytes_during_stream(monkeypatch, tmp_path: Path):
+    dest = tmp_path / "big.bin"
+    big = b"x" * 200
+    _patch_gets(monkeypatch, [FakeResponse(200, content=big)])
+    with pytest.raises(HttpIntegrityError, match="max_bytes"):
+        http_get_file(
+            "https://example/big.bin",
+            dest,
+            timeout=1,
+            max_attempts=1,
+            max_bytes=100,
+        )
+
+
+def test_http_get_file_max_bytes_zero_disables_ceiling(monkeypatch, tmp_path: Path):
+    dest = tmp_path / "big.bin"
+    big = b"x" * 10_000
+    _patch_gets(
+        monkeypatch,
+        [FakeResponse(200, content=big, headers={"Content-Length": str(len(big))})],
+    )
+    n = http_get_file(
+        "https://example/big.bin", dest, timeout=1, max_attempts=1, max_bytes=0
+    )
+    assert n == len(big)
