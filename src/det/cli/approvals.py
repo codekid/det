@@ -9,6 +9,7 @@ from det.cli.common import (
     _PROJECT_ROOT_HELP,
     _project_root,
 )
+from det.runtime.approval import ENV_APPROVED_BY
 
 
 @app.command("approve")
@@ -113,16 +114,80 @@ def approval_show_cmd(
     typer.echo(json.dumps(record, indent=2))
 
 
+_STATUSES = ("unused", "claimed", "consumed", "expired")
+
+
 @app.command("list-approvals")
 def list_approvals_cmd(
+    status: list[str] = typer.Option(
+        [],
+        "--status",
+        help=f"Filter by derived status (repeatable): {', '.join(_STATUSES)}. Default: unused",
+    ),
+    all_: bool = typer.Option(False, "--all", help="Every record regardless of status"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
 ) -> None:
-    """List unused, unexpired approvals under .det/approvals/."""
+    """List approvals under .det/approvals/ (defaults to unused, unexpired).
+
+    Use `--status claimed` to find an approval left stuck by a crashed run; a
+    claimed record never expires, so it will not show up in the default listing.
+    """
     import json
 
-    from det.runtime.approval import list_unused_approvals
+    from det.runtime.approval import list_approval_records
+
+    if all_ and status:
+        raise typer.BadParameter("use --all or --status, not both", param_hint="--all")
+    unknown = sorted(set(status) - set(_STATUSES))
+    if unknown:
+        raise typer.BadParameter(
+            f"unknown status {', '.join(unknown)} (want {', '.join(_STATUSES)})",
+            param_hint="--status",
+        )
 
     root = _project_root(project_root)
-    records = list_unused_approvals(root)
+    statuses = None if all_ else tuple(status or ("unused",))
+    records = list_approval_records(root, statuses=statuses)
     typer.echo(json.dumps({"approvals": records}, indent=2))
+
+
+@app.command("approval-release")
+def approval_release_cmd(
+    approval_id: str = typer.Argument(..., help="Approval id (apr_…) stuck in claimed"),
+    force: bool = typer.Option(
+        False, "--force", help="Required; confirms the claiming run is dead"
+    ),
+    released_by: str | None = typer.Option(
+        None,
+        "--released-by",
+        help=f"Who released it (or set {ENV_APPROVED_BY}); recorded on the file",
+    ),
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+) -> None:
+    """Hand a claimed approval back after its run died. Operator-only.
+
+    Kill the worker first. Releasing an approval whose run is still going
+    reopens the double-write window that claiming exists to close.
+
+    This is not a TTL bypass: the record returns to unused, so an approval that
+    expired while claimed stays dead. It is also deliberately not gated on an
+    approval — the recovery path must not depend on the mechanism that is stuck.
+    """
+    import json
+
+    from det.runtime.approval import ApprovalError, approved_by_from_env, release_approval
+
+    if not force:
+        raise typer.BadParameter(
+            "--force is required; make sure the claiming run is dead first",
+            param_hint="--force",
+        )
+    root = _project_root(project_root)
+    who = (released_by or approved_by_from_env() or "").strip()
+    try:
+        record = release_approval(root, approval_id, released_by=who)
+    except ApprovalError as exc:
+        typer.echo(f"{exc.code}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(json.dumps(record, indent=2))
 

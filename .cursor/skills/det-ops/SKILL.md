@@ -201,4 +201,9 @@ value, do not paste it into YAML.
 - Ref and interval form do not matter (`noaa/storm_events` == `noaa.storm_events`;
   `2026-08-06` == `2026-08-06T00:00:00+00:00`) — both are canonicalized.
 - Approvals are single-use and claimed atomically. If a run crashes mid-write the
-  record stays `claimed`; re-approve rather than trying to release it.
+  record stays `claimed` and never expires, so it is hidden from the default
+  listing — find it with `det list-approvals --status claimed` or MCP
+  `list_approvals` `status="claimed"`. Recovery is a fresh approval, or the
+  operator running `det approval-release <id> --force` once the worker is
+  confirmed dead. Do not propose releasing an approval whose run may still be
+  alive, and do not delete records by hand.

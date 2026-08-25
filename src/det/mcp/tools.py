@@ -1039,13 +1039,32 @@ def check(
     return findings_payload(findings)
 
 
-def list_approvals(*, root: Path | None = None) -> dict[str, Any]:
-    """Unused, unexpired approval records (MCP never creates these files)."""
+def list_approvals(
+    status: str | None = None,
+    *,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Approval records (MCP never creates these files).
+
+    Defaults to unused, unexpired. Pass ``status="claimed"`` to find an approval
+    left stuck by a crashed run — claimed records never expire, so they do not
+    appear in the default listing.
+    """
     _prepare_tool()
-    from det.runtime.approval import list_unused_approvals
+    from det.runtime.approval import list_approval_records
+
+    valid = {"unused", "claimed", "consumed", "expired", "all"}
+    wanted = (status or "unused").strip().lower()
+    if wanted not in valid:
+        raise ValueError(f"status must be one of {sorted(valid)}, got {status!r}")
 
     base = _root(root)
-    return {"project_root": str(base), "approvals": list_unused_approvals(base)}
+    statuses = None if wanted == "all" else (wanted,)
+    return {
+        "project_root": str(base),
+        "status": wanted,
+        "approvals": list_approval_records(base, statuses=statuses),
+    }
 
 
 def describe_approval(approval_id: str, *, root: Path | None = None) -> dict[str, Any]:

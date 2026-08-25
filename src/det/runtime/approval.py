@@ -25,6 +25,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
+from det.logging import get_logger
+
+logger = get_logger(__name__)
+
 DEFAULT_TTL_SEC = 3600
 ENV_REQUIRE = "DET_REQUIRE_APPROVAL"
 ENV_APPROVED_BY = "DET_APPROVED_BY"
@@ -234,20 +238,36 @@ def load_approval(project_root: Path, approval_id: str) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def list_unused_approvals(
-    project_root: Path, *, now: datetime | None = None
+def list_approval_records(
+    project_root: Path,
+    *,
+    statuses: Sequence[str] | None = None,
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
+    """Approval records with status derived at read time.
+
+    ``statuses`` filters on the derived status; ``None`` returns everything. A
+    ``claimed`` record is otherwise invisible — it never ages into ``expired``
+    (see ``effective_status``) — so an operator whose run crashed needs this to
+    find it.
+    """
     folder = approvals_dir(project_root)
     if not folder.is_dir():
         return []
+    wanted = set(statuses) if statuses is not None else None
     found: list[dict[str, Any]] = []
     for path in sorted(folder.glob("apr_*.json")):
-        rec = json.loads(path.read_text(encoding="utf-8"))
-        rec = dict(rec)
+        rec = dict(json.loads(path.read_text(encoding="utf-8")))
         rec["status"] = effective_status(rec, now=now)
-        if rec["status"] == "unused":
+        if wanted is None or rec["status"] in wanted:
             found.append(rec)
     return found
+
+
+def list_unused_approvals(
+    project_root: Path, *, now: datetime | None = None
+) -> list[dict[str, Any]]:
+    return list_approval_records(project_root, statuses=("unused",), now=now)
 
 
 def check_approval(
@@ -348,6 +368,63 @@ def claim_approval(
     rec["claimed_at"] = stamp
     rec["claimed_by"] = who
     _write_record(project_root, rec)
+    return rec
+
+
+def release_approval(
+    project_root: Path,
+    approval_id: str,
+    *,
+    released_by: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Hand a stuck ``claimed`` approval back for one more attempt.
+
+    A run that dies between claim and consume leaves the record ``claimed``
+    forever, since a claim never ages out. This is the operator escape hatch,
+    deliberately shaped like ``force_release_lock`` for lake leases: explicit,
+    manual, and recorded.
+
+    It is **not** a TTL bypass. The record returns to ``unused``, so if
+    ``expires_at`` has already passed, ``effective_status`` reports ``expired``
+    and the approval is dead anyway — releasing cannot extend a lifetime.
+
+    Only ``claimed`` records can be released. There is intentionally no automatic
+    or TTL-driven release: that would silently reopen the double-write window
+    that claiming exists to close.
+    """
+    who = (released_by or "").strip()
+    if not who:
+        raise ApprovalError(
+            "approval_identity_required",
+            f"--released-by or {ENV_APPROVED_BY} is required to release an approval",
+        )
+    rec = load_approval(project_root, approval_id)
+    status = effective_status(rec, now=now)
+    if status != "claimed":
+        raise ApprovalError(
+            "approval_not_claimed",
+            f"approval {approval_id} is {status}, only a claimed approval can be released",
+        )
+
+    _claim_path(project_root, approval_id).unlink(missing_ok=True)
+    rec["status"] = "unused"
+    rec["released_at"] = _iso(now or utcnow())
+    rec["released_by"] = who
+    # Keep the claim we tore down; the point of releasing is the audit trail.
+    rec["released_from_claim"] = {
+        "claimed_at": rec.pop("claimed_at", None),
+        "claimed_by": rec.pop("claimed_by", None),
+    }
+    _write_record(project_root, rec)
+    logger.warning(
+        "released a claimed approval",
+        approval_id=approval_id,
+        released_by=who,
+        prior_claim=rec["released_from_claim"],
+        command=rec.get("command"),
+        expires_at=rec.get("expires_at"),
+    )
     return rec
 
 

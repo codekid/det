@@ -41,7 +41,8 @@ def create_server():
             "query_analytics warehouse=ops. "
             "Dry-runs that preview a write include approval_plan (command, argv, "
             "plan_digest). Operator: det approve --plan; agent writes later with "
-            "--approval. Inspect unused records: list_approvals / describe_approval. "
+            "--approval. Inspect records: list_approvals (status=claimed finds one "
+            "stuck by a crashed run) / describe_approval. "
             "biglake_register_dry_run previews BigLake registration (never writes). "
             "Prompts det_ops / det_new_source / det_migrate / det_dbt / det_airflow "
             "load .cursor/skills playbooks. "
@@ -454,9 +455,13 @@ def create_server():
         return t.check(pipeline)
 
     @mcp.tool()
-    def list_approvals() -> dict[str, Any]:
-        """List unused, unexpired approval files under .det/approvals/. Never creates them."""
-        return t.list_approvals()
+    def list_approvals(status: p.ApprovalStatusOpt = None) -> dict[str, Any]:
+        """List approval files under .det/approvals/. Never creates them.
+
+        Defaults to unused, unexpired. Pass status="claimed" to find an approval
+        stuck by a crashed run; recovery is `det approval-release <id> --force`.
+        """
+        return t.list_approvals(status)
 
     @mcp.tool()
     def describe_approval(approval_id: p.ApprovalId) -> dict[str, Any]:

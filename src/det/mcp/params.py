@@ -286,6 +286,16 @@ ApprovalId = Annotated[
     str,
     Field(description="Approval id from `det approve` (apr_ + 16 hex chars)"),
 ]
+ApprovalStatusOpt = Annotated[
+    str | None,
+    Field(
+        description=(
+            "Filter approvals by derived status: unused (default), claimed, "
+            "consumed, expired, or all. Use claimed to find an approval left "
+            "stuck by a crashed run — claimed records never expire"
+        )
+    ),
+]
 GcpProjectOpt = Annotated[
     str | None,
     Field(
