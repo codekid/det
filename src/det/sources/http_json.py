@@ -6,6 +6,7 @@ SemVer-stable plugin helpers (not re-exported on top-level ``det``). See ``docs/
 from __future__ import annotations
 
 import json
+from collections.abc import Generator, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -14,12 +15,45 @@ from det.runtime.lake import LakeRef
 from det.runtime.manifest import sha256_file
 from det.runtime.secrets import HTTP_TOKEN_KEYS, resolve_secret, source_secret_names
 
+# Hard cap on the number of pages a paginating source may fetch per run.
+# Override via the pipeline YAML ``max_pages`` key or by passing max_pages
+# explicitly to ``paginate_capped``.
+DEFAULT_MAX_PAGES: int = 2000
+
 __all__ = [
+    "DEFAULT_MAX_PAGES",
     "dig",
     "nest_under_path",
+    "paginate_capped",
     "source_bearer_token",
     "write_json_page",
 ]
+
+
+def paginate_capped(
+    pages: Iterable[Any],
+    *,
+    max_pages: int = DEFAULT_MAX_PAGES,
+    source_name: str = "",
+) -> Generator[tuple[int, Any], None, None]:
+    """Yield ``(page_number, page)`` from *pages*, raising after *max_pages* pages.
+
+    Wrap any ``RESTClient.paginate()`` call with this generator to prevent a
+    misconfigured paginator or a misbehaving API from looping forever.
+
+    .. code-block:: python
+
+        for page_num, page in paginate_capped(client.paginate(path, params=p)):
+            ...
+    """
+    for page_num, page in enumerate(pages, start=1):
+        if page_num > max_pages:
+            label = f" ({source_name})" if source_name else ""
+            raise RuntimeError(
+                f"pagination cap of {max_pages} pages exceeded{label}; "
+                "increase max_pages in the pipeline config or check for a runaway paginator"
+            )
+        yield page_num, page
 
 
 def source_bearer_token(config: dict[str, Any], *, source_name: str) -> str | None:

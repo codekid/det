@@ -9,7 +9,7 @@ from det.logging import get_logger
 from det.optional_deps import require_dlt_rest
 from det.runtime.lake import LakeRef
 from det.sources.base import Interval, SourceRow
-from det.sources.http_json import dig, write_json_page
+from det.sources.http_json import DEFAULT_MAX_PAGES, dig, paginate_capped, write_json_page
 
 logger = get_logger(__name__)
 
@@ -141,12 +141,13 @@ class OpenLibrarySubjectsSource:
             interval_end=interval.end,
         )
         artifacts: list[dict[str, Any]] = []
-        page_num = 0
-        for page in client.paginate(
-            path, params=params or None, data_selector=record_path
+        cap = int(max_pages) if max_pages is not None else DEFAULT_MAX_PAGES
+        for page_num, page in paginate_capped(
+            client.paginate(path, params=params or None, data_selector=record_path),
+            max_pages=cap,
+            source_name="openlibrary.subjects",
         ):
             rows = [dict(row) for row in page if isinstance(row, dict)]
-            page_num += 1
             artifacts.append(
                 write_json_page(
                     pages_dir=pages_dir,

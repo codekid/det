@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from det.mcp.context import project_root
+from det.mcp.errors import sanitize_detail
 from det.mcp.inspect import clamp_sample_limit
 from det.optional_deps import require_duckdb
 from det.runtime.lake import relpath as lake_relpath
@@ -24,6 +25,26 @@ _FORBIDDEN = re.compile(
     r"install\s+|export\s+|import\s+|vacuum\b|checkpoint\b|"
     r"grant\s+|revoke\s+|execute\s+"
     r")",
+    re.IGNORECASE,
+)
+
+# Table functions that can read arbitrary local files or make network requests.
+# These are matched in the SQL body as a secondary guard; the primary guard is
+# the DuckDB connection-level disabled_filesystems / enable_external_access.
+_TABLE_FUNCTIONS = re.compile(
+    r"\b("
+    # File readers
+    r"read_csv|read_csv_auto|read_parquet|read_text|read_json|read_json_auto|"
+    r"read_ndjson|read_ndjson_auto|read_blob|"
+    # Legacy aliases
+    r"parquet_scan|csv_scan|"
+    # Iceberg / Delta lake table functions
+    r"iceberg_scan|iceberg_metadata|iceberg_snapshots|delta_scan|read_delta|"
+    # Filesystem introspection
+    r"glob|"
+    # Cross-DB connectors
+    r"postgres_scan|postgres_query|mysql_scan|sqlite_scan|sqlite_attach"
+    r")\s*\(",
     re.IGNORECASE,
 )
 _FROM_JOIN = re.compile(
@@ -99,6 +120,12 @@ def _reject_sql(sql: str) -> str | None:
         return "only SELECT / WITH statements are allowed"
     if _FORBIDDEN.search(body):
         return "statement contains a forbidden keyword"
+    if _TABLE_FUNCTIONS.search(body):
+        return (
+            "table functions are not allowed "
+            "(read_csv, read_parquet, glob, iceberg_scan, …); "
+            "query schema.table relations instead"
+        )
     return None
 
 
@@ -173,6 +200,13 @@ def query_analytics(
     duckdb = require_duckdb()
     con = duckdb.connect(str(db_path), read_only=True)
     try:
+        # Lock down the connection before running user SQL.
+        # These settings block read_csv/glob/HTTP even if the regex guard above
+        # is bypassed (e.g. via a crafted CTE or an unknown table function).
+        # All three settings are available in DuckDB ≥ 1.0; the project requires ≥ 1.5.1.
+        con.execute("SET enable_external_access = false")
+        con.execute("SET disabled_filesystems = 'LocalFileSystem'")
+        con.execute("SET lock_configuration = true")
         result = con.execute(wrapped)
         cols = [d[0] for d in result.description]
         fetched = result.fetchall()
@@ -181,7 +215,7 @@ def query_analytics(
             **out,
             "ok": False,
             "error": "query_failed",
-            "detail": str(exc),
+            "detail": sanitize_detail(exc),
             "rows": [],
         }
     finally:

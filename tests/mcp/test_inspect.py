@@ -357,7 +357,7 @@ def _install_fake_psycopg(monkeypatch) -> list[str]:
     seen: list[str] = []
     module = types.ModuleType("psycopg")
 
-    def connect(dsn):
+    def connect(dsn, **_kwargs):
         seen.append(dsn)
         return _FakePgConn(dsn)
 
