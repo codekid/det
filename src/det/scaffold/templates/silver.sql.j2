@@ -6,6 +6,19 @@
         unique_key={{ silver.unique_key | tojson }},
         incremental_strategy={{ '{{' }} 'merge' if target.name == 'bigquery' else '{{ silver.incremental_strategy }}' {{ '}}' }},
 {%- endif %}
+{%- if silver.bigquery and silver.bigquery.has_layout() %}
+        {{ '{% if target.name == \'bigquery\' %}' }}
+{%- if silver.bigquery.partition_by %}
+        partition_by={{ silver.bigquery.partition_by.to_dbt_dict() | tojson }},
+{%- endif %}
+{%- if silver.bigquery.cluster_by %}
+        cluster_by={{ silver.bigquery.cluster_by | tojson }},
+{%- endif %}
+{%- if silver.bigquery.require_partition_filter %}
+        require_partition_filter=true,
+{%- endif %}
+        {{ '{% endif %}' }}
+{%- endif %}
     )
 {{ '}}' }}
 

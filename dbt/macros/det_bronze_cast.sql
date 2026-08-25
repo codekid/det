@@ -13,9 +13,9 @@
   cast({{ det_bq_col(col) }} as string)
   {% else %}
   case
-    when {{ col }} is null then null
-    when typeof({{ col }}) = 'JSON' then json_extract_string({{ col }}, '$')
-    else cast({{ col }} as varchar)
+    when "{{ col }}" is null then null
+    when typeof("{{ col }}") = 'JSON' then json_extract_string("{{ col }}", '$')
+    else cast("{{ col }}" as varchar)
   end
   {% endif %}
 )

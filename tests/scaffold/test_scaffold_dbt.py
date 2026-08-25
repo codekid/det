@@ -8,6 +8,9 @@ from pydantic import ValidationError
 
 from det.runtime.config import DbtStgConfig, load_pipeline_config
 from det.scaffold.dbt import (
+    _is_identity_name,
+    _order_stg_select_columns,
+    _ordered_meta_columns,
     format_read_json_columns,
     read_json_columns_from_schema,
     scaffold_dbt,
@@ -70,6 +73,83 @@ def test_stg_columns_typed_macros_and_meta_appended():
     assert by_name["state"] == "{{ det_as_string('state') }} as state"
     assert by_name["magnitude"] == "{{ det_as_double('magnitude') }} as magnitude"
     assert by_name["__row_hash"] == "__row_hash"
+    names = [c["name"] for c in cols]
+    assert names[0] == "event_id"
+    assert names.index("magnitude") < names.index("state")
+    assert names.index("__row_hash") < names.index("__bronze_loaded_at")
+    assert names.index("__row_hash") < names.index("__filename")
+
+
+def test_is_identity_name_heuristic():
+    assert _is_identity_name("id")
+    assert _is_identity_name("event_id")
+    assert _is_identity_name("key")
+    assert _is_identity_name("subject_key")
+    assert not _is_identity_name("status")
+    assert not _is_identity_name("__row_hash")
+    assert not _is_identity_name("begin_day")
+
+
+def test_order_stg_select_columns_identity_payload_meta():
+    cols = [
+        {"name": "state", "expr": "state"},
+        {"name": "begin_day", "expr": "begin_day"},
+        {"name": "episode_id", "expr": "episode_id"},
+        {"name": "event_id", "expr": "event_id"},
+    ]
+    ordered = _order_stg_select_columns(cols, unique_key=["event_id"])
+    names = [c["name"] for c in ordered]
+    assert names[:4] == ["episode_id", "event_id", "begin_day", "state"]
+    meta = _ordered_meta_columns()
+    assert meta[0] == "__row_hash"
+    assert meta == ["__row_hash"] + sorted(m for m in meta if m != "__row_hash")
+    assert names[names.index("__row_hash") :] == meta
+
+
+def test_scaffold_stg_sql_column_order(tmp_path: Path):
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": ["event_id"],
+        "properties": {
+            "begin_day": {"type": "integer"},
+            "zebra": {"type": "string"},
+            "event_id": {"type": "integer"},
+            "apple": {"type": "string"},
+        },
+        "additionalProperties": False,
+    }
+    schema_path = tmp_path / "schemas" / "noaa" / "storm_events" / "storm_events.schema.yaml"
+    schema_path.parent.mkdir(parents=True)
+    schema_path.write_text(yaml.safe_dump(schema), encoding="utf-8")
+    pipeline = tmp_path / "configs" / "pipelines" / "noaa" / "storm_events.yaml"
+    pipeline.parent.mkdir(parents=True)
+    pipeline.write_text(
+        """
+name: noaa.storm_events
+source:
+  type: noaa.storm_events
+schema: schemas/noaa/storm_events/storm_events.schema.yaml
+dbt:
+  silver:
+    unique_key: [event_id]
+destination:
+  type: filesystem
+  path: ./data/lake
+""",
+        encoding="utf-8",
+    )
+    config = load_pipeline_config(pipeline)
+    models = tmp_path / "dbt" / "models" / "silver"
+    scaffold_dbt(config, project_root=tmp_path, dbt_models_dir=models)
+    stg = (models / "stg_noaa__storm_events.sql").read_text(encoding="utf-8")
+    eid = stg.index("as event_id")
+    assert eid < stg.index("as apple")
+    assert eid < stg.index("as begin_day")
+    assert stg.index("as apple") < stg.index("as begin_day")
+    assert stg.index("as begin_day") < stg.index("as zebra")
+    assert stg.index("__row_hash") < stg.index("__bronze_loaded_at")
+    assert stg.index("__row_hash") < stg.index("__filename")
 
 
 def test_read_json_columns_from_schema_includes_meta():
@@ -432,3 +512,107 @@ destination:
     assert "**/data.jsonl" not in sources_text
     assert "storm_events_v1" in sources_text
     assert 'env_var("DET_LAKE_PATH"' in sources_text or "env_var('DET_LAKE_PATH'" in sources_text
+
+
+def test_scaffold_silver_omits_bigquery_layout_when_unset(tmp_path: Path):
+    pipeline = _write_mini_project(tmp_path)
+    config = load_pipeline_config(pipeline)
+    models = tmp_path / "dbt" / "models" / "silver"
+    scaffold_dbt(config, project_root=tmp_path, dbt_models_dir=models)
+    silver = (models / "silver_noaa__storm_events.sql").read_text(encoding="utf-8")
+    assert "cluster_by=" not in silver
+    assert "require_partition_filter" not in silver
+    assert '"field":' not in silver
+    assert "partition_by={" not in silver
+
+
+def test_scaffold_silver_emits_bigquery_partition_cluster(tmp_path: Path):
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+            "id": {"type": "integer"},
+            "abilities": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "slot": {"type": "integer"},
+                        "is_hidden": {"type": "boolean"},
+                    },
+                },
+            },
+        },
+        "additionalProperties": False,
+    }
+    schema_path = (
+        tmp_path / "schemas" / "pokeapi" / "pokemon" / "pokemon.schema.yaml"
+    )
+    schema_path.parent.mkdir(parents=True)
+    schema_path.write_text(yaml.safe_dump(schema), encoding="utf-8")
+    pipeline = tmp_path / "configs" / "pipelines" / "pokeapi" / "pokemon.yaml"
+    pipeline.parent.mkdir(parents=True)
+    pipeline.write_text(
+        """
+name: pokeapi.pokemon
+source:
+  type: pokeapi.pokemon
+schema: schemas/pokeapi/pokemon/pokemon.schema.yaml
+dbt:
+  silver:
+    materialized: incremental
+    unique_key: [id]
+    order_by: ["__extract_run_datetime desc"]
+    watermark: __extract_run_datetime
+    bigquery:
+      partition_by:
+        field: __extract_run_datetime
+        data_type: timestamp
+        granularity: day
+      cluster_by: [id]
+      require_partition_filter: true
+  stg:
+    relations:
+      abilities:
+        path: abilities
+        materialized: table
+        parent_key: id
+        grain: [slot]
+        bigquery:
+          partition_by:
+            field: __extract_run_datetime
+            data_type: timestamp
+            granularity: day
+          cluster_by: [id, abilities__slot]
+destination:
+  type: filesystem
+  path: ./data/lake
+""",
+        encoding="utf-8",
+    )
+    config = load_pipeline_config(pipeline)
+    assert config.dbt.silver.bigquery is not None
+    assert config.dbt.silver.bigquery.require_partition_filter is True
+    assert config.dbt.stg.relations["abilities"].bigquery is not None
+
+    models = tmp_path / "dbt" / "models" / "silver"
+    scaffold_dbt(config, project_root=tmp_path, dbt_models_dir=models, warn=False)
+
+    silver = (models / "silver_pokeapi__pokemon.sql").read_text(encoding="utf-8")
+    assert "target.name == 'bigquery'" in silver
+    assert "partition_by=" in silver
+    assert '"field": "__extract_run_datetime"' in silver
+    assert '"data_type": "timestamp"' in silver
+    assert '"granularity": "day"' in silver
+    assert 'cluster_by=["id"]' in silver
+    assert "require_partition_filter=true" in silver
+
+    rel = (models / "silver_pokeapi__pokemon__abilities.sql").read_text(
+        encoding="utf-8"
+    )
+    assert 'materialized="table"' in rel
+    assert "target.name == 'bigquery'" in rel
+    assert '"field": "__extract_run_datetime"' in rel
+    assert 'cluster_by=["id", "abilities__slot"]' in rel
+    assert "require_partition_filter" not in rel

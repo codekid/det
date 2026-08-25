@@ -201,6 +201,23 @@ def describe_pipeline(pipeline: str, *, root: Path | None = None) -> dict[str, A
                 "not_null": list(silver.not_null),
                 "unique": list(silver.unique),
                 "accepted_values": {k: list(v) for k, v in silver.accepted_values.items()},
+                **(
+                    {
+                        "bigquery": {
+                            "partition_by": (
+                                silver.bigquery.partition_by.to_dbt_dict()
+                                if silver.bigquery.partition_by
+                                else None
+                            ),
+                            "cluster_by": list(silver.bigquery.cluster_by),
+                            "require_partition_filter": (
+                                silver.bigquery.require_partition_filter
+                            ),
+                        }
+                    }
+                    if silver.bigquery is not None
+                    else {}
+                ),
             },
             "stg": {
                 "coalesce": {k: list(v) for k, v in config.dbt.stg.coalesce.items()},

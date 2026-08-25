@@ -10,14 +10,10 @@
 with exploded as (
     select
         _parent.{{ parent_key }} as {{ parent_key }},
-{%- for step in path_chain %}
-{%- if loop.last %}
-        t{{ loop.index0 }}._rel as _rel,
-        t{{ loop.index0 }}.__rel_index as {{ index_columns[loop.index0] }},
-{%- else %}
-        t{{ loop.index0 }}.__rel_index as {{ index_columns[loop.index0] }},
-{%- endif %}
+{%- for sp in spine_projections %}
+        {{ sp.cte_expr }} as {{ sp.name }},
 {%- endfor %}
+        t{{ path_chain|length - 1 }}._rel as _rel,
 {%- for meta in meta_columns %}
         _parent.{{ meta }} as {{ meta }}{{ "," if not loop.last else "" }}
 {%- endfor %}

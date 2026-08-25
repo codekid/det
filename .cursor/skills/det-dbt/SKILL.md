@@ -53,6 +53,14 @@ dbt:
     unique: [id]
     accepted_values:
       event_severity: [low, medium, high]
+    # Opt-in BigQuery table layout (ignored on DuckDB). Not Iceberg destination.partition.
+    # bigquery:
+    #   partition_by:
+    #     field: __extract_run_datetime
+    #     data_type: timestamp
+    #     granularity: day
+    #   cluster_by: [id]
+    #   require_partition_filter: false
   stg:
     # flatten:                 # omit = unlimited object depth
     #   depth: 1               # optional cap on object levels
@@ -79,16 +87,19 @@ dbt:
       discount_codes:
         path: discount_codes   # top-level array
         materialized: view
+        # omit grain → discount_codes__index from unnest ordinality
       line_items:
         path: line_items
         materialized: view     # view|table → stg + silver for the child
         # parent_key: id       # default: first non-meta silver.unique_key
+        grain: [sku]           # → line_items__sku on this table and descendants
         rename: { sku: line_sku }
         not_null: [sku, quantity]   # relative; silver uses post-rename names
         relations:             # nested array under each line item
           tax_lines:
             path: tax_lines
             materialized: view
+            grain: [title, rate]  # → line_items__tax_lines__title, …__rate
             not_null: [title, rate]
     view_warn:                 # advisory sample; never fails the build
       enabled: true
@@ -110,14 +121,28 @@ dbt:
 | Struct adapts | `dbt.stg.fields` scopes; relative keys only; scoped rename keeps path prefix |
 | Arrays | Explicit `relations:` only → `stg_{provider}__{source}__{relation}` |
 | Nested arrays | `relations.*.relations` (path relative to parent item) → `…__line_items__tax_lines` |
+| Relation grain | `grain: [field, …]` → path-qualified spine (`line_items__sku`); empty → `{path}__index` |
+| Spine join | Deeper tables carry ancestor spine cols; join on `parent_key` + shared path-qualified keys |
 | Relation tests | `not_null` / `unique` / `accepted_values` on the relation (not inherited from parent silver) |
 | Depth | Default unlimited; set `flatten.depth: N` only to cap |
 | Adapt order | flatten → coalesce → null_sentinels → map → rename → exclude |
 | Collisions | Scaffold fails if flattened name clashes |
 | Relation mat. | `relations.*.materialized` applies to **both** child stg and silver (default `view`) |
+| BigQuery layout | Opt-in `dbt.silver.bigquery` / `relations.*.bigquery` (`partition_by`, `cluster_by`, `require_partition_filter`); scaffold emits only under `target.name == 'bigquery'`; requires `table`/`incremental` (not `view`). Distinct from Iceberg `destination.partition`. |
 | Engine | DuckDB macros (`det_json_path_*`, unnest); bronze stays wire-faithful |
 
+Silver relation `unique_key` is `[parent_key] + spine columns` (not `__rel_index*`).
+
+Example join (tax → line):
+
+```sql
+on t.id = li.id
+and t.line_items__sku = li.line_items__sku
+```
+
 Scaffold stg applies that adapt order; `exclude` drops from stg select only.
+Final SELECT order: identity (`id` / `*_id` / `key` / `*_key` plus non-meta
+`unique_key`) A–Z → other payload A–Z → meta (`__row_hash` first, then A–Z).
 **`read_json` columns** are widened to schema ∪ coalesce sources so historical keys
 in older JSONL remain visible (`union_by_name=true`). Object/array roots use DuckDB
 `JSON` typing for path extract.

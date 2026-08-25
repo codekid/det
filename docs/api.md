@@ -195,7 +195,7 @@ pytest; not imported by the core helpers).
 | --- | --- |
 | CLI (`det.cli`) | Operator front-door |
 | MCP (`det.mcp.*`) | Agent inspect / dry-run |
-| Scaffold / `dbt_runner` | Product integrations |
+| Scaffold / `dbt_runner` | Product integrations; relation `grain` / path-qualified spine is operator dbt contract (see det-dbt skill), not `lake_layout` |
 | Approvals | CLI / agent only — library callers are trusted (`PipelineRunner` / migrator / pruner apply have no approval hook) |
 | `record_attempt` / receipt writes | Runner-internal |
 | `runs-materialize` | Ops product path |

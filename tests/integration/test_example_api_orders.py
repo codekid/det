@@ -48,10 +48,12 @@ dbt:
       line_items:
         materialized: view
         parent_key: id
+        grain: [sku]
         relations:
           tax_lines:
             materialized: view
             parent_key: id
+            grain: [title, rate]
     null_sentinels:
       email: ["", "NA"]
     map:
@@ -83,13 +85,24 @@ dbt:
         encoding="utf-8"
     )
     assert "unnest(cast(_parent.line_items as JSON[]))" in child
+    assert "line_items__sku" in child
     assert "variant__product__category__name" in child
     assert "price_set__shop_money__amount" in child
     tax = (models / "stg_example_api__orders__line_items__tax_lines.sql").read_text(
         encoding="utf-8"
     )
     assert "json_extract(t0._rel, '$.tax_lines')" in tax
+    assert "line_items__sku" in tax
+    assert "line_items__tax_lines__title" in tax
     assert (models / "stg_example_api__orders__discount_codes.sql").exists()
+    disc = (models / "stg_example_api__orders__discount_codes.sql").read_text(
+        encoding="utf-8"
+    )
+    assert "discount_codes__index" in disc
+    silver_li = (models / "silver_example_api__orders__line_items.sql").read_text(
+        encoding="utf-8"
+    )
+    assert 'partition_by=["id", "line_items__sku"]' in silver_li
 
     runner = PipelineRunner(tmp_path)
     out = runner.run(

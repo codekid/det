@@ -120,7 +120,13 @@ def test_relation_stg_columns_unnest_paths():
             "relations": {
                 "line_items": {
                     "path": "line_items",
-                    "relations": {"tax_lines": {"path": "tax_lines"}},
+                    "grain": ["sku"],
+                    "relations": {
+                        "tax_lines": {
+                            "path": "tax_lines",
+                            "grain": ["title", "rate"],
+                        }
+                    },
                 }
             }
         }
@@ -135,7 +141,8 @@ def test_relation_stg_columns_unnest_paths():
     )
     by_name = {c["name"]: c["expr"] for c in cols}
     assert "id" in by_name
-    assert "__rel_index" in by_name
+    assert "line_items__sku" in by_name
+    assert "__rel_index" not in by_name
     assert "sku" in by_name
     assert "det_json_path_string('_rel', '$.sku')" in by_name["sku"]
     assert "variant__id" in by_name
@@ -155,10 +162,40 @@ def test_relation_stg_columns_unnest_paths():
         stg=stg,
     )
     tax_by = {c["name"]: c["expr"] for c in tax_cols}
-    assert "__rel_index_0" in tax_by
-    assert "__rel_index_1" in tax_by
+    assert "line_items__sku" in tax_by
+    assert "line_items__tax_lines__title" in tax_by
+    assert "line_items__tax_lines__rate" in tax_by
+    assert "__rel_index_0" not in tax_by
+    assert "__rel_index_1" not in tax_by
     assert "title" in tax_by
     assert "price_set__shop_money__amount" in tax_by
+
+
+def test_relation_spine_index_fallback():
+    schema = _nested_schema()
+    stg = DbtStgConfig.model_validate(
+        {
+            "relations": {
+                "line_items": {
+                    "path": "line_items",
+                    "relations": {"tax_lines": {"path": "tax_lines"}},
+                }
+            }
+        }
+    )
+    tax = stg.relations["line_items"].relations["tax_lines"]
+    tax_cols = relation_stg_columns(
+        schema,
+        path_chain=["line_items", "tax_lines"],
+        relation=tax,
+        parent_key="id",
+        stg=stg,
+    )
+    tax_by = {c["name"]: c["expr"] for c in tax_cols}
+    assert "line_items__index" in tax_by
+    assert "line_items__tax_lines__index" in tax_by
+    assert tax_by["line_items__index"] == "line_items__index"
+    assert tax_by["line_items__tax_lines__index"] == "line_items__tax_lines__index"
 
 
 def test_stg_columns_scoped_fields_and_leaf_coalesce():
@@ -277,9 +314,11 @@ dbt:
         materialized: view
       line_items:
         materialized: view
+        grain: [sku]
         relations:
           tax_lines:
             materialized: view
+            grain: [title, rate]
 destination:
   type: filesystem
   path: ./data/lake
@@ -302,6 +341,7 @@ destination:
     assert 'materialized="view"' in child
     assert "unnest(cast(_parent.line_items as JSON[]))" in child
     assert "with ordinality" in child
+    assert "line_items__sku" in child
     assert "variant__product__category__name" in child
     assert "price_set__shop_money__amount" in child
 
@@ -309,22 +349,33 @@ destination:
         encoding="utf-8"
     )
     assert "json_extract(t0._rel, '$.tax_lines')" in tax
-    assert "__rel_index_0" in tax
-    assert "__rel_index_1" in tax
+    assert "line_items__sku" in tax
+    assert "line_items__tax_lines__title" in tax
+    assert "line_items__tax_lines__rate" in tax
+    assert "__rel_index_0" not in tax
+    assert "__rel_index_1" not in tax
     assert "price_set__shop_money__amount" in tax
 
     discounts = (models / "stg_example_api__orders__discount_codes.sql").read_text(
         encoding="utf-8"
     )
     assert "unnest(cast(_parent.discount_codes as JSON[]))" in discounts
+    assert "discount_codes__index" in discounts
 
     silver_child = (models / "silver_example_api__orders__line_items.sql").read_text(
         encoding="utf-8"
     )
     assert 'materialized="view"' in silver_child
     assert 'ref("stg_example_api__orders__line_items")' in silver_child
-    assert 'partition_by=["id", "__rel_index"]' in silver_child
+    assert 'partition_by=["id", "line_items__sku"]' in silver_child
 
+    silver_tax = (models / "silver_example_api__orders__line_items__tax_lines.sql").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        'partition_by=["id", "line_items__sku", "line_items__tax_lines__title", '
+        '"line_items__tax_lines__rate"]' in silver_tax
+    )
 
 def test_scaffold_scoped_adapts_and_relation_silver_tests(tmp_path: Path):
     schema_path = tmp_path / "schemas" / "example_api" / "orders" / "orders.schema.yaml"

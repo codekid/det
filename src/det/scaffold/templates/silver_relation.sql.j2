@@ -2,6 +2,20 @@
     config(
         materialized="{{ materialized }}",
         schema="silver_{{ provider }}"
+{%- if bigquery and bigquery.has_layout() %}
+,
+        {{ '{% if target.name == \'bigquery\' %}' }}
+{%- if bigquery.partition_by %}
+        partition_by={{ bigquery.partition_by.to_dbt_dict() | tojson }},
+{%- endif %}
+{%- if bigquery.cluster_by %}
+        cluster_by={{ bigquery.cluster_by | tojson }},
+{%- endif %}
+{%- if bigquery.require_partition_filter %}
+        require_partition_filter=true,
+{%- endif %}
+        {{ '{% endif %}' }}
+{%- endif %}
     )
 {{ '}}' }}
 

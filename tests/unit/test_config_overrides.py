@@ -131,4 +131,77 @@ def test_in_tree_storm_events_silver_is_incremental(project_root):
     assert "is_incremental()" in silver
     assert "__extract_run_datetime >" in silver
     assert 'unique_key=["__row_hash"]' in silver
-    assert 'incremental_strategy="delete+insert"' in silver
+    assert "delete+insert" in silver
+    assert "incremental_strategy=" in silver
+
+
+def test_bigquery_silver_config_defaults_granularity_day():
+    from det.runtime.config import BigQueryPartitionConfig, BigQuerySilverConfig
+
+    part = BigQueryPartitionConfig(field="__extract_run_datetime")
+    assert part.data_type == "timestamp"
+    assert part.granularity == "day"
+    assert part.to_dbt_dict() == {
+        "field": "__extract_run_datetime",
+        "data_type": "timestamp",
+        "granularity": "day",
+    }
+    bq = BigQuerySilverConfig(
+        partition_by=part,
+        cluster_by=["id"],
+    )
+    assert bq.has_layout()
+    assert BigQuerySilverConfig().has_layout() is False
+
+
+def test_bigquery_silver_config_int64_rejects_granularity():
+    from pydantic import ValidationError
+
+    from det.runtime.config import BigQueryPartitionConfig
+
+    with pytest.raises(ValidationError, match="granularity"):
+        BigQueryPartitionConfig(
+            field="partition_id",
+            data_type="int64",
+            granularity="day",
+        )
+    part = BigQueryPartitionConfig(field="partition_id", data_type="int64")
+    assert part.granularity is None
+    assert part.to_dbt_dict() == {"field": "partition_id", "data_type": "int64"}
+
+
+def test_bigquery_silver_config_rejects_cluster_by_over_four():
+    from pydantic import ValidationError
+
+    from det.runtime.config import BigQuerySilverConfig
+
+    with pytest.raises(ValidationError, match="at most 4"):
+        BigQuerySilverConfig(cluster_by=["a", "b", "c", "d", "e"])
+
+
+def test_bigquery_silver_config_require_filter_needs_partition():
+    from pydantic import ValidationError
+
+    from det.runtime.config import BigQuerySilverConfig
+
+    with pytest.raises(ValidationError, match="require_partition_filter"):
+        BigQuerySilverConfig(require_partition_filter=True)
+
+
+def test_bigquery_layout_rejected_on_view_materialized():
+    from pydantic import ValidationError
+
+    from det.runtime.config import DbtSilverConfig, RelationConfig
+
+    with pytest.raises(ValidationError, match="not view"):
+        DbtSilverConfig(
+            materialized="view",
+            unique_key=["id"],
+            bigquery={"partition_by": {"field": "__extract_run_datetime"}},
+        )
+    with pytest.raises(ValidationError, match="not view"):
+        RelationConfig(
+            path="abilities",
+            materialized="view",
+            bigquery={"cluster_by": ["id"]},
+        )

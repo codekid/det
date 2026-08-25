@@ -238,6 +238,14 @@ Macros (`det_bronze_cast`, `det_json_path`, `det_dedupe_latest_run`,
 `det_sql_compat`) and silver incremental models branch on
 `target.name == 'bigquery'`.
 
+**Silver partition / cluster:** opt-in via pipeline `dbt.silver.bigquery` and
+`dbt.stg.relations.*.bigquery` (`partition_by`, `cluster_by`,
+`require_partition_filter`). Scaffold wraps those knobs in
+`{% if target.name == 'bigquery' %}` so DuckDB builds stay unchanged. This is
+**not** Iceberg `destination.partition` (lake layout). Typical choice: partition
+on `__extract_run_datetime` (day); cluster parent on identity / relation on
+`[parent_key, …spine]`. Requires silver `materialized: table` or `incremental`.
+
 ## CI / emulator
 
 | Env | Role |

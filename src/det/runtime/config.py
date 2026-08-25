@@ -20,6 +20,8 @@ from det.runtime.secrets import looks_like_secret_name
 from det.runtime.slo import SloConfig
 
 _STG_COL_ID = re.compile(r"^[a-z][a-z0-9_]*$")
+# Payload snake_case or DET meta columns (__extract_run_datetime, __row_hash, …).
+_STG_COL_OR_META_ID = re.compile(r"^(?:[a-z][a-z0-9_]*|__[a-z][a-z0-9_]*)$")
 
 
 class SourceConfig(BaseModel):
@@ -135,6 +137,14 @@ def _require_dbt_col_id(name: str, *, where: str) -> str:
     return name
 
 
+def _require_dbt_col_or_meta_id(name: str, *, where: str) -> str:
+    if not _STG_COL_OR_META_ID.match(name):
+        raise ValueError(
+            f"{where}: column id must be snake_case or DET meta (__*), got {name!r}"
+        )
+    return name
+
+
 def _require_relative_path(key: str, *, where: str) -> None:
     """Validate a relative dotted path (each segment snake_case)."""
     if not isinstance(key, str) or not key.strip():
@@ -196,6 +206,94 @@ def _validate_adapt_knob_keys(
         _require_dbt_col_id(name, where=f"{where} child scope")
 
 
+class BigQueryPartitionConfig(BaseModel):
+    """dbt-bigquery ``partition_by`` dict for scaffolded silver models."""
+
+    field: str
+    data_type: Literal["timestamp", "date", "datetime", "int64"] = "timestamp"
+    granularity: Literal["hour", "day", "month", "year"] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_granularity(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        out = dict(data)
+        data_type = out.get("data_type", "timestamp")
+        if data_type == "int64":
+            if out.get("granularity") is not None:
+                raise ValueError(
+                    "dbt.*.bigquery.partition_by.granularity must be null "
+                    "when data_type is int64"
+                )
+            out["granularity"] = None
+        elif out.get("granularity") is None:
+            out["granularity"] = "day"
+        return out
+
+    @model_validator(mode="after")
+    def _validate_partition(self) -> BigQueryPartitionConfig:
+        _require_dbt_col_or_meta_id(
+            self.field, where="dbt.*.bigquery.partition_by.field"
+        )
+        return self
+
+    def to_dbt_dict(self) -> dict[str, str]:
+        out: dict[str, str] = {"field": self.field, "data_type": self.data_type}
+        if self.granularity is not None:
+            out["granularity"] = self.granularity
+        return out
+
+
+class BigQuerySilverConfig(BaseModel):
+    """Opt-in BigQuery table layout for scaffolded silver (parent or relation)."""
+
+    partition_by: BigQueryPartitionConfig | None = None
+    cluster_by: list[str] = Field(default_factory=list)
+    require_partition_filter: bool = False
+
+    @field_validator("cluster_by", mode="before")
+    @classmethod
+    def _as_str_list(cls, v: Any) -> list[str]:
+        return _as_str_list(v)
+
+    @model_validator(mode="after")
+    def _validate_bigquery(self) -> BigQuerySilverConfig:
+        if len(self.cluster_by) > 4:
+            raise ValueError(
+                "dbt.*.bigquery.cluster_by supports at most 4 columns (BigQuery limit)"
+            )
+        for name in self.cluster_by:
+            _require_dbt_col_or_meta_id(name, where="dbt.*.bigquery.cluster_by")
+        if self.require_partition_filter and self.partition_by is None:
+            raise ValueError(
+                "dbt.*.bigquery.require_partition_filter requires partition_by"
+            )
+        return self
+
+    def has_layout(self) -> bool:
+        return bool(
+            self.partition_by is not None
+            or self.cluster_by
+            or self.require_partition_filter
+        )
+
+
+def _validate_bigquery_vs_materialized(
+    bigquery: BigQuerySilverConfig | None,
+    *,
+    materialized: str,
+    where: str,
+) -> None:
+    if bigquery is None or not bigquery.has_layout():
+        return
+    if materialized == "view":
+        raise ValueError(
+            f"{where}.bigquery partition/cluster requires materialized "
+            "table or incremental (not view)"
+        )
+
+
 class DbtSilverConfig(BaseModel):
     """Knobs for `det scaffold-dbt` silver model generation + column tests."""
 
@@ -207,6 +305,7 @@ class DbtSilverConfig(BaseModel):
     incremental_strategy: Literal["delete+insert", "append", "merge"] = "delete+insert"
     watermark: str = "__extract_run_datetime"
     lookback: str | None = None
+    bigquery: BigQuerySilverConfig | None = None
     # Prefer tests on silver (materialized/deduped) over stg views on large lakes.
     not_null: list[str] = Field(default_factory=list)
     unique: list[str] = Field(default_factory=list)
@@ -247,6 +346,11 @@ class DbtSilverConfig(BaseModel):
                 raise ValueError(
                     f"dbt.silver.accepted_values[{name!r}] must be a non-empty list"
                 )
+        _validate_bigquery_vs_materialized(
+            self.bigquery,
+            materialized=self.materialized,
+            where="dbt.silver",
+        )
         return self
 
 
@@ -305,8 +409,10 @@ _RELATION_RESERVED = frozenset(
         "path",
         "materialized",
         "parent_key",
+        "grain",
         "flatten",
         "relations",
+        "bigquery",
         *_ADAPT_KNOB_KEYS,
     }
 )
@@ -406,13 +512,19 @@ class RelationConfig(BaseModel):
     ``path`` relative to the parent array item. ``materialized`` applies to both
     stg and silver (default view). Adapt/test knobs are relative to the item;
     other mapping keys are nested property scopes (same as AdaptScope).
+
+    ``grain`` lists item field names that identify a row at this nest level.
+    Scaffold emits path-qualified spine columns (``line_items__line_id``). Empty
+    grain falls back to ``{path}__index`` from unnest ordinality.
     """
 
     path: str | None = None
     materialized: Literal["view", "table"] = "view"
     parent_key: str | None = None
+    grain: list[str] = Field(default_factory=list)
     flatten: FlattenConfig = Field(default_factory=FlattenConfig)
     relations: dict[str, RelationConfig] = Field(default_factory=dict)
+    bigquery: BigQuerySilverConfig | None = None
     coalesce: dict[str, list[str]] = Field(default_factory=dict)
     null_sentinels: dict[str, list[Any]] = Field(default_factory=dict)
     map: dict[str, dict[str, str]] = Field(default_factory=dict)
@@ -430,7 +542,7 @@ class RelationConfig(BaseModel):
             return data
         return _split_adapt_children(data, reserved=_RELATION_RESERVED)
 
-    @field_validator("exclude", "not_null", "unique", mode="before")
+    @field_validator("exclude", "not_null", "unique", "grain", mode="before")
     @classmethod
     def _as_str_list(cls, v: Any) -> list[str]:
         return _as_str_list(v)
@@ -446,6 +558,8 @@ class RelationConfig(BaseModel):
                 )
         if self.parent_key is not None:
             _require_dbt_col_id(self.parent_key, where="dbt.stg.relations.parent_key")
+        for field in self.grain:
+            _require_dbt_col_id(field, where="dbt.stg.relations.grain")
         _validate_adapt_knob_keys(
             coalesce=self.coalesce,
             null_sentinels=self.null_sentinels,
@@ -456,6 +570,11 @@ class RelationConfig(BaseModel):
             unique=self.unique,
             accepted_values=self.accepted_values,
             children=self.children,
+            where="dbt.stg.relations",
+        )
+        _validate_bigquery_vs_materialized(
+            self.bigquery,
+            materialized=self.materialized,
             where="dbt.stg.relations",
         )
         return self

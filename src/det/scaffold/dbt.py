@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import yaml
 
@@ -68,6 +68,58 @@ _META_COLUMN_DESCRIPTIONS = {
 }
 
 _TEMPLATES = Path(__file__).resolve().parent / "templates"
+
+
+def _is_identity_name(name: str) -> bool:
+    """Heuristic identity / key columns for stg SELECT lead group."""
+    if name.startswith("__"):
+        return False
+    return (
+        name == "id"
+        or name.endswith("_id")
+        or name == "key"
+        or name.endswith("_key")
+    )
+
+
+def _ordered_meta_columns() -> list[str]:
+    """Presentation order: ``__row_hash`` first, then remaining meta A–Z."""
+    rest = sorted(c for c in _META_COLUMNS if c != "__row_hash")
+    if "__row_hash" in _META_COLUMNS:
+        return ["__row_hash", *rest]
+    return rest
+
+
+def _order_stg_select_columns(
+    columns: list[dict[str, str]],
+    *,
+    unique_key: Sequence[str] | None = None,
+) -> list[dict[str, str]]:
+    """
+    Order stg SELECT columns: identity A–Z → payload A–Z → meta
+    (``__row_hash`` first, then other ``__*`` A–Z).
+    """
+    uk = {k for k in (unique_key or ()) if isinstance(k, str) and not k.startswith("__")}
+    by_name = {c["name"]: c for c in columns}
+    identity: list[str] = []
+    payload: list[str] = []
+    for name in by_name:
+        if name.startswith("__"):
+            continue
+        if name in uk or _is_identity_name(name):
+            identity.append(name)
+        else:
+            payload.append(name)
+    identity.sort()
+    payload.sort()
+    ordered: list[dict[str, str]] = [by_name[n] for n in identity]
+    ordered.extend(by_name[n] for n in payload)
+    for meta in _ordered_meta_columns():
+        if meta in by_name:
+            ordered.append(by_name[meta])
+        else:
+            ordered.append({"name": meta, "expr": meta})
+    return ordered
 
 
 def schema_root_description(schema: dict[str, Any]) -> str | None:
@@ -340,11 +392,14 @@ def _leaf_or_top_expr(
 def stg_columns_from_schema(
     schema: dict[str, Any],
     stg: DbtStgConfig | None = None,
+    *,
+    unique_key: Sequence[str] | None = None,
 ) -> list[dict[str, str]]:
     """
     Build stg select column exprs from schema + optional ``dbt.stg`` adaptations.
 
-    Order: flatten → coalesce → null_sentinels → map → rename → exclude.
+    Adaptations order: flatten → coalesce → null_sentinels → map → rename → exclude.
+    Final SELECT order: identity A–Z → payload A–Z → meta (``__row_hash`` first).
     """
     stg = stg or DbtStgConfig()
     adapt = _parent_flat_adapt(stg)
@@ -433,18 +488,111 @@ def stg_columns_from_schema(
             expr = _path_cast_macro_call(leaf.root, leaf.extract_path, leaf.prop)
         _append(leaf.column_name, expr)
 
-    for meta in _META_COLUMNS:
-        columns.append({"name": meta, "expr": meta})
-    return columns
+    return _order_stg_select_columns(columns, unique_key=unique_key)
+
+
+def qualify_grain_col(name_parts: Sequence[str], field: str) -> str:
+    """Path-qualify a grain field: ``line_items`` + ``line_id`` → ``line_items__line_id``."""
+    if not name_parts:
+        raise ValueError("name_parts must be non-empty")
+    return "__".join([*name_parts, field])
+
+
+@dataclass(frozen=True)
+class SpineEntry:
+    """One path-qualified spine column for a relation stg model."""
+
+    name: str
+    level_idx: int
+    kind: str  # "grain" | "index"
+    field: str
+
+
+def spine_for_relation(
+    name_parts: Sequence[str],
+    rel_chain: Sequence[RelationConfig],
+) -> list[SpineEntry]:
+    """
+    Build the ancestor+self spine for a relation at ``name_parts``.
+
+    Empty ``grain`` at a level yields ``{path}__index`` from unnest ordinality.
+    """
+    if len(name_parts) != len(rel_chain):
+        raise ValueError(
+            f"name_parts length {len(name_parts)} != rel_chain length {len(rel_chain)}"
+        )
+    if not name_parts:
+        raise ValueError("name_parts must be non-empty")
+    out: list[SpineEntry] = []
+    for i in range(len(name_parts)):
+        parts = tuple(name_parts[: i + 1])
+        rel = rel_chain[i]
+        if rel.grain:
+            for field in rel.grain:
+                out.append(
+                    SpineEntry(
+                        name=qualify_grain_col(parts, field),
+                        level_idx=i,
+                        kind="grain",
+                        field=field,
+                    )
+                )
+        else:
+            out.append(
+                SpineEntry(
+                    name=qualify_grain_col(parts, "index"),
+                    level_idx=i,
+                    kind="index",
+                    field="index",
+                )
+            )
+    return out
+
+
+def relation_chain_for(
+    relations: dict[str, RelationConfig],
+    name_parts: Sequence[str],
+) -> list[RelationConfig]:
+    """Walk ``relations`` tree following YAML keys in ``name_parts``."""
+    chain: list[RelationConfig] = []
+    cur: dict[str, RelationConfig] = relations
+    for part in name_parts:
+        if part not in cur:
+            raise KeyError(f"relation {part!r} not found under {list(cur)}")
+        rel = cur[part]
+        chain.append(rel)
+        cur = rel.relations
+    return chain
 
 
 def relation_index_columns(depth: int) -> list[str]:
-    """Index column names for a relation path_chain of length ``depth``."""
+    """Deprecated alias: prefer ``spine_for_relation`` path-qualified names."""
     if depth < 1:
         raise ValueError("relation depth must be >= 1")
     if depth == 1:
         return ["__rel_index"]
     return [f"__rel_index_{i}" for i in range(depth)]
+
+
+def _spine_cte_expr(
+    entry: SpineEntry,
+    *,
+    schema: dict[str, Any],
+    path_chain: Sequence[str],
+) -> str:
+    """SQL/Jinja expr that projects a spine column inside the exploded CTE."""
+    if entry.kind == "index":
+        return f"t{entry.level_idx}.__rel_index"
+    item_schema = relation_item_schema_at(schema, list(path_chain[: entry.level_idx + 1]))
+    props = item_schema.get("properties") or {}
+    if not isinstance(props, dict):
+        props = {}
+    prop = props.get(entry.field) if isinstance(props.get(entry.field), dict) else None
+    return _path_cast_macro_call(
+        f"t{entry.level_idx}._rel",
+        f"$.{entry.field}",
+        prop if isinstance(prop, dict) else {"type": "string"},
+    )
 
 
 def relation_stg_columns(
@@ -454,9 +602,18 @@ def relation_stg_columns(
     relation: RelationConfig,
     parent_key: str,
     stg: DbtStgConfig,
-    index_columns: list[str] | None = None,
+    name_parts: Sequence[str] | None = None,
+    rel_chain: Sequence[RelationConfig] | None = None,
+    spine: Sequence[SpineEntry] | None = None,
 ) -> list[dict[str, str]]:
-    """Column exprs for a relation stg model (parent_key + indexes + flatten + meta)."""
+    """Column exprs for a relation stg model (parent_key + spine + flatten + meta)."""
+    if name_parts is None:
+        name_parts = tuple(path_chain)
+    if rel_chain is None:
+        rel_chain = relation_chain_for(stg.relations, name_parts)
+    if spine is None:
+        spine = spine_for_relation(name_parts, rel_chain)
+
     item_schema = relation_item_schema_at(schema, path_chain)
     nested_paths = {child.path or name for name, child in relation.relations.items()}
     leaves = plan_flatten(
@@ -466,8 +623,8 @@ def relation_stg_columns(
         include_root_scalars=True,
         relative_extract=True,
     )
-    idx_cols = index_columns or relation_index_columns(len(path_chain))
-    reserved = {parent_key, *idx_cols, *_META_COLUMNS}
+    spine_names = [e.name for e in spine]
+    reserved = {parent_key, *spine_names, *_META_COLUMNS}
     detect_flatten_collisions(leaves, reserved=reserved)
 
     adapt = compile_relation_adapt(relation)
@@ -484,17 +641,19 @@ def relation_stg_columns(
     if not isinstance(item_props, dict):
         item_props = {}
 
-    columns: list[dict[str, str]] = []
     props = schema.get("properties") or {}
     parent_prop = props.get(parent_key) if isinstance(props.get(parent_key), dict) else None
     pk_expr = _cast_macro_call(parent_key, parent_prop or {"type": "string"})
+    lead: list[dict[str, str]] = []
     if parent_key not in root_adapt.exclude and parent_key not in adapt.exclude:
         out_pk, pk_full = _adapt_column_expr(parent_key, pk_expr, root_adapt)
-        columns.append({"name": out_pk, "expr": pk_full})
+        lead.append({"name": out_pk, "expr": pk_full})
 
-    for idx in idx_cols:
-        columns.append({"name": idx, "expr": idx})
+    for entry in spine:
+        # Spine already projected in the exploded CTE under ``entry.name``.
+        lead.append({"name": entry.name, "expr": entry.name})
 
+    leaf_cols: list[dict[str, str]] = []
     for leaf in leaves:
         if leaf.column_name in adapt.exclude:
             continue
@@ -508,11 +667,13 @@ def relation_stg_columns(
         else:
             expr = _path_cast_macro_call("_rel", leaf.extract_path, leaf.prop)
         out_name, full = _adapt_column_expr(leaf.column_name, expr, adapt)
-        columns.append({"name": out_name, "expr": full})
+        leaf_cols.append({"name": out_name, "expr": full})
 
-    for meta in _META_COLUMNS:
-        columns.append({"name": meta, "expr": meta})
-    return columns
+    # parent_key + spine pinned; leaves identity → payload; meta last.
+    ordered_leaves = _order_stg_select_columns(leaf_cols, unique_key=None)
+    # Strip meta from ordered_leaves — we'll append after lead+payload via helper.
+    non_meta = [c for c in ordered_leaves if not c["name"].startswith("__")]
+    return [*lead, *non_meta, *[{"name": m, "expr": m} for m in _ordered_meta_columns()]]
 
 
 def _render(name: str, **ctx: Any) -> str:
@@ -605,18 +766,28 @@ def _table_entry_yaml(
     descs = column_descriptions or {}
     props = schema_properties or {}
 
-    ordered_names: list[str] = []
+    identity: list[str] = []
+    payload: list[str] = []
+    seen: set[str] = set()
 
-    def _add(name: str) -> None:
-        if name not in ordered_names:
-            ordered_names.append(name)
+    def _classify(name: str) -> None:
+        if name in seen or name.startswith("__"):
+            return
+        seen.add(name)
+        if name in required or _is_identity_name(name):
+            identity.append(name)
+        else:
+            payload.append(name)
 
-    _add("__row_hash")
     for col in required:
-        _add(col)
+        _classify(col)
     for name in props:
-        if name in descs:
-            _add(name)
+        if isinstance(name, str):
+            _classify(name)
+
+    identity.sort()
+    payload.sort()
+    ordered_names = [*identity, *payload, *_ordered_meta_columns()]
 
     columns: list[dict[str, Any]] = []
     for name in ordered_names:
@@ -1007,7 +1178,7 @@ def scaffold_dbt(
     root_desc = schema_root_description(schema)
     silver_descs = post_stg_description_map(schema_descs, stg_cfg)
     props = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
-    columns = stg_columns_from_schema(schema, stg_cfg)
+    columns = stg_columns_from_schema(schema, stg_cfg, unique_key=silver.unique_key)
     columns_struct = format_read_json_columns(
         widen_read_json_columns(schema, stg_cfg)
     )
@@ -1071,18 +1242,27 @@ def scaffold_dbt(
         docs=docs_cfg,
     )
 
-    for name_parts, path_chain_t, rel in iter_relation_paths(stg_cfg.relations):
+    for name_parts_t, path_chain_t, rel in iter_relation_paths(stg_cfg.relations):
+        name_parts = list(name_parts_t)
         path_chain = list(path_chain_t)
         parent_key = default_parent_key(schema, silver, rel.parent_key)
         rel_slug = f"{model_slug}__{'__'.join(name_parts)}"
-        idx_cols = relation_index_columns(len(path_chain))
+        rel_chain = relation_chain_for(stg_cfg.relations, name_parts)
+        spine = spine_for_relation(name_parts, rel_chain)
+        spine_names = [e.name for e in spine]
+        spine_projections = [
+            {"name": e.name, "cte_expr": _spine_cte_expr(e, schema=schema, path_chain=path_chain)}
+            for e in spine
+        ]
         rel_columns = relation_stg_columns(
             schema,
             path_chain=path_chain,
             relation=rel,
             parent_key=parent_key,
             stg=stg_cfg,
-            index_columns=idx_cols,
+            name_parts=name_parts,
+            rel_chain=rel_chain,
+            spine=spine,
         )
         path_display = "[]".join(path_chain) + "[]"
         rel_stg_sql = _render(
@@ -1092,14 +1272,14 @@ def scaffold_dbt(
             relation_name="__".join(name_parts),
             path_chain=path_chain,
             path_display=path_display,
-            index_columns=idx_cols,
+            spine_projections=spine_projections,
             parent_key=parent_key,
             materialized=rel.materialized,
             columns=rel_columns,
             provider=provider,
             meta_columns=_META_COLUMNS,
         )
-        rel_unique_key = [parent_key, *idx_cols]
+        rel_unique_key = [parent_key, *spine_names]
         rel_silver_sql = _render(
             "silver_relation.sql.j2",
             model_slug=rel_slug,
@@ -1108,6 +1288,7 @@ def scaffold_dbt(
             unique_key=rel_unique_key,
             order_by=list(silver.order_by),
             provider=provider,
+            bigquery=rel.bigquery,
         )
         _write_or_skip(
             models_dir / f"stg_{rel_slug}.sql",
@@ -1124,7 +1305,7 @@ def scaffold_dbt(
             actions=actions,
         )
         rel_adapt = compile_relation_adapt(rel)
-        rel_not_null = [parent_key]
+        rel_not_null = [parent_key, *spine_names]
         for col in rel_adapt.not_null:
             if col not in rel_not_null:
                 rel_not_null.append(col)

@@ -9,15 +9,15 @@
 -- to refresh the column list from the pipeline schema.
 select
 {{ det_as_string('id') }} as id,
-{{ det_as_string('occurred_at') }} as occurred_at,
 coalesce({{ det_as_string('severity') }}, {{ det_as_string('severity_level') }}, {{ det_as_string('level') }}) as event_severity,
+{{ det_as_string('occurred_at') }} as occurred_at,
 nullif(nullif(nullif({{ det_as_string('state') }}, ''), 'NA'), 'null') as state,
 case when ({{ det_as_string('status') }}) = '1' then 'open' when ({{ det_as_string('status') }}) = '2' then 'closed' when ({{ det_as_string('status') }}) = '3' then 'archived' else ({{ det_as_string('status') }}) end as status,
 __row_hash,
-__filename,
-__extract_run_datetime,
 __bronze_loaded_at,
-__interval_start_datetime,
+__data_interval_date,
+__extract_run_datetime,
+__filename,
 __interval_end_datetime,
-__data_interval_date
+__interval_start_datetime
 from {{ det_bronze_from("events_v1", "bronze_example_api") }}
