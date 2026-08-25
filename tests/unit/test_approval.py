@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -154,6 +155,10 @@ def test_plan_from_mapping_nested_and_digest_check():
     with pytest.raises(ApprovalError) as exc:
         plan_from_mapping({"command": "prune", "argv": ["prune"], "plan_digest": "0" * 64})
     assert exc.value.code == "approval_plan_invalid"
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
 def _invoke(args: list[str]):
@@ -585,8 +590,11 @@ def test_cli_release_round_trip(tmp_path: Path, monkeypatch):
 
     # --force is mandatory: the operator asserts the claiming run is dead.
     unforced = _invoke(["approval-release", rec["id"], "--project-root", str(tmp_path)])
-    assert unforced.exit_code != 0
-    assert "--force" in unforced.output
+    assert unforced.exit_code == 2
+    plain = _strip_ansi(unforced.output).lower()
+    # Rich/Typer error formatting varies by platform; check semantics, not markup.
+    assert "force" in plain and "required" in plain
+    assert load_approval(tmp_path, rec["id"])["status"] == "claimed"
 
     released = _invoke(
         [
