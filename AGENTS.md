@@ -26,6 +26,16 @@ inclusive, `-e` exclusive (default start + 1 day). Lake hive/SQL contract:
   backfill **window** (MCP `preview_backfill_conf` → `det approve`); spawned
   daily extract runs stay ungated. Do not set `DET_REQUIRE_APPROVAL=1` on
   Compose for the scheduler.
+- Approvals are **audit and intent-binding, not authorization** — the same shell
+  can run `det approve`. Do not describe them as a security boundary. What they
+  do guarantee: the record accurately describes the command that runs. Every
+  flag that changes what or where data is written is in `plan_digest`, and an
+  unrecognized flag is rejected (`approval_unbound_flag`) rather than escaping
+  it. So **re-approve when you change any flag**, including `--lake-path`,
+  `--set`, `--full-refresh`, `--target`, and `--ingestion`. Pipeline refs and
+  intervals are canonicalized, so `noaa/storm_events` and `noaa.storm_events`,
+  or `-s 2026-08-06` and `-s 2026-08-06T00:00:00+00:00`, share one digest.
+  A claimed approval whose run crashed stays `claimed`; recover by re-approving.
 - Never suggest `dlt.pipeline` / `pipeline.run` for landing.
 - Pipeline YAML holds secret **names** (`auth_env`, `connection_env`); values stay in env.
 - Source plugins are discovered from `src/det/sources/<provider>/<source>.py`

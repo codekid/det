@@ -65,6 +65,16 @@ def _restore_plugin_modules(_plugin_module_snapshot, _plugins):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_approval_policy(monkeypatch: pytest.MonkeyPatch):
+    """Approval enforcement must be opted into per test, not inherited.
+
+    CI sets ``DET_REQUIRE_APPROVAL=1`` for the job, so without this the gating
+    tests would silently depend on ambient env and behave differently locally.
+    """
+    monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_secrets():
     """Resolved secrets are process-cached; never leak one across tests."""
     clear_secret_cache()
