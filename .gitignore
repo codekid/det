@@ -26,3 +26,7 @@ airflow/logs/*
 !airflow/logs/.gitkeep
 cube/.env
 .det/
+
+# direnv: local env with real secrets (.envrc.example is the committed template)
+.envrc
+.direnv/

@@ -305,6 +305,7 @@ def test_cli_lock_release_requires_force():
 
     with pytest.raises(typer.BadParameter, match="--force"):
         lock_release(
+            ctx=None,
             pipeline="noaa.storm_events",
             interval_start="2026-08-15",
             interval_end=None,

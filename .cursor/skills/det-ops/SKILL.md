@@ -191,3 +191,14 @@ value, do not paste it into YAML.
 - Do not suggest `dlt.pipeline` for landing.
 - After a dry-run, wait for the operator to `det approve`. Writing CLI belongs in a
   later turn and must pass `--approval` when `DET_REQUIRE_APPROVAL=1`.
+- Approvals are **audit and intent-binding, not authorization** — the same shell can
+  run `det approve`, so never present the gate as a security boundary. It guarantees
+  the record describes the command that runs.
+- Run the writing command with exactly the flags in the approved `argv`. Every flag
+  that changes what or where data is written is in `plan_digest`, so changing
+  `--lake-path`, `--set`, `--full-refresh`, `--target`, or `--ingestion` needs a new
+  approval. An unrecognized flag is rejected as `approval_unbound_flag`.
+- Ref and interval form do not matter (`noaa/storm_events` == `noaa.storm_events`;
+  `2026-08-06` == `2026-08-06T00:00:00+00:00`) — both are canonicalized.
+- Approvals are single-use and claimed atomically. If a run crashes mid-write the
+  record stays `claimed`; re-approve rather than trying to release it.

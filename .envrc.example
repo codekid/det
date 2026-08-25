@@ -1,0 +1,46 @@
+# DET local environment. Copy to .envrc (direnv) or source it in your shell.
+#
+#   cp .envrc.example .envrc && direnv allow
+#
+# Secrets belong here, never in pipeline YAML. Pipeline configs reference secret
+# *names* (auth_env, connection_env); the values live in this file.
+
+# --- Approvals -------------------------------------------------------------
+# Require --approval on every writing det command (extract, load, run, migrate,
+# prune --apply, dbt, scaffold, lock-release).
+#
+# Recommended for agent sessions: it forces a dry-run then `det approve` then run
+# sequence, so the approval record is an accurate audit trail of what ran.
+# This is intent-binding, not authorization — the same shell can run `det approve`.
+export DET_REQUIRE_APPROVAL=1
+
+# Recorded as approved_by on `det approve` when --approved-by is omitted.
+# export DET_APPROVED_BY="your.name"
+
+# Approval lifetime in seconds (default 3600). Approvals are single-use.
+# export DET_APPROVAL_TTL_SEC=3600
+
+# --- Lake ------------------------------------------------------------------
+# Single lake root; do not invent separate raw/bronze roots.
+export DET_LAKE_MODE=local
+export DET_LAKE_PATH="$PWD/data/lake"
+
+export DET_ANALYTICS_DUCKDB="$PWD/data/analytics.duckdb"
+export DET_OPS_DUCKDB="$PWD/data/det_ops.duckdb"
+
+# --- Optional destinations -------------------------------------------------
+# export DET_POSTGRES_DSN="postgresql://det:det@localhost:5432/det"
+
+# S3 / MinIO
+# export AWS_ENDPOINT_URL=http://127.0.0.1:9000
+# export AWS_ACCESS_KEY_ID=minioadmin
+# export AWS_SECRET_ACCESS_KEY=minioadmin
+# export AWS_REGION=us-east-1
+
+# GCS
+# export STORAGE_EMULATOR_HOST=http://127.0.0.1:4443
+# export GOOGLE_CLOUD_PROJECT=det-local
+
+# --- Source credentials ----------------------------------------------------
+# Names referenced by configs/pipelines/*.yaml auth_env / connection_env.
+# export NOAA_TOKEN="..."

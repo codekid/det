@@ -51,6 +51,18 @@ def _pipeline_path(pipeline: str, root: Path) -> Path:
     return resolve_pipeline_ref(pipeline, project_root=root).path
 
 
+def _canonical_id(pipeline: str, root: Path) -> str:
+    """Resolved pipeline identity for approval plans.
+
+    Approval digests must be built from the same identity the CLI uses, so both
+    surfaces go through ``resolve_pipeline_ref`` rather than reading ``name:``
+    from the config (which is not validated against the file's location).
+    """
+    from det.runtime.pipelines import resolve_pipeline_ref
+
+    return resolve_pipeline_ref(pipeline, project_root=root).canonical_id
+
+
 def _load_pipeline(pipeline: str, root: Path):
     from det.runtime.config import load_pipeline_config
     from det.runtime.pipelines import resolve_pipeline_ref
@@ -397,7 +409,7 @@ def prune_dry_run(
         "approval_plan": _approval_plan(
             "prune",
             prune_write_argv(
-                config.name,
+                _canonical_id(pipeline, base),
                 interval_start,
                 interval_end=interval_end,
                 keep=keep,
@@ -458,7 +470,11 @@ def dbt_dry_run(
         "bronze_source": result.bronze_source,
         "approval_plan": _approval_plan(
             "dbt",
-            dbt_write_argv(pipeline, command=command, select=select),
+            dbt_write_argv(
+                _canonical_id(pipeline, base) if pipeline is not None else None,
+                command=command,
+                select=select,
+            ),
         ),
     }
 
@@ -482,7 +498,7 @@ def scaffold_dbt_dry_run(
         "dataset": result.dataset,
         "approval_plan": _approval_plan(
             "scaffold-dbt",
-            scaffold_dbt_write_argv(config.name, force=force),
+            scaffold_dbt_write_argv(_canonical_id(pipeline, base), force=force),
         ),
         "actions": [
             {

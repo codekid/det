@@ -13,9 +13,12 @@ from det.logging import configure_logging
 from det.runtime.approval import (
     ApprovalError,
     check_approval,
+    claim_approval,
     consume_approval,
     create_approval,
+    dbt_write_argv,
     effective_status,
+    extract_write_argv,
     list_unused_approvals,
     load_approval,
     make_plan,
@@ -161,7 +164,9 @@ def _invoke(args: list[str]):
 
 
 def _pipe_yaml(tmp_path: Path) -> Path:
-    pipeline = tmp_path / "pipe.yaml"
+    """Write a config where it resolves to the canonical id ``noaa.storm_events``."""
+    pipeline = tmp_path / "configs" / "pipelines" / "noaa" / "storm_events.yaml"
+    pipeline.parent.mkdir(parents=True, exist_ok=True)
     pipeline.write_text(
         f"""
 name: noaa.storm_events
@@ -181,7 +186,11 @@ def test_cli_approve_show_consume_round_trip(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
     monkeypatch.delenv("DET_APPROVED_BY", raising=False)
     pipeline = _pipe_yaml(tmp_path)
-    argv = prune_write_argv(str(pipeline), "2026-08-01", interval_end="2026-09-01", keep=1)
+    # Approve by canonical id and bare date; invoke by YAML path. Both surfaces
+    # normalize to the same argv, so the digest still matches.
+    argv = prune_write_argv(
+        "noaa.storm_events", "2026-08-01", interval_end="2026-09-01", keep=1
+    )
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(
         json.dumps({"approval_plan": make_plan("prune", argv).to_dict()}),
@@ -255,11 +264,12 @@ def test_cli_approve_show_consume_round_trip(tmp_path: Path, monkeypatch):
 
 def test_cli_require_approval_without_id(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
+    pipeline = _pipe_yaml(tmp_path)
     result = _invoke(
         [
             "extract",
             "-p",
-            "noaa.storm_events",
+            str(pipeline),
             "-s",
             "2026-08-06",
             "--require-approval",
@@ -269,6 +279,267 @@ def test_cli_require_approval_without_id(tmp_path: Path, monkeypatch):
     )
     assert result.exit_code != 0
     assert "approval_required" in result.output
+
+
+def test_cli_unresolvable_pipeline_errors_before_approval_gate(tmp_path: Path, monkeypatch):
+    """Resolution now precedes gating, so a bad ref reports the real problem."""
+    monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
+    result = _invoke(
+        [
+            "extract",
+            "-p",
+            "nope.missing",
+            "-s",
+            "2026-08-06",
+            "--require-approval",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    assert result.exit_code != 0
+    assert "approval_required" not in result.output
+
+
+def test_cli_lake_path_under_valid_approval_is_rejected(tmp_path: Path, monkeypatch):
+    """--lake-path redirects where data lands, so it must be inside the digest."""
+    monkeypatch.delenv("DET_APPROVED_BY", raising=False)
+    pipeline = _pipe_yaml(tmp_path)
+    argv = prune_write_argv("noaa.storm_events", "2026-08-01", interval_end="2026-09-01", keep=1)
+    rec = create_approval(
+        tmp_path, command="prune", argv=argv, approved_by="tester", now=None
+    )
+    monkeypatch.setenv("DET_REQUIRE_APPROVAL", "1")
+    result = _invoke(
+        [
+            "prune",
+            "-p",
+            str(pipeline),
+            "-s",
+            "2026-08-01",
+            "-e",
+            "2026-09-01",
+            "--keep",
+            "1",
+            "--apply",
+            "--set",
+            "destination.path=/tmp/elsewhere",
+            "--approval",
+            rec["id"],
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    assert result.exit_code != 0
+    assert "approval_argv_mismatch" in result.output
+
+
+def test_cli_unbound_flag_is_rejected_fail_closed(tmp_path: Path, monkeypatch):
+    """A flag in neither the bound nor neutral table is rejected under an approval.
+
+    This is the property pure argv binding cannot provide: a flag added to the CLI
+    later cannot silently escape plan_digest.
+    """
+    from det.cli import common
+
+    monkeypatch.delenv("DET_APPROVED_BY", raising=False)
+    # Simulate a newly added flag by dropping --keep from prune's bound set.
+    monkeypatch.setitem(
+        common._BOUND_PARAMS,
+        "prune",
+        common._BOUND_PARAMS["prune"] - {"keep"},
+    )
+    pipeline = _pipe_yaml(tmp_path)
+    argv = prune_write_argv("noaa.storm_events", "2026-08-01", interval_end="2026-09-01", keep=1)
+    rec = create_approval(tmp_path, command="prune", argv=argv, approved_by="tester", now=None)
+    monkeypatch.setenv("DET_REQUIRE_APPROVAL", "1")
+    result = _invoke(
+        [
+            "prune",
+            "-p",
+            str(pipeline),
+            "-s",
+            "2026-08-01",
+            "-e",
+            "2026-09-01",
+            "--keep",
+            "1",
+            "--apply",
+            "--approval",
+            rec["id"],
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    assert result.exit_code != 0
+    assert "approval_unbound_flag" in result.output
+    assert "--keep" in result.output
+
+
+def test_builders_normalize_interval_to_same_digest():
+    """A bare date and its ISO-UTC equivalent must not diverge."""
+    bare = extract_write_argv("noaa.storm_events", "2026-08-06")
+    iso = extract_write_argv("noaa.storm_events", "2026-08-06T00:00:00+00:00")
+    offset = extract_write_argv("noaa.storm_events", "2026-08-06T02:00:00+02:00")
+    assert bare == iso == offset
+    assert make_plan("extract", bare).plan_digest == make_plan("extract", offset).plan_digest
+
+
+def test_builders_reject_unresolved_pipeline_refs():
+    """Path/slash refs must fail loudly rather than yield a divergent digest."""
+    for bad in (
+        "noaa/storm_events",
+        "configs/pipelines/noaa/storm_events.yaml",
+        "/tmp/pipe.yaml",
+        "pipe.yaml",
+        "NOAA.Storm",
+        "",
+    ):
+        with pytest.raises(ValueError, match="resolved pipeline id"):
+            extract_write_argv(bad, "2026-08-06")
+
+
+def test_builders_accept_a_bare_stem_identity():
+    """Flat or out-of-tree configs resolve to a stem, which is still stable."""
+    argv = extract_write_argv("pipe", "2026-08-06")
+    assert argv[:3] == ["extract", "-p", "pipe"]
+
+
+def test_mutating_flags_change_the_digest():
+    base = extract_write_argv("noaa.storm_events", "2026-08-06")
+    redirected = extract_write_argv("noaa.storm_events", "2026-08-06", lake_path="s3://other")
+    overridden = extract_write_argv("noaa.storm_events", "2026-08-06", set_=["destination.path=/x"])
+    digests = {
+        make_plan("extract", argv).plan_digest for argv in (base, redirected, overridden)
+    }
+    assert len(digests) == 3
+
+
+def test_set_overrides_are_order_independent():
+    a = extract_write_argv("noaa.storm_events", "2026-08-06", set_=["b=2", "a=1"])
+    b = extract_write_argv("noaa.storm_events", "2026-08-06", set_=["a=1", "b=2"])
+    assert a == b
+
+
+def test_dbt_full_refresh_and_target_are_bound():
+    base = dbt_write_argv("noaa.storm_events")
+    refreshed = dbt_write_argv("noaa.storm_events", full_refresh=True)
+    retargeted = dbt_write_argv("noaa.storm_events", target="prod")
+    assert "--full-refresh" in refreshed
+    assert ["--target", "prod"] == retargeted[-2:]
+    digests = {make_plan("dbt", argv).plan_digest for argv in (base, refreshed, retargeted)}
+    assert len(digests) == 3
+
+
+def test_claim_is_exclusive(tmp_path: Path):
+    """Two concurrent claims on one approval: exactly one wins."""
+    rec = _create(tmp_path)
+    first = claim_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True, now=NOW)
+    assert first is not None
+    assert first["status"] == "claimed"
+    assert first["claimed_by"]
+    assert load_approval(tmp_path, rec["id"])["status"] == "claimed"
+    with pytest.raises(ApprovalError) as exc:
+        claim_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True, now=NOW)
+    assert exc.value.code == "approval_in_flight"
+
+
+def test_check_rejects_a_claimed_approval(tmp_path: Path):
+    rec = _create(tmp_path)
+    claim_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True, now=NOW)
+    with pytest.raises(ApprovalError) as exc:
+        check_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True, now=NOW)
+    assert exc.value.code == "approval_in_flight"
+
+
+def test_claim_then_consume_round_trip(tmp_path: Path):
+    rec = _create(tmp_path)
+    claim_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True, now=NOW)
+    consume_approval(tmp_path, rec["id"], now=NOW)
+    assert load_approval(tmp_path, rec["id"])["status"] == "consumed"
+
+
+def test_consume_still_accepts_an_unclaimed_record(tmp_path: Path):
+    """The Airflow check-then-consume path does not claim, so it must still work."""
+    rec = _create(tmp_path)
+    check_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True, now=NOW)
+    consume_approval(tmp_path, rec["id"], now=NOW)
+    assert load_approval(tmp_path, rec["id"])["status"] == "consumed"
+
+
+def test_claim_survives_ttl_expiry(tmp_path: Path):
+    """TTL gates claiming, not finishing: a long write must still consume."""
+    rec = _create(tmp_path, ttl_sec=60)
+    claim_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True, now=NOW)
+    later = NOW + timedelta(seconds=3600)
+    assert effective_status(load_approval(tmp_path, rec["id"]), now=later) == "claimed"
+    consume_approval(tmp_path, rec["id"], now=later)
+    assert load_approval(tmp_path, rec["id"])["status"] == "consumed"
+
+
+def test_claimed_record_is_not_listed_as_unused(tmp_path: Path):
+    rec = _create(tmp_path)
+    claim_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True, now=NOW)
+    assert list_unused_approvals(tmp_path, now=NOW) == []
+
+
+def test_expired_record_cannot_be_claimed(tmp_path: Path):
+    rec = _create(tmp_path, ttl_sec=60)
+    with pytest.raises(ApprovalError) as exc:
+        claim_approval(
+            tmp_path,
+            "prune",
+            rec["argv"],
+            rec["id"],
+            require=True,
+            now=NOW + timedelta(seconds=61),
+        )
+    assert exc.value.code == "approval_expired"
+
+
+def test_claim_without_id_is_a_noop_when_not_required(tmp_path: Path):
+    assert claim_approval(tmp_path, "extract", ["extract"], None, require=False) is None
+
+
+def test_every_gated_command_param_is_classified():
+    """Each writing command's params must be either bound or explicitly neutral.
+
+    This fails at test time when a flag is added to a gated command without
+    deciding whether it changes the write, rather than leaving the runtime
+    backstop to reject it in front of an operator.
+    """
+    import typer.main
+
+    from det.cli import app
+    from det.cli.common import _BOUND_PARAMS, _NEUTRAL_PARAMS
+
+    group = typer.main.get_command(app)
+    unclassified: dict[str, list[str]] = {}
+    for name, bound in _BOUND_PARAMS.items():
+        cmd = group.commands[name]  # type: ignore[attr-defined]
+        allowed = bound | _NEUTRAL_PARAMS
+        missing = sorted(p.name for p in cmd.params if p.name and p.name not in allowed)
+        if missing:
+            unclassified[name] = missing
+    assert unclassified == {}, (
+        "add these params to _BOUND_PARAMS (they change the write, and the "
+        f"argv builder must encode them) or _NEUTRAL_PARAMS: {unclassified}"
+    )
+
+
+def test_gated_commands_are_all_covered():
+    """Every command that gates an approval needs an entry in _BOUND_PARAMS."""
+    import typer.main
+
+    from det.cli import app
+    from det.cli.common import _BOUND_PARAMS
+
+    group = typer.main.get_command(app)
+    gated = {
+        name
+        for name, cmd in group.commands.items()  # type: ignore[attr-defined]
+        if any(p.name == "approval" for p in cmd.params)
+    }
+    assert gated - set(_BOUND_PARAMS) == set()
 
 
 def test_migrate_write_argv_includes_recreate_iceberg():

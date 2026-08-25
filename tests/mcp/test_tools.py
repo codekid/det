@@ -147,6 +147,29 @@ def test_prune_dry_run_smoke(tmp_path: Path):
     assert "--apply" in ap["argv"]
     assert len(ap["plan_digest"]) == 64
     assert "det approve" in ap["note"]
+    # The interval is normalized in the plan, so an operator can approve from a
+    # bare date and still run the CLI with an explicit ISO datetime.
+    assert "2026-08-01T00:00:00+00:00" in ap["argv"]
+
+
+def test_prune_dry_run_digest_is_independent_of_pipeline_ref_form(tmp_path: Path):
+    """MCP and CLI must agree regardless of how the pipeline was spelled."""
+    _write_pipeline(tmp_path)
+    digests = set()
+    for ref in (
+        "example_api.events",
+        "example_api/events",
+        "configs/pipelines/example_api/events.yaml",
+    ):
+        plan = prune_dry_run(
+            ref,
+            interval_start="2026-08-01",
+            interval_end="2026-09-01",
+            keep=1,
+            root=tmp_path,
+        )
+        digests.add(plan["approval_plan"]["plan_digest"])
+    assert len(digests) == 1
 
 
 def test_scaffold_and_init_dry_run(tmp_path: Path):

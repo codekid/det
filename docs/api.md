@@ -107,6 +107,22 @@ on the library path. Operators/agents use `det approve` + `--approval` (or
 backfill windows. `record_attempt` and `runs-materialize` stay internal / ops
 product — not on `__all__`.
 
+**Approvals are an audit and intent-binding mechanism, not an authorization
+boundary.** The same shell that runs `det extract --approval` can also run
+`det approve`, so the gate is not a privilege boundary. What it does guarantee:
+
+- Every flag that changes *what* or *where* is written is bound into
+  `plan_digest`, and `check_approval` requires exact `argv` equality — so the
+  record accurately describes the command that runs.
+- A flag the argv builders do not encode is **rejected** under an approval
+  (`approval_unbound_flag`) rather than silently escaping the digest.
+- Claiming is atomic (`claim_approval`), so two concurrent runs cannot both
+  write against one approval. A crash leaves the record `claimed`; recover by
+  issuing a new approval.
+
+Real authorization requires moving `det approve` out-of-band — a separate user,
+machine, or credential from the one running the write.
+
 Lock paths live under the lake; build them with
 `det.runtime.lease.lock_path` (advanced) then `inspect_lease` / `release_lock`.
 
@@ -140,6 +156,9 @@ internally; prefer catching the public `Det*` types.
 ---
 
 ## Concurrency
+
+Raw publish (manifest-as-commit), lease limits, and extract/load idempotency are
+normative in [publication-contract.md](publication-contract.md).
 
 ### Supported (v1)
 
@@ -196,7 +215,7 @@ pytest; not imported by the core helpers).
 | CLI (`det.cli`) | Operator front-door |
 | MCP (`det.mcp.*`) | Agent inspect / dry-run |
 | Scaffold / `dbt_runner` | Product integrations; relation `grain` / path-qualified spine is operator dbt contract (see det-dbt skill), not `lake_layout` |
-| Approvals | CLI / agent only — library callers are trusted (`PipelineRunner` / migrator / pruner apply have no approval hook) |
+| Approvals | CLI / agent only — library callers are trusted (`PipelineRunner` / migrator / pruner apply have no approval hook). Audit / intent-binding, not authorization |
 | `record_attempt` / receipt writes | Runner-internal |
 | `runs-materialize` | Ops product path |
 | `read_lock` / `force_release_lock` | Prefer `inspect_lease` / `release_lock` |
