@@ -1096,6 +1096,7 @@ def biglake_register_dry_run(
     from det.runtime.biglake_register import (
         biglake_register_write_argv,
         build_biglake_register_plan,
+        build_iam_hint,
     )
 
     base = _root(root)

@@ -9,12 +9,12 @@ import pytest
 from det.ingestion.iceberg_catalog import hint_version_from_metadata_location
 from det.runtime.biglake_register import (
     BigLakeRegisterPlan,
+    _lake_bucket,
     build_biglake_register_plan,
     build_iam_hint,
     external_table_ddl,
     format_dry_run,
     format_iam_hint,
-    _lake_bucket,
 )
 from det.runtime.lake import open_lake
 

@@ -4,7 +4,7 @@
         schema="silver_{{ provider }}",
 {%- if silver.materialized == "incremental" %}
         unique_key={{ silver.unique_key | tojson }},
-        incremental_strategy={{ '{{' }} 'merge' if target.name == 'bigquery' else '{{ silver.incremental_strategy }}' {{ '}}' }},
+        incremental_strategy='merge' if target.name == 'bigquery' else '{{ silver.incremental_strategy }}',
 {%- endif %}
 {%- if silver.bigquery and silver.bigquery.has_layout() %}
         {{ '{% if target.name == \'bigquery\' %}' }}

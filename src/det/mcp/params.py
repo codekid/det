@@ -286,3 +286,30 @@ ApprovalId = Annotated[
     str,
     Field(description="Approval id from `det approve` (apr_ + 16 hex chars)"),
 ]
+GcpProjectOpt = Annotated[
+    str | None,
+    Field(
+        description=(
+            "GCP project id owning the BigQuery datasets; "
+            "omit to read DET_GCP_PROJECT or GOOGLE_CLOUD_PROJECT"
+        )
+    ),
+]
+BqLocationOpt = Annotated[
+    str | None,
+    Field(
+        description=(
+            "BigQuery location for datasets and the connection (e.g. US, us-central1); "
+            "omit to read DET_BQ_LOCATION (default US)"
+        )
+    ),
+]
+BqConnectionOpt = Annotated[
+    str | None,
+    Field(
+        description=(
+            "BigQuery cloud-resource connection name used to read the gs:// lake; "
+            "omit to read DET_BQ_CONNECTION (default det-lake-conn)"
+        )
+    ),
+]

@@ -172,6 +172,25 @@ def test_read_json_columns_from_schema_includes_meta():
     assert struct.startswith("{") and struct.endswith("}")
 
 
+def test_scaffolded_sql_is_parseable_jinja(tmp_path: Path):
+    """Generated models must be syntactically valid Jinja, not just contain the
+    right substrings. Guards against emitting `{{ ... }}` nested inside a
+    `{{ config(...) }}` block, which dbt cannot compile."""
+    from jinja2 import Environment
+
+    pipeline = _write_mini_project(tmp_path)
+    config = load_pipeline_config(pipeline)
+    models = tmp_path / "dbt" / "models" / "silver"
+    scaffold_dbt(config, project_root=tmp_path, dbt_models_dir=models)
+
+    generated = sorted(models.glob("*.sql"))
+    assert generated, "scaffold produced no SQL models"
+
+    env = Environment()
+    for path in generated:
+        env.parse(path.read_text(encoding="utf-8"))
+
+
 def test_scaffold_creates_and_skips_without_force(tmp_path: Path):
     pipeline = _write_mini_project(tmp_path)
     config = load_pipeline_config(pipeline)
