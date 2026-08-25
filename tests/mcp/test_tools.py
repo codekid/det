@@ -316,6 +316,26 @@ def test_list_approvals_empty_on_tmp_root(tmp_path: Path):
     listed = list_approvals(root=tmp_path)
     assert listed["approvals"] == []
     assert listed["project_root"] == str(tmp_path.resolve())
+    assert listed["status"] == "unused"
+
+
+def test_list_approvals_can_surface_a_claimed_record(tmp_path: Path):
+    """An agent diagnosing a stuck write needs to see claimed, which is hidden by default."""
+    from det.runtime.approval import claim_approval, create_approval, prune_write_argv
+
+    argv = prune_write_argv("example_api.events", "2026-08-01")
+    rec = create_approval(tmp_path, command="prune", argv=argv, approved_by="tester")
+    claim_approval(tmp_path, "prune", argv, rec["id"], require=True)
+
+    assert list_approvals(root=tmp_path)["approvals"] == []
+    claimed = list_approvals("claimed", root=tmp_path)
+    assert [r["id"] for r in claimed["approvals"]] == [rec["id"]]
+    assert len(list_approvals("all", root=tmp_path)["approvals"]) == 1
+
+
+def test_list_approvals_rejects_unknown_status(tmp_path: Path):
+    with pytest.raises(ValueError, match="status must be one of"):
+        list_approvals("bogus", root=tmp_path)
 
 
 def test_biglake_register_dry_run_returns_iam_hint(

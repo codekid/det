@@ -81,8 +81,13 @@ Paths are sandboxed under `DET_PROJECT_ROOT` (default cwd / project root).
 turn. Show the plan/result and wait for the user to approve. Operator: `det approve`.
 Agent write (later turn): `--approval <id>` when required. Run the writing command
 with exactly the flags in the approved `argv` — anything else fails the gate.
-An approval whose run crashed stays `claimed`; recover by re-approving, not by
-deleting the record.
+
+An approval whose run crashed stays `claimed` and never expires, so it will not
+appear in the default listing. Find it with `list_approvals` `status="claimed"`
+(or `det list-approvals --status claimed`). Recovery is a fresh approval, or the
+operator running `det approval-release <id> --force` after confirming the worker
+is dead. Never delete the record by hand, and never suggest releasing one whose
+run may still be running — that reopens the double-write window.
 
 Source plugins are discovered from `src/det/sources/<provider>/<source>.py` (`name`
 must match). Do not register them in `plugins.py`. Migrate mappers use `@mapper` on

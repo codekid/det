@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -19,12 +20,14 @@ from det.runtime.approval import (
     dbt_write_argv,
     effective_status,
     extract_write_argv,
+    list_approval_records,
     list_unused_approvals,
     load_approval,
     make_plan,
     migrate_write_argv,
     plan_from_mapping,
     prune_write_argv,
+    release_approval,
 )
 
 NOW = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
@@ -152,6 +155,10 @@ def test_plan_from_mapping_nested_and_digest_check():
     with pytest.raises(ApprovalError) as exc:
         plan_from_mapping({"command": "prune", "argv": ["prune"], "plan_digest": "0" * 64})
     assert exc.value.code == "approval_plan_invalid"
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
 def _invoke(args: list[str]):
@@ -498,6 +505,118 @@ def test_expired_record_cannot_be_claimed(tmp_path: Path):
 
 def test_claim_without_id_is_a_noop_when_not_required(tmp_path: Path):
     assert claim_approval(tmp_path, "extract", ["extract"], None, require=False) is None
+
+
+def test_release_returns_a_claimed_approval_to_unused(tmp_path: Path):
+    rec = _create(tmp_path)
+    claim_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True, now=NOW)
+    released = release_approval(tmp_path, rec["id"], released_by="operator", now=NOW)
+    assert released["status"] == "unused"
+    assert released["released_by"] == "operator"
+    # The torn-down claim is preserved; the point of releasing is the audit trail.
+    assert released["released_from_claim"]["claimed_by"]
+    assert "claimed_by" not in released
+    assert effective_status(load_approval(tmp_path, rec["id"]), now=NOW) == "unused"
+
+
+def test_release_allows_exactly_one_more_claim(tmp_path: Path):
+    rec = _create(tmp_path)
+    claim_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True, now=NOW)
+    release_approval(tmp_path, rec["id"], released_by="operator", now=NOW)
+    again = claim_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True, now=NOW)
+    assert again is not None
+    assert again["status"] == "claimed"
+    # Still exclusive afterwards: release is one retry, not an unlock.
+    with pytest.raises(ApprovalError) as exc:
+        claim_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True, now=NOW)
+    assert exc.value.code == "approval_in_flight"
+
+
+def test_release_is_not_a_ttl_bypass(tmp_path: Path):
+    """An approval that expired while claimed stays dead after release."""
+    rec = _create(tmp_path, ttl_sec=60)
+    claim_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True, now=NOW)
+    later = NOW + timedelta(seconds=3600)
+    released = release_approval(tmp_path, rec["id"], released_by="operator", now=later)
+    assert released["expires_at"] == rec["expires_at"]
+    assert effective_status(load_approval(tmp_path, rec["id"]), now=later) == "expired"
+    with pytest.raises(ApprovalError) as exc:
+        claim_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True, now=later)
+    assert exc.value.code == "approval_expired"
+
+
+@pytest.mark.parametrize("bad_state", ["unused", "consumed"])
+def test_release_rejects_anything_but_claimed(tmp_path: Path, bad_state: str):
+    rec = _create(tmp_path)
+    if bad_state == "consumed":
+        consume_approval(tmp_path, rec["id"], now=NOW)
+    with pytest.raises(ApprovalError) as exc:
+        release_approval(tmp_path, rec["id"], released_by="operator", now=NOW)
+    assert exc.value.code == "approval_not_claimed"
+
+
+def test_release_requires_an_identity(tmp_path: Path):
+    rec = _create(tmp_path)
+    claim_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True, now=NOW)
+    with pytest.raises(ApprovalError) as exc:
+        release_approval(tmp_path, rec["id"], released_by="  ", now=NOW)
+    assert exc.value.code == "approval_identity_required"
+
+
+def test_listing_defaults_to_unused_and_can_find_claimed(tmp_path: Path):
+    """A claimed record is invisible by default, which is why --status exists."""
+    rec = _create(tmp_path)
+    assert [r["id"] for r in list_approval_records(tmp_path, statuses=("unused",), now=NOW)] == [
+        rec["id"]
+    ]
+    claim_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True, now=NOW)
+    assert list_approval_records(tmp_path, statuses=("unused",), now=NOW) == []
+    claimed = list_approval_records(tmp_path, statuses=("claimed",), now=NOW)
+    assert [r["id"] for r in claimed] == [rec["id"]]
+    assert claimed[0]["claimed_at"]
+    assert len(list_approval_records(tmp_path, statuses=None, now=NOW)) == 1
+
+
+def test_cli_release_round_trip(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("DET_APPROVED_BY", raising=False)
+    # Real clock: the CLI derives status against utcnow, so a fixed past stamp
+    # would read as expired by the time we list it.
+    rec = _create(tmp_path, now=None)
+    claim_approval(tmp_path, "prune", rec["argv"], rec["id"], require=True)
+
+    stuck = _invoke(["list-approvals", "--status", "claimed", "--project-root", str(tmp_path)])
+    assert stuck.exit_code == 0, stuck.output
+    assert json.loads(stuck.stdout)["approvals"][0]["id"] == rec["id"]
+
+    # --force is mandatory: the operator asserts the claiming run is dead.
+    unforced = _invoke(["approval-release", rec["id"], "--project-root", str(tmp_path)])
+    assert unforced.exit_code == 2
+    plain = _strip_ansi(unforced.output).lower()
+    # Rich/Typer error formatting varies by platform; check semantics, not markup.
+    assert "force" in plain and "required" in plain
+    assert load_approval(tmp_path, rec["id"])["status"] == "claimed"
+
+    released = _invoke(
+        [
+            "approval-release",
+            rec["id"],
+            "--force",
+            "--released-by",
+            "operator",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    assert released.exit_code == 0, released.output
+    assert json.loads(released.stdout)["status"] == "unused"
+    back = _invoke(["list-approvals", "--project-root", str(tmp_path)])
+    assert json.loads(back.stdout)["approvals"][0]["id"] == rec["id"]
+
+
+def test_cli_list_approvals_rejects_bad_status(tmp_path: Path):
+    result = _invoke(["list-approvals", "--status", "nope", "--project-root", str(tmp_path)])
+    assert result.exit_code != 0
+    assert "unknown status" in result.output
 
 
 def test_every_gated_command_param_is_classified():

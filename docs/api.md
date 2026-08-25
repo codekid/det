@@ -117,8 +117,21 @@ boundary.** The same shell that runs `det extract --approval` can also run
 - A flag the argv builders do not encode is **rejected** under an approval
   (`approval_unbound_flag`) rather than silently escaping the digest.
 - Claiming is atomic (`claim_approval`), so two concurrent runs cannot both
-  write against one approval. A crash leaves the record `claimed`; recover by
-  issuing a new approval.
+  write against one approval.
+
+A crash between claim and consume leaves the record `claimed`, and a claim never
+ages out (TTL gates *claiming*, not finishing), so it is excluded from the default
+listing. Use `list_approval_records(root, statuses=("claimed",))` — or
+`det list-approvals --status claimed` — to find it. Recover with a fresh approval,
+or `release_approval` (`det approval-release <id> --force`), which mirrors
+`force_release_lock` for lake leases: explicit, operator-only, and recorded via
+`released_at` / `released_by` / `released_from_claim`.
+
+Releasing is deliberately **not** a TTL bypass — the record returns to `unused`,
+so one that expired while claimed reads as `expired` — and deliberately **not**
+automatic, since a TTL-driven release would silently reopen the double-write
+window. `det approval-release` is also not itself approval-gated: a recovery path
+must not depend on the mechanism that is stuck.
 
 Real authorization requires moving `det approve` out-of-band — a separate user,
 machine, or credential from the one running the write.

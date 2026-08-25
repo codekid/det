@@ -35,7 +35,12 @@ inclusive, `-e` exclusive (default start + 1 day). Lake hive/SQL contract:
   `--set`, `--full-refresh`, `--target`, and `--ingestion`. Pipeline refs and
   intervals are canonicalized, so `noaa/storm_events` and `noaa.storm_events`,
   or `-s 2026-08-06` and `-s 2026-08-06T00:00:00+00:00`, share one digest.
-  A claimed approval whose run crashed stays `claimed`; recover by re-approving.
+- A crashed run leaves its approval `claimed`, and a claim never expires, so it
+  is hidden from the default listing. Find it with `det list-approvals --status
+  claimed` (or MCP `list_approvals` `status="claimed"`). Recovery is either a new
+  approval or, once the worker is dead, the operator running
+  `det approval-release <id> --force`. Releasing is not a TTL bypass and never
+  automatic — never suggest releasing an approval whose run may still be alive.
 - Never suggest `dlt.pipeline` / `pipeline.run` for landing.
 - Pipeline YAML holds secret **names** (`auth_env`, `connection_env`); values stay in env.
 - Source plugins are discovered from `src/det/sources/<provider>/<source>.py`
