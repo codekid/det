@@ -115,7 +115,7 @@ jobs:
       - name: dbt parse
         run: uv run dbt parse --project-dir dbt --profiles-dir dbt
       - name: Pytest
-        run: uv run pytest -q
+        run: uv run pytest -q --cov=det --cov-report=term-missing:skip-covered
 
   minimal:
     runs-on: ubuntu-latest

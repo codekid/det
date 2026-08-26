@@ -266,7 +266,8 @@ class NoaaStormEventsSource:
             if interval_end
             else start.add(days=1)
         )
-        assert start is not None and end is not None
+        if start is None or end is None:
+            raise TypeError("pendulum.parse returned None for NOAA interval bounds")
         years = set(range(start.year, end.subtract(microseconds=1).year + 1))
         logger.info("Selecting NOAA files for years", years=sorted(years), substr=substr)
         best: dict[int, str] = {}

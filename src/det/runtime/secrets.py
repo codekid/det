@@ -385,8 +385,8 @@ def _is_gitignored(path: Path) -> bool | None:
     protects against committing, which only matters inside a work tree.
     """
     try:
-        completed = subprocess.run(
-            ["git", "check-ignore", "-q", str(path)],
+        completed = subprocess.run(  # noqa: S603
+            ["git", "check-ignore", "-q", str(path)],  # noqa: S607
             cwd=str(path.parent),
             capture_output=True,
             timeout=5,

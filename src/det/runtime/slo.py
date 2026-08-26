@@ -212,7 +212,7 @@ def collect_slo_rows(project_root: Path) -> list[SloExpectedRow]:
     for path in discover_pipeline_files(project_root):
         try:
             config = load_pipeline_config(path)
-        except Exception:
+        except Exception:  # noqa: S112  # skip unloadable YAML when collecting SLOs
             continue
         if config.slo is None:
             continue
