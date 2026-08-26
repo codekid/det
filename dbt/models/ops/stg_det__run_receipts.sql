@@ -18,7 +18,7 @@ select
   destination,
   artifacts,
   raw_bytes,
-  `rows`,
+  {{ adapter.quote('rows') }},
   schema_sha256,
   error_code,
   error_class,

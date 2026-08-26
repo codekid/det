@@ -64,7 +64,7 @@ def assert_raw_contract(raw_dir: Path | Any) -> dict[str, Any]:
         if not path.is_file():
             raise AssertionError(f"artifact[{i}] path missing on disk: {path}")
 
-    return manifest
+    return dict(manifest)
 
 
 def assert_no_dlt_artifacts(

@@ -136,9 +136,11 @@ def _print_run_summary(
 
     rows: list[tuple[str, ...]] = []
     groups = payload.get("groups")
-    assert isinstance(groups, list)
+    if not isinstance(groups, list):
+        raise TypeError("summarize_runs payload.groups must be a list")
     for group in groups:
-        assert isinstance(group, dict)
+        if not isinstance(group, dict):
+            raise TypeError("summarize_runs group must be a dict")
         values = (str(group.get("command") or "-"),)
         if include_pipeline:
             values = (_truncate(group.get("pipeline"), 30),) + values

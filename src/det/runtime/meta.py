@@ -48,7 +48,8 @@ def resolve_interval(start: str, end: str | None = None) -> tuple[str, str]:
     start_iso = to_interval_datetime(start)
     if end is None:
         end_dt = pendulum.parse(start_iso)
-        assert isinstance(end_dt, DateTime)
+        if not isinstance(end_dt, DateTime):
+            raise TypeError(f"expected DateTime from pendulum.parse, got {type(end_dt)}")
         end_iso = end_dt.add(days=1).isoformat()
     else:
         end_iso = to_interval_datetime(end)

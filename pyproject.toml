@@ -91,14 +91,56 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP"]
+select = ["E", "F", "I", "UP", "B", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+# Typer idiom: Option()/Argument() as defaults.
+"src/det/cli/**/*.py" = ["B008"]
+# SQL is built from quote_ident / fixed meta columns; values are bound params.
+"src/det/ingestion/duckdb_writer.py" = ["S608"]
+"src/det/ingestion/postgres_writer.py" = ["S608"]
+"src/det/ingestion/sql_ddl.py" = ["S608"]
+"src/det/ingestion/sql_replace.py" = ["S608"]
+"src/det/mcp/inspect/**/*.py" = ["S608"]
+"src/det/mcp/query_sql.py" = ["S608"]
+"src/det/runtime/prune.py" = ["S608"]
+# Pytest asserts / fixture secrets / intentional SQL and subprocess tests.
+"tests/**/*.py" = ["S101", "S105", "S106", "S108", "S603", "S607", "S608", "S701", "B017"]
+"scripts/**/*.py" = ["S101"]
+# Local Airflow DAGs: assert for conf, subprocess to det CLI, bool/1 conf dual.
+"dags/**/*.py" = ["S101", "S603", "B033"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["det"]
 
+# Coverage ratchet (CI fail_under). Raise over time; never lower without cause.
+[tool.coverage.run]
+source = ["det"]
+branch = false
+omit = [
+    "*/det/mcp/__main__.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# Set in PR1 after measuring clean main; ratchet upward only.
+fail_under = 81
+
 # Narrow public-surface typecheck (CI). Follow imports but only report on these paths.
 [tool.pyright]
-include = ["src/det/__init__.py", "src/det/sources/http.py", "src/det/sources/http_json.py"]
+include = [
+    "src/det/__init__.py",
+    "src/det/errors.py",
+    "src/det/plugins.py",
+    "src/det/optional_deps.py",
+    "src/det/logging.py",
+    "src/det/validation",
+    "src/det/destinations",
+    "src/det/sources",
+    "src/det/ingestion",
+    "src/det/testing",
+]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
 reportMissingImports = "warning"

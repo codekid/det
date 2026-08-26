@@ -115,7 +115,7 @@ jobs:
       - name: dbt parse
         run: uv run dbt parse --project-dir dbt --profiles-dir dbt
       - name: Pytest
-        run: uv run pytest -q
+        run: uv run pytest -q --cov=det --cov-report=term-missing:skip-covered
 
   minimal:
     runs-on: ubuntu-latest
@@ -137,6 +137,8 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install (typed public surface)
-        run: uv sync --extra duckdb --extra iceberg
+        run: >
+          uv sync --extra duckdb --extra iceberg --extra postgres
+          --extra scaffold --extra examples --extra mcp --extra dbt
       - name: Narrow pyright on public modules
         run: uvx --from basedpyright basedpyright

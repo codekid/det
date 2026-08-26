@@ -12,12 +12,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pyiceberg.catalog import (
-    EMPTY_DICT,
     WAREHOUSE_LOCATION,
     Catalog,
-    Identifier,
     MetastoreCatalog,
-    Properties,
     PropertiesUpdateSummary,
 )
 from pyiceberg.exceptions import (
@@ -34,7 +31,14 @@ from pyiceberg.table.locations import load_location_provider
 from pyiceberg.table.metadata import new_table_metadata
 from pyiceberg.table.sorting import UNSORTED_SORT_ORDER, SortOrder
 from pyiceberg.table.update import TableRequirement, TableUpdate
-from pyiceberg.typedef import Properties as IcebergProperties
+from pyiceberg.typedef import (
+    EMPTY_DICT,
+    Identifier,
+    Properties,
+)
+from pyiceberg.typedef import (
+    Properties as IcebergProperties,
+)
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -142,7 +146,7 @@ class LakeHadoopCatalog(MetastoreCatalog):
     ) -> Table:
         schema = self._convert_schema_if_needed(
             schema,
-            int(
+            int(  # type: ignore[arg-type]
                 properties.get(
                     TableProperties.FORMAT_VERSION,
                     TableProperties.DEFAULT_FORMAT_VERSION,
@@ -209,7 +213,7 @@ class LakeHadoopCatalog(MetastoreCatalog):
         if current_table and staged.metadata == current_table.metadata:
             return CommitTableResponse(
                 metadata=current_table.metadata,
-                metadata_location=current_table.metadata_location,
+                metadata_location=current_table.metadata_location,  # pyright: ignore[reportCallIssue]
             )
         if current_table is not None:
             live_hint = self._read_hint(table_location)
@@ -220,7 +224,8 @@ class LakeHadoopCatalog(MetastoreCatalog):
         self._write_metadata(staged.metadata, staged.io, staged.metadata_location)
         self._write_hint(table_location, staged.metadata_location)
         return CommitTableResponse(
-            metadata=staged.metadata, metadata_location=staged.metadata_location
+            metadata=staged.metadata,
+            metadata_location=staged.metadata_location,  # pyright: ignore[reportCallIssue]
         )
 
     def namespace_exists(self, namespace: str | Identifier) -> bool:

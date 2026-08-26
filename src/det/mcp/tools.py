@@ -766,7 +766,8 @@ def migrate_dry_run(
         all_raw=all_raw,
         all_raw_runs=all_raw_runs,
     )
-    assert isinstance(plan, MigratePlan)
+    if not isinstance(plan, MigratePlan):
+        raise TypeError(f"expected MigratePlan, got {type(plan).__name__}")
     out = plan.to_dict()
     out["validate_limit"] = capped
     out["pipeline"] = resolved.canonical_id

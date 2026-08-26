@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
+import pytest  # type: ignore[import-not-found]
 
 from det.testing.project import TestProject
 from det.testing.registry import isolated_registries
