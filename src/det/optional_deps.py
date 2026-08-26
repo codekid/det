@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import ModuleType
+from typing import Any
 
 
 def require_duckdb() -> ModuleType:
@@ -27,12 +28,12 @@ def require_jinja2() -> ModuleType:
     return jinja2
 
 
-def require_dlt_rest() -> tuple[ModuleType, ModuleType, ModuleType]:
-    """Return ``(RESTClient, BearerTokenAuth, paginators_module)`` helpers."""
+def require_dlt_rest() -> tuple[Any, ModuleType, ModuleType]:
+    """Return ``(RESTClient, auth_module, paginators_module)`` helpers."""
     try:
-        from dlt.sources.helpers.rest_client import RESTClient
         from dlt.sources.helpers.rest_client import auth as rest_auth
         from dlt.sources.helpers.rest_client import paginators as rest_paginators
+        from dlt.sources.helpers.rest_client.client import RESTClient
     except ImportError as exc:
         raise ImportError(
             "dlt is required for this HTTP source; install with: "
@@ -41,7 +42,8 @@ def require_dlt_rest() -> tuple[ModuleType, ModuleType, ModuleType]:
     return RESTClient, rest_auth, rest_paginators
 
 
-def require_beautifulsoup() -> ModuleType:
+def require_beautifulsoup() -> Any:
+    """Return the ``BeautifulSoup`` class (callable), not the ``bs4`` module."""
     try:
         from bs4 import BeautifulSoup
     except ImportError as exc:

@@ -137,6 +137,8 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install (typed public surface)
-        run: uv sync --extra duckdb --extra iceberg
+        run: >
+          uv sync --extra duckdb --extra iceberg --extra postgres
+          --extra scaffold --extra examples --extra mcp --extra dbt
       - name: Narrow pyright on public modules
         run: uvx --from basedpyright basedpyright

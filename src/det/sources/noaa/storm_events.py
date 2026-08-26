@@ -221,7 +221,7 @@ class NoaaStormEventsSource:
         emitted = 0
         with _open_text(path, content_encoding=content_encoding) as f:
             reader = csv.DictReader(f)
-            fields = reader.fieldnames
+            fields = list(reader.fieldnames) if reader.fieldnames is not None else None
             for row in reader:
                 if _is_repeated_header_row(row, fields):
                     continue
@@ -260,14 +260,17 @@ class NoaaStormEventsSource:
         interval_end: str | None,
         substr: str,
     ) -> list[str]:
-        start = pendulum.parse(interval_start).in_timezone("UTC")
-        end = (
-            pendulum.parse(interval_end).in_timezone("UTC")
-            if interval_end
-            else start.add(days=1)
-        )
-        if start is None or end is None:
-            raise TypeError("pendulum.parse returned None for NOAA interval bounds")
+        start_raw = pendulum.parse(interval_start)
+        if not isinstance(start_raw, pendulum.DateTime):
+            raise TypeError(f"expected DateTime for interval_start, got {type(start_raw)}")
+        start = start_raw.in_timezone("UTC")
+        if interval_end:
+            end_raw = pendulum.parse(interval_end)
+            if not isinstance(end_raw, pendulum.DateTime):
+                raise TypeError(f"expected DateTime for interval_end, got {type(end_raw)}")
+            end = end_raw.in_timezone("UTC")
+        else:
+            end = start.add(days=1)
         years = set(range(start.year, end.subtract(microseconds=1).year + 1))
         logger.info("Selecting NOAA files for years", years=sorted(years), substr=substr)
         best: dict[int, str] = {}
