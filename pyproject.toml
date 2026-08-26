@@ -98,7 +98,18 @@ known-first-party = ["det"]
 
 # Narrow public-surface typecheck (CI). Follow imports but only report on these paths.
 [tool.pyright]
-include = ["src/det/__init__.py", "src/det/sources/http.py", "src/det/sources/http_json.py"]
+include = [
+    "src/det/__init__.py",
+    "src/det/errors.py",
+    "src/det/plugins.py",
+    "src/det/optional_deps.py",
+    "src/det/logging.py",
+    "src/det/validation",
+    "src/det/destinations",
+    "src/det/sources",
+    "src/det/ingestion",
+    "src/det/testing",
+]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
 reportMissingImports = "warning"

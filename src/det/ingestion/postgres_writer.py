@@ -72,9 +72,9 @@ def write_postgres_table(
 
                 def execute(sql: str, params: Sequence[Any] | None = None) -> None:
                     if params is None:
-                        cur.execute(sql)
+                        cur.execute(sql)  # type: ignore[arg-type]
                     else:
-                        cur.execute(sql, params)
+                        cur.execute(sql, params)  # type: ignore[arg-type]
 
                 def fetchall(
                     sql: str, params: Sequence[Any] | None = None
@@ -109,7 +109,7 @@ def write_postgres_table(
                         rows = [
                             tuple(_cell(row.get(c)) for c in columns) for row in chunk
                         ]
-                        cur.executemany(insert_sql, rows)
+                        cur.executemany(insert_sql, rows)  # type: ignore[arg-type]
 
                     assert_chunk_matches_identity(first_chunk, identity)
                     _insert(first_chunk)

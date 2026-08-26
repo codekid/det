@@ -288,11 +288,12 @@ def _run_filter(identity: tuple[str, str, str]):
     from pyiceberg.expressions import And, EqualTo
 
     start, end, run = identity
-    return And(
-        EqualTo(_START, _as_utc_datetime(start)),
-        And(
-            EqualTo(_END, _as_utc_datetime(end)),
-            EqualTo(_RUN, _as_utc_datetime(run)),
+    # Stubs for EqualTo/And are incomplete across pyiceberg versions.
+    return And(  # type: ignore[call-arg]
+        EqualTo(_START, _as_utc_datetime(start)),  # type: ignore[call-arg]
+        And(  # type: ignore[call-arg]
+            EqualTo(_END, _as_utc_datetime(end)),  # type: ignore[call-arg]
+            EqualTo(_RUN, _as_utc_datetime(run)),  # type: ignore[call-arg]
         ),
     )
 
