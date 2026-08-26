@@ -140,6 +140,21 @@ include = [
     "src/det/sources",
     "src/det/ingestion",
     "src/det/testing",
+    "src/det/runtime/manifest_types.py",
+    "src/det/runtime/receipt_types.py",
+    "src/det/runtime/layout.py",
+    "src/det/runtime/ids.py",
+    "src/det/runtime/naming.py",
+    "src/det/runtime/meta.py",
+    "src/det/runtime/mappers.py",
+    "src/det/runtime/dlt_hygiene.py",
+    "src/det/runtime/coerce.py",
+    "src/det/runtime/object_store.py",
+    "src/det/runtime/slo.py",
+    "src/det/runtime/discovery.py",
+    "src/det/runtime/secrets.py",
+    "src/det/runtime/sql_types.py",
+    "src/det/runtime/approval.py",
 ]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"

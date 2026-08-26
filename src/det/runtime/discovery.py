@@ -20,7 +20,7 @@ import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import det.sources as sources_pkg
 from det.errors import DetPluginError
@@ -239,7 +239,9 @@ def collect_mappers(module: ModuleType) -> dict[str, Callable[[dict[str, Any]], 
                 f"duplicate mapper {mapper_name!r} in {module.__name__}",
                 module=module.__name__,
             )
-        found[str(mapper_name)] = obj
+        found[str(mapper_name)] = cast(
+            Callable[[dict[str, Any]], dict[str, Any]], obj
+        )
     return found
 
 
@@ -368,7 +370,7 @@ def iter_discovered_mappers(
                 f"entry point mapper {ep.name!r} does not match @mapper({attr!r})",
                 module=getattr(fn, "__module__", None),
             )
-        yield ep.name, fn
+        yield ep.name, cast(Callable[[dict[str, Any]], dict[str, Any]], fn)
 
 
 def probe_source_load_errors(

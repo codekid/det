@@ -114,7 +114,8 @@ def make_plan(command: str, argv: Sequence[str]) -> ApprovalPlan:
 
 def plan_from_mapping(doc: dict[str, Any]) -> ApprovalPlan:
     """Accept a stub or a dry-run payload that nests ``approval_plan``."""
-    inner = doc.get("approval_plan") if isinstance(doc.get("approval_plan"), dict) else doc
+    raw_inner = doc.get("approval_plan")
+    inner: dict[str, Any] = raw_inner if isinstance(raw_inner, dict) else doc
     command = inner.get("command")
     argv = inner.get("argv")
     if not isinstance(command, str) or not command.strip():
