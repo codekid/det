@@ -51,6 +51,36 @@ def require_bronze_run_identity(
     return identity
 
 
+def resolve_run_identity(
+    run_identity: tuple[str, str, str] | None,
+    first_chunk: list[dict[str, Any]] | None,
+) -> tuple[str, str, str]:
+    """Prefer caller-threaded identity; fall back to the first chunk when present."""
+    if run_identity is not None:
+        start, end, run = (str(run_identity[0]), str(run_identity[1]), str(run_identity[2]))
+        if not start.strip() or not end.strip() or not run.strip():
+            raise ValueError("run_identity parts must be non-empty")
+        return start, end, run
+    if first_chunk is None:
+        raise ValueError(
+            "empty bronze write requires run_identity "
+            f"({_START}, {_END}, {_RUN}) from the runner"
+        )
+    return require_bronze_run_identity(first_chunk)
+
+
+def assert_chunk_matches_identity(
+    chunk: list[dict[str, Any]],
+    expected: tuple[str, str, str],
+) -> None:
+    got = require_bronze_run_identity(chunk)
+    if got != expected:
+        raise ValueError(
+            "bronze run identity does not match the batch "
+            f"({got!r} vs {expected!r})"
+        )
+
+
 def delete_extract_run_sql(qualified: str, *, placeholder: str) -> str:
     """DELETE rows for one extract run. Params are ISO strings; engines coerce TIMESTAMP."""
     return (

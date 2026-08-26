@@ -11,8 +11,8 @@ from det.runtime.sql_types import (
 
 
 def test_sql_type_for_prop_both_dialects():
-    assert duckdb_type_for_prop({"type": "integer"}) == "INTEGER"
-    assert sql_type_for_prop({"type": ["integer", "null"]}, "postgres") == "INTEGER"
+    assert duckdb_type_for_prop({"type": "integer"}) == "BIGINT"
+    assert sql_type_for_prop({"type": ["integer", "null"]}, "postgres") == "BIGINT"
     assert sql_type_for_prop({"type": "number"}, "duckdb") == "DOUBLE"
     assert sql_type_for_prop({"type": "number"}, "postgres") == "DOUBLE PRECISION"
     assert sql_type_for_prop({"type": "boolean"}, "duckdb") == "BOOLEAN"
@@ -47,7 +47,7 @@ def test_bronze_sql_columns_schema_then_meta():
         "__data_interval_date",
     ]
     by_name = dict(cols)
-    assert by_name["event_id"] == "INTEGER"
+    assert by_name["event_id"] == "BIGINT"
     assert by_name["state"] == "VARCHAR"
     assert by_name["__extract_run_datetime"] == "TIMESTAMP"
     assert by_name["__data_interval_date"] == "DATE"
@@ -57,8 +57,8 @@ def test_bronze_sql_columns_schema_then_meta():
 
 
 def test_iceberg_type_for_prop_and_columns():
-    assert iceberg_type_for_prop({"type": "integer"}) == "INTEGER"
-    assert iceberg_type_for_prop({"type": ["integer", "null"]}) == "INTEGER"
+    assert iceberg_type_for_prop({"type": "integer"}) == "BIGINT"
+    assert iceberg_type_for_prop({"type": ["integer", "null"]}) == "BIGINT"
     assert iceberg_type_for_prop({"type": "number"}) == "DOUBLE"
     assert iceberg_type_for_prop({"type": "boolean"}) == "BOOLEAN"
     assert iceberg_type_for_prop({"type": "string"}) == "STRING"
@@ -74,7 +74,7 @@ def test_iceberg_type_for_prop_and_columns():
         },
     }
     cols = dict(bronze_iceberg_columns(schema))
-    assert cols["event_id"] == "INTEGER"
+    assert cols["event_id"] == "BIGINT"
     assert cols["payload"] == "STRING"
     assert cols["__extract_run_datetime"] == "TIMESTAMPTZ"
     assert cols["__data_interval_date"] == "DATE"

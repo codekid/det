@@ -22,9 +22,13 @@ class IngestionBackend(Protocol):
         partition_dir: LakePath,
         destination: DestinationConfig,
         chunk_rows: int = 10_000,
+        run_identity: tuple[str, str, str] | None = None,
     ) -> LakePath:
         """
         Persist records into the bronze hive partition (replace semantics).
-        Returns the partition directory written.
+
+        ``run_identity`` is ``(interval_start, interval_end, extract_run)`` from
+        the runner. Required for empty SQL/Iceberg writes so replace-by-run still
+        deletes the prior slice.
         """
         ...

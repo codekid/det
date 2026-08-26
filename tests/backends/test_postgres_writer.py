@@ -345,7 +345,7 @@ def test_write_postgres_table_deletes_then_inserts(monkeypatch):
     create = next(
         sql for sql in execute_sql if sql.lower().startswith("create table")
     )
-    assert "INTEGER" in create
+    assert "BIGINT" in create
     assert "JSONB" not in create
     delete = next(c for c in calls if c[0] == "execute" and c[1] and "delete from" in c[1].lower())
     assert delete[2] == (
@@ -407,7 +407,7 @@ def test_write_postgres_table_schema_types_and_alter(monkeypatch):
         for op, sql, _ in calls
         if op == "execute" and sql and sql.lower().startswith("create table")
     )
-    assert '"event_id" INTEGER' in create
+    assert '"event_id" BIGINT' in create
     assert '"authors" JSONB' in create
 
     calls.clear()

@@ -161,14 +161,14 @@ def test_read_json_columns_from_schema_includes_meta():
         }
     }
     cols = read_json_columns_from_schema(schema)
-    assert cols["event_id"] == "INTEGER"
+    assert cols["event_id"] == "BIGINT"
     assert cols["state"] == "VARCHAR"
     assert cols["magnitude"] == "DOUBLE"
     assert cols["__row_hash"] == "VARCHAR"
     assert cols["__extract_run_datetime"] == "TIMESTAMP"
     assert cols["__bronze_loaded_at"] == "TIMESTAMP"
     struct = format_read_json_columns(cols)
-    assert "'event_id': 'INTEGER'" in struct
+    assert "'event_id': 'BIGINT'" in struct
     assert struct.startswith("{") and struct.endswith("}")
 
 
@@ -224,7 +224,7 @@ def test_scaffold_creates_and_skips_without_force(tmp_path: Path):
     sources_text = (models / "sources.yml").read_text(encoding="utf-8")
     assert "bronze_noaa" in sources_text
     assert "read_json(" in sources_text
-    assert "'event_id': 'INTEGER'" in sources_text
+    assert "'event_id': 'BIGINT'" in sources_text
     assert "formatter:" in sources_text
     assert "target.name != 'bigquery'" in sources_text
     assert "target.name == 'bigquery'" in sources_text

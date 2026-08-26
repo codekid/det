@@ -639,6 +639,14 @@ class _FsspecBackend(_Backend):
         return int(info.get("size") or 0)
 
     def create_exclusive(self, key: str, data: bytes) -> None:
+        """Create ``key`` only if absent; raise ``FileExistsError`` if it exists.
+
+        Prefer fsspec exclusive open mode ``xb``. If the filesystem rejects that
+        mode, fall back to an exists-check then ``wb``. That fallback is
+        **best-effort** under concurrent writers (not a strong distributed lock).
+        Lake leases on object stores inherit this limit — see
+        ``docs/publication-contract.md``.
+        """
         parent = self.parent(key)
         if parent:
             self.mkdir(parent, parents=True, exist_ok=True)

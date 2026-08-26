@@ -111,13 +111,10 @@ def coerce_value(value: Any, prop: dict[str, Any], *, field: str) -> Any:
         if isinstance(value, bool):
             raise CoerceError(f"{field}: boolean is not a valid number")
         if isinstance(value, (int, float)):
-            return float(value) if not isinstance(value, int) else value
+            return float(value)
         if isinstance(value, str):
             text = value.strip()
             try:
-                # Preserve ints when the text is integral.
-                if text.isdigit() or (text.startswith("-") and text[1:].isdigit()):
-                    return int(text)
                 return float(text)
             except ValueError as exc:
                 raise CoerceError(f"{field}: cannot coerce {value!r} to number") from exc

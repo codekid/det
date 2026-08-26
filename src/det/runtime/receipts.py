@@ -15,7 +15,7 @@ from collections import Counter, defaultdict
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from pydantic import ValidationError as PydanticValidationError
@@ -26,6 +26,7 @@ from det.runtime.lake import LakeRef
 from det.runtime.layout import LAKE_LAYOUT
 from det.runtime.lease import LeaseHeldError, default_lock_owner
 from det.runtime.meta import to_interval_datetime, to_partition_value
+from det.runtime.receipt_types import ReceiptPayload
 from det.runtime.secrets import SecretError, SecretNotSetError
 from det.sources.http import HttpError, HttpIntegrityError
 
@@ -173,11 +174,11 @@ def _payload(
     *,
     error: BaseException | None,
     finished_at: datetime,
-) -> dict[str, Any]:
+) -> ReceiptPayload:
     duration_ms = max(
         0, int((finished_at - draft.started_at).total_seconds() * 1000)
     )
-    body: dict[str, Any] = {
+    body: ReceiptPayload = {
         "receipt_version": RECEIPT_VERSION,
         "lake_layout": LAKE_LAYOUT,
         "attempt_id": draft.attempt_id,
@@ -476,7 +477,7 @@ def _optional_str(value: Any) -> str | None:
     return text or None
 
 
-def normalize_receipt(raw: Mapping[str, Any]) -> dict[str, Any] | None:
+def normalize_receipt(raw: Mapping[str, Any]) -> ReceiptPayload | None:
     """Map a receipt JSON body to the fixed ops row. Returns None if unusable."""
     attempt_id = _optional_str(raw.get("attempt_id"))
     pipeline = _optional_str(raw.get("pipeline"))
@@ -492,34 +493,37 @@ def normalize_receipt(raw: Mapping[str, Any]) -> dict[str, Any] | None:
     version = _optional_int(raw.get("receipt_version"))
     if version is None:
         version = RECEIPT_VERSION
-    return {
-        "receipt_version": version,
-        "attempt_id": attempt_id,
-        "attempt_date": attempt_date,
-        "pipeline": pipeline,
-        "command": command,
-        "interval_start": _optional_str(raw.get("interval_start")),
-        "interval_end": _optional_str(raw.get("interval_end")),
-        "extract_run_datetime": _optional_str(raw.get("extract_run_datetime")),
-        "wire_version": _optional_int(raw.get("wire_version")),
-        "status": status,
-        "started_at": str(started_raw),
-        "finished_at": _optional_str(raw.get("finished_at")),
-        "duration_ms": _optional_int(raw.get("duration_ms")),
-        "owner": _optional_str(raw.get("owner")) or "",
-        "destination": _optional_str(raw.get("destination")),
-        "artifacts": _optional_int(raw.get("artifacts")),
-        "raw_bytes": _optional_int(raw.get("raw_bytes")),
-        "rows": _optional_int(raw.get("rows")),
-        "schema_sha256": _optional_str(raw.get("schema_sha256")),
-        "error_code": _optional_str(raw.get("error_code")),
-        "error_class": _optional_str(raw.get("error_class")),
-        "error_message": (
-            _scrub_error_message(str(raw["error_message"]))
-            if raw.get("error_message") is not None
-            else None
-        ),
-    }
+    return cast(
+        ReceiptPayload,
+        {
+            "receipt_version": version,
+            "attempt_id": attempt_id,
+            "attempt_date": attempt_date,
+            "pipeline": pipeline,
+            "command": command,
+            "interval_start": _optional_str(raw.get("interval_start")),
+            "interval_end": _optional_str(raw.get("interval_end")),
+            "extract_run_datetime": _optional_str(raw.get("extract_run_datetime")),
+            "wire_version": _optional_int(raw.get("wire_version")),
+            "status": status,
+            "started_at": str(started_raw),
+            "finished_at": _optional_str(raw.get("finished_at")),
+            "duration_ms": _optional_int(raw.get("duration_ms")),
+            "owner": _optional_str(raw.get("owner")) or "",
+            "destination": _optional_str(raw.get("destination")),
+            "artifacts": _optional_int(raw.get("artifacts")),
+            "raw_bytes": _optional_int(raw.get("raw_bytes")),
+            "rows": _optional_int(raw.get("rows")),
+            "schema_sha256": _optional_str(raw.get("schema_sha256")),
+            "error_code": _optional_str(raw.get("error_code")),
+            "error_class": _optional_str(raw.get("error_class")),
+            "error_message": (
+                _scrub_error_message(str(raw["error_message"]))
+                if raw.get("error_message") is not None
+                else None
+            ),
+        },
+    )
 
 
 def summarize_receipts(

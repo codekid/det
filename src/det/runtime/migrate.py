@@ -26,7 +26,7 @@ from det.runtime.ids import validate_canonical_id
 from det.runtime.lake import LakeRef
 from det.runtime.lake import relpath as lake_relpath
 from det.runtime.lease import pipeline_lease
-from det.runtime.load_rows import CountingIter, chain_first, iter_bronze_rows
+from det.runtime.load_rows import CountingIter, iter_bronze_rows
 from det.runtime.manifest import (
     committed_extract_run_dirs,
     extract_run_datetime_from_raw,
@@ -474,11 +474,7 @@ class BronzeMigrator:
                         mapper=mapper,
                         log_every=to_config.ingestion.chunk_rows,
                     )
-                    first = next(stream, None)
-                    if first is None:
-                        continue
-
-                    counted = CountingIter(chain_first(first, stream))
+                    counted = CountingIter(stream)
                     out_part = hive_partition_dir(
                         bronze_dataset_dir(
                             to_config, self.project_root, dataset=to_bronze_id
@@ -494,6 +490,7 @@ class BronzeMigrator:
                         partition_dir=out_part,
                         destination=to_config.destination,
                         chunk_rows=to_config.ingestion.chunk_rows,
+                        run_identity=(start_iso, end_iso, extract_ts),
                     )
                     stamp_validation_success(
                         raw_dir,

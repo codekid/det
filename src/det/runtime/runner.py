@@ -344,6 +344,7 @@ class PipelineRunner:
                             partition_dir=partition,
                             destination=config.destination,
                             chunk_rows=config.ingestion.chunk_rows,
+                            run_identity=(start_iso, end_iso, extract_ts),
                         )
                     except Exception as exc:
                         reraise_as_plugin(exc, plugin=source.name, action="load")

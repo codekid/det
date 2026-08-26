@@ -38,6 +38,7 @@ class DetBackend:
         partition_dir: Path | LakeRef,
         destination: DestinationConfig,
         chunk_rows: int | None = None,
+        run_identity: tuple[str, str, str] | None = None,
     ) -> Path | LakeRef:
         size = config.ingestion.chunk_rows if chunk_rows is None else chunk_rows
         if destination.type == "filesystem":
@@ -51,6 +52,7 @@ class DetBackend:
                 project_root=project_root,
                 destination=destination,
                 chunk_rows=size,
+                run_identity=run_identity,
             )
         if destination.type == "postgres":
             return self._write_postgres(
@@ -59,6 +61,7 @@ class DetBackend:
                 project_root=project_root,
                 destination=destination,
                 chunk_rows=size,
+                run_identity=run_identity,
             )
         if destination.type == "iceberg":
             return self._write_iceberg(
@@ -66,6 +69,7 @@ class DetBackend:
                 config=config,
                 project_root=project_root,
                 chunk_rows=size,
+                run_identity=run_identity,
             )
         raise ValueError(f"Unsupported destination type: {destination.type}")
 
@@ -93,6 +97,7 @@ class DetBackend:
         project_root: Path,
         destination: DestinationConfig,
         chunk_rows: int,
+        run_identity: tuple[str, str, str] | None = None,
     ) -> Path:
         db_path = duckdb_connection_path(destination, project_root)
         schema, table = sql_names_for_config(config)
@@ -104,6 +109,7 @@ class DetBackend:
             table=table,
             json_schema=json_schema,
             chunk_rows=chunk_rows,
+            run_identity=run_identity,
         )
 
     def _write_postgres(
@@ -114,6 +120,7 @@ class DetBackend:
         project_root: Path,
         destination: DestinationConfig,
         chunk_rows: int,
+        run_identity: tuple[str, str, str] | None = None,
     ) -> Path:
         dsn = postgres_dsn(destination)
         schema, table = sql_names_for_config(config)
@@ -126,6 +133,7 @@ class DetBackend:
             json_schema=json_schema,
             chunk_rows=chunk_rows,
             pipeline=config.name,
+            run_identity=run_identity,
         )
         # Logical identity only — Path() would mangle DSN schemes (:// → :/).
         return Path("postgres") / schema / table
@@ -137,6 +145,7 @@ class DetBackend:
         config: PipelineConfig,
         project_root: Path,
         chunk_rows: int,
+        run_identity: tuple[str, str, str] | None = None,
     ) -> LakeRef:
         from det.destinations.models import bronze_dataset_dir, lake_root
         from det.ingestion.iceberg_writer import write_iceberg_table
@@ -152,6 +161,7 @@ class DetBackend:
             json_schema=json_schema,
             chunk_rows=chunk_rows,
             partition=config.destination.iceberg_partition,
+            run_identity=run_identity,
         )
         logger.info(
             "iceberg load finished",
