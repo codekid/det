@@ -115,7 +115,9 @@ def _request(
             timeout=settings["timeout_sec"],
         )
     except requests.RequestException as exc:
-        return _unavailable(settings, str(exc))
+        from det.mcp.errors import sanitize_detail
+
+        return _unavailable(settings, sanitize_detail(exc))
     if resp.status_code >= 500 or resp.status_code in {401, 403, 404}:
         if resp.status_code in {401, 403}:
             return {

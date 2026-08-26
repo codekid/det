@@ -246,6 +246,70 @@ def test_sample_raw_and_validate(tmp_path: Path):
     assert bad["coerce_errors"] or bad["schema_errors"]
 
 
+def test_sample_raw_wire_oserror_does_not_leak_abs_path(tmp_path: Path, monkeypatch):
+    """Wire-sample OSError messages must not expose absolute filesystem paths."""
+    from det.mcp.inspect import _sample_wire
+
+    data = tmp_path / "run" / "data"
+    data.mkdir(parents=True)
+    wire_file = data / "payload.json"
+    wire_file.write_text('{"ok": true}\n', encoding="utf-8")
+    leak = str(tmp_path / "secret" / "creds.db")
+    orig = Path.read_text
+
+    def selective(self, *args, **kwargs):
+        if self.name == "payload.json":
+            raise OSError(f"[Errno 2] No such file or directory: '{leak}'")
+        return orig(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", selective)
+    peeks, _ = _sample_wire(tmp_path / "run", root=tmp_path, limit=5)
+    blob = json.dumps(peeks)
+    assert leak not in blob
+    assert str(tmp_path) not in blob
+    assert peeks and "<path>" in peeks[0]["error"]
+
+
+def test_diagnose_manifest_error_is_sanitized(tmp_path: Path, monkeypatch):
+    """Manifest read failures in diagnose must not leak absolute paths."""
+    from det.mcp import inspect as inspect_mod
+
+    _write_pipeline(tmp_path)
+    start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
+    run = "2026-08-06T10:00:00+00:00"
+    _write_example_raw(
+        tmp_path,
+        start=start,
+        end=end,
+        run=run,
+        events=[{"id": 1, "eventName": "alpha"}],
+    )
+    leak = str(tmp_path / "hidden" / "lake" / "manifest.json")
+
+    def boom(*args, **kwargs):
+        raise OSError(f"Permission denied: {leak}")
+
+    monkeypatch.setattr(inspect_mod, "read_raw_manifest", boom)
+    report = diagnose_pipeline("example_api.events", root=tmp_path)
+    blob = json.dumps(report)
+    assert leak not in blob
+    evidence = report.get("evidence") or {}
+    if "manifest_error" in evidence:
+        assert leak not in evidence["manifest_error"]
+        assert "<path>" in evidence["manifest_error"]
+
+
+def test_unreachable_note_sanitizes_exception_paths():
+    from det.mcp.airflow_inspect import _unreachable_note
+
+    note = _unreachable_note(
+        "http://localhost:8080",
+        OSError("Connection failed reading /Users/alice/dev/secret/token"),
+    )
+    assert "/Users/alice" not in note
+    assert "<path>" in note
+
+
 def test_sample_bronze_filesystem(tmp_path: Path):
     _write_pipeline(tmp_path)
     start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
