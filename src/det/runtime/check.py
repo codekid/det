@@ -186,7 +186,83 @@ def check_pipeline_config(
                     ),
                 )
             )
+        else:
+            findings.extend(
+                _scaffold_sql_stale_findings(
+                    config,
+                    project_root=root,
+                    pipeline_id=pipeline_id,
+                )
+            )
 
+    return findings
+
+
+def _normalize_scaffold_text(text: str) -> str:
+    text = text.replace("\r\n", "\n")
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text
+
+
+def _scaffold_sql_stale_findings(
+    config: Any,
+    *,
+    project_root: Path,
+    pipeline_id: str,
+) -> list[Finding]:
+    """Warn when on-disk silver SQL no longer matches scaffold templates + knobs."""
+    from det.scaffold.dbt import expected_silver_sql
+
+    findings: list[Finding] = []
+    try:
+        expected = expected_silver_sql(config, project_root=project_root)
+    except Exception as exc:
+        findings.append(
+            Finding(
+                severity="warning",
+                code="scaffold_sql_stale",
+                pipeline=pipeline_id,
+                path=_rel(project_root / "dbt" / "models" / "silver", project_root),
+                detail=f"could not re-render expected silver SQL: {exc}",
+            )
+        )
+        return findings
+
+    for rel, content in expected.items():
+        path = project_root / rel
+        if not path.is_file():
+            # Existence is covered by missing_dbt_models for the root silver;
+            # relation silver gaps are still useful to surface here.
+            findings.append(
+                Finding(
+                    severity="warning",
+                    code="scaffold_sql_stale",
+                    pipeline=pipeline_id,
+                    path=rel,
+                    detail=(
+                        "expected scaffolded silver SQL is missing; "
+                        f"regenerate with `det scaffold-dbt -p {pipeline_id}`"
+                    ),
+                )
+            )
+            continue
+        on_disk = _normalize_scaffold_text(path.read_text(encoding="utf-8"))
+        if on_disk != _normalize_scaffold_text(content):
+            findings.append(
+                Finding(
+                    severity="warning",
+                    code="scaffold_sql_stale",
+                    pipeline=pipeline_id,
+                    path=rel,
+                    detail=(
+                        "on-disk silver SQL does not match current pipeline "
+                        "dbt.silver knobs / scaffold templates. Re-scaffold with "
+                        f"`det scaffold-dbt -p {pipeline_id} --force` "
+                        "(or keep hand-tuned SQL and accept this warning)."
+                    ),
+                )
+            )
     return findings
 
 
@@ -322,6 +398,7 @@ def check_project(
     seed does not match pipeline YAML (full-project check only);
     ``lake_mode_mismatch`` when ``DET_LAKE_MODE`` disagrees with the lake URI.
     Warnings: missing dbt stg/silver when ``dbt/`` exists;
+    ``scaffold_sql_stale`` when silver SQL drifts from scaffold templates;
     ``lake_cloud_experimental`` when ``DET_LAKE_MODE=cloud``.
     """
     root = resolve_project_root(project_root)

@@ -205,3 +205,28 @@ def test_bigquery_layout_rejected_on_view_materialized():
             materialized="view",
             bigquery={"cluster_by": ["id"]},
         )
+
+
+def test_silver_knobs_reject_unsafe_identifiers():
+    from pydantic import ValidationError
+
+    from det.runtime.config import DbtSilverConfig
+
+    with pytest.raises(ValidationError, match="unique_key"):
+        DbtSilverConfig(unique_key=["id; drop table"])
+    with pytest.raises(ValidationError, match="order_by"):
+        DbtSilverConfig(order_by=["id; drop"])
+    with pytest.raises(ValidationError, match="watermark"):
+        DbtSilverConfig(watermark="1 = 1")
+    with pytest.raises(ValidationError, match="lookback"):
+        DbtSilverConfig(lookback="7 days; select 1")
+    with pytest.raises(ValidationError, match="lookback"):
+        DbtSilverConfig(lookback="yesterday")
+    ok = DbtSilverConfig(
+        unique_key=["__row_hash", "event_id"],
+        order_by=["event_id asc", "__extract_run_datetime desc"],
+        watermark="__bronze_loaded_at",
+        lookback="7 days",
+    )
+    assert ok.lookback == "7 days"
+    assert ok.watermark == "__bronze_loaded_at"

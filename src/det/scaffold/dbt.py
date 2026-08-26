@@ -681,6 +681,52 @@ def _render(name: str, **ctx: Any) -> str:
     return _env().get_template(name).render(**ctx)
 
 
+def expected_silver_sql(
+    config: PipelineConfig,
+    *,
+    project_root: Path,
+) -> dict[str, str]:
+    """
+    Re-render expected silver (+ relation silver) SQL from current config+schema.
+
+    Keys are paths relative to ``project_root`` under ``dbt/models/silver/``.
+    Does not compare stg SQL (templates document hand-edits).
+    """
+    root = project_root.resolve()
+    model_slug = dbt_model_slug(config.name)
+    provider, _ = parse_canonical_id(config.name)
+    silver: DbtSilverConfig = config.dbt.silver
+    stg_cfg: DbtStgConfig = config.dbt.stg
+    schema = load_json_schema(resolve_path(root, config.schema_path))
+    out: dict[str, str] = {
+        f"dbt/models/silver/silver_{model_slug}.sql": _render(
+            "silver.sql.j2",
+            model_slug=model_slug,
+            silver=silver,
+            provider=provider,
+        )
+    }
+    for name_parts_t, _path_chain_t, rel in iter_relation_paths(stg_cfg.relations):
+        name_parts = list(name_parts_t)
+        parent_key = default_parent_key(schema, silver, rel.parent_key)
+        rel_slug = f"{model_slug}__{'__'.join(name_parts)}"
+        rel_chain = relation_chain_for(stg_cfg.relations, name_parts)
+        spine = spine_for_relation(name_parts, rel_chain)
+        spine_names = [e.name for e in spine]
+        rel_unique_key = [parent_key, *spine_names]
+        out[f"dbt/models/silver/silver_{rel_slug}.sql"] = _render(
+            "silver_relation.sql.j2",
+            model_slug=rel_slug,
+            relation_name="__".join(name_parts),
+            materialized=rel.materialized,
+            unique_key=rel_unique_key,
+            order_by=list(silver.order_by),
+            provider=provider,
+            bigquery=rel.bigquery,
+        )
+    return out
+
+
 def _write_or_skip(
     path: Path,
     content: str,

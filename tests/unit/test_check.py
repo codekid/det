@@ -123,6 +123,40 @@ def test_missing_dbt_models_warning(tmp_path: Path):
     assert any(f.code == "missing_dbt_models" for f in findings)
 
 
+def test_scaffold_sql_stale_when_lookback_changes(tmp_path: Path):
+    from det.runtime.config import load_pipeline_config
+    from det.scaffold.dbt import scaffold_dbt
+
+    path = _write_pipeline(tmp_path, with_dbt=True)
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    doc["dbt"] = {
+        "silver": {
+            "materialized": "incremental",
+            "unique_key": ["id"],
+            "order_by": ["__extract_run_datetime desc"],
+            "watermark": "__extract_run_datetime",
+            "lookback": "3 days",
+        }
+    }
+    path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    config = load_pipeline_config(path)
+    scaffold_dbt(config, project_root=tmp_path, force=True)
+    findings = check_pipeline_config(path, project_root=tmp_path)
+    assert not any(f.code == "scaffold_sql_stale" for f in findings)
+
+    doc["dbt"]["silver"]["lookback"] = "7 days"
+    path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    findings = check_pipeline_config(path, project_root=tmp_path)
+    assert any(f.code == "scaffold_sql_stale" for f in findings)
+    assert has_warnings(findings)
+    assert not has_errors(findings)
+
+    config = load_pipeline_config(path)
+    scaffold_dbt(config, project_root=tmp_path, force=True)
+    findings = check_pipeline_config(path, project_root=tmp_path)
+    assert not any(f.code == "scaffold_sql_stale" for f in findings)
+
+
 def _write_pipeline_with(root: Path, **doc_updates) -> Path:
     path = _write_pipeline(root)
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
