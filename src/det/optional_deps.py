@@ -31,9 +31,9 @@ def require_jinja2() -> ModuleType:
 def require_dlt_rest() -> tuple[Any, ModuleType, ModuleType]:
     """Return ``(RESTClient, auth_module, paginators_module)`` helpers."""
     try:
-        from dlt.sources.helpers.rest_client.client import RESTClient
         from dlt.sources.helpers.rest_client import auth as rest_auth
         from dlt.sources.helpers.rest_client import paginators as rest_paginators
+        from dlt.sources.helpers.rest_client.client import RESTClient
     except ImportError as exc:
         raise ImportError(
             "dlt is required for this HTTP source; install with: "

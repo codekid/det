@@ -35,8 +35,11 @@ from pyiceberg.typedef import (
     EMPTY_DICT,
     Identifier,
     Properties,
+)
+from pyiceberg.typedef import (
     Properties as IcebergProperties,
 )
+
 if TYPE_CHECKING:
     import pyarrow as pa
 
