@@ -644,7 +644,7 @@ def _sample_wire(
             peeks.append(
                 {
                     "path": _rel(path, root),
-                    "error": str(exc),
+                    "error": sanitize_detail(exc),
                 }
             )
             continue
@@ -1350,7 +1350,10 @@ def diagnose_pipeline(
                     {
                         "severity": "error",
                         "code": "schema_invalid",
-                        "detail": f"validate_sample error on {latest.get('path')}: {exc}",
+                        "detail": (
+                            f"validate_sample error on {latest.get('path')}: "
+                            f"{sanitize_detail(exc)}"
+                        ),
                     }
                 )
             try:
@@ -1361,7 +1364,7 @@ def diagnose_pipeline(
                         "manifest": read_raw_manifest(mdir),
                     }
             except Exception as exc:
-                evidence["manifest_error"] = str(exc)
+                evidence["manifest_error"] = sanitize_detail(exc)
 
         if only_bronze:
             findings.append(

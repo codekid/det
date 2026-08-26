@@ -144,13 +144,16 @@ def _is_local_url(base_url: str) -> bool:
 
 
 def _unreachable_note(base_url: str, exc: BaseException) -> str:
+    from det.mcp.errors import sanitize_detail
+
+    detail = sanitize_detail(exc) if isinstance(exc, Exception) else str(exc)
     if _is_local_url(base_url):
         return (
-            f"Airflow unreachable at {base_url} ({exc}). "
+            f"Airflow unreachable at {base_url} ({detail}). "
             "Start local Compose with `make airflow-up`, then retry."
         )
     return (
-        f"Airflow unreachable at {base_url} ({exc}). "
+        f"Airflow unreachable at {base_url} ({detail}). "
         "Check DET_AIRFLOW_BASE_URL, credentials, and network."
     )
 
