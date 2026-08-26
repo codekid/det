@@ -22,6 +22,16 @@ from det.runtime.slo import SloConfig
 _STG_COL_ID = re.compile(r"^[a-z][a-z0-9_]*$")
 # Payload snake_case or DET meta columns (__extract_run_datetime, __row_hash, …).
 _STG_COL_OR_META_ID = re.compile(r"^(?:[a-z][a-z0-9_]*|__[a-z][a-z0-9_]*)$")
+# ``col`` or ``col asc|desc`` (column may be DET meta).
+_SILVER_ORDER_BY = re.compile(
+    r"^(?:[a-z][a-z0-9_]*|__[a-z][a-z0-9_]*)(?:\s+(?:asc|desc))?$",
+    re.IGNORECASE,
+)
+# DuckDB/Postgres ``interval '…'`` fragment for incremental lookback.
+_SILVER_LOOKBACK = re.compile(
+    r"^\d+\s+(second|minute|hour|day|week|month|year)s?$",
+    re.IGNORECASE,
+)
 
 
 class SourceConfig(BaseModel):
@@ -143,6 +153,26 @@ def _require_dbt_col_or_meta_id(name: str, *, where: str) -> str:
             f"{where}: column id must be snake_case or DET meta (__*), got {name!r}"
         )
     return name
+
+
+def _require_silver_order_by(fragment: str, *, where: str) -> str:
+    text = fragment.strip()
+    if not _SILVER_ORDER_BY.match(text):
+        raise ValueError(
+            f"{where}: expected 'col' or 'col asc|desc' "
+            f"(snake_case or DET meta), got {fragment!r}"
+        )
+    return text
+
+
+def _require_silver_lookback(value: str, *, where: str) -> str:
+    text = value.strip()
+    if not _SILVER_LOOKBACK.match(text):
+        raise ValueError(
+            f"{where}: expected '<n> <unit>' lookback "
+            f"(e.g. '7 days', '1 hour'), got {value!r}"
+        )
+    return text
 
 
 def _require_relative_path(key: str, *, where: str) -> None:
@@ -335,6 +365,33 @@ class DbtSilverConfig(BaseModel):
         if not v:
             raise ValueError("dbt.silver.order_by must be non-empty")
         return v
+
+    @field_validator("unique_key")
+    @classmethod
+    def _unique_key_ids(cls, v: list[str]) -> list[str]:
+        return [
+            _require_dbt_col_or_meta_id(name, where="dbt.silver.unique_key")
+            for name in v
+        ]
+
+    @field_validator("order_by")
+    @classmethod
+    def _order_by_fragments(cls, v: list[str]) -> list[str]:
+        return [
+            _require_silver_order_by(frag, where="dbt.silver.order_by") for frag in v
+        ]
+
+    @field_validator("watermark")
+    @classmethod
+    def _watermark_id(cls, v: str) -> str:
+        return _require_dbt_col_or_meta_id(v, where="dbt.silver.watermark")
+
+    @field_validator("lookback")
+    @classmethod
+    def _lookback_interval(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return _require_silver_lookback(v, where="dbt.silver.lookback")
 
     @model_validator(mode="after")
     def _validate_silver_tests(self) -> DbtSilverConfig:
