@@ -172,6 +172,7 @@ include = [
     "src/det/runtime/dbt_runner.py",
     "src/det/runtime/biglake_register.py",
     "src/det/cli",
+    "src/det/scaffold",
 ]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
