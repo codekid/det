@@ -13,7 +13,6 @@ from det.mcp.context import PathSandboxError, project_root, resolve_under_root
 from det.mcp.reload import refresh_det_runtime
 from det.runtime.lake import LakeRef
 from det.runtime.lake import relpath as lake_relpath
-from det.runtime.manifest import is_committed_raw_dir
 
 DEFAULT_LIST_LIMIT = insp.DEFAULT_LIST_LIMIT
 DEFAULT_SAMPLE_LIMIT = insp.DEFAULT_SAMPLE_LIMIT
@@ -73,56 +72,6 @@ def _load_pipeline(pipeline: str, root: Path):
 
 def _rel(path: Path | LakeRef, root: Path) -> str:
     return lake_relpath(path, root)
-
-
-def _parse_hive_key(dirname: str, prefix: str) -> str | None:
-    if not dirname.startswith(prefix):
-        return None
-    return dirname[len(prefix) :]
-
-
-def _walk_hive_runs(
-    dataset_dir: Path | LakeRef,
-    *,
-    root: Path,
-    limit: int,
-    require_committed: bool = False,
-) -> list[dict[str, Any]]:
-    """Walk hive interval/extract-run dirs; cap at *limit* runs."""
-    out: list[dict[str, Any]] = []
-    if not dataset_dir.is_dir():
-        return out
-    for start_dir in sorted(dataset_dir.iterdir()):
-        if not start_dir.is_dir():
-            continue
-        start_val = _parse_hive_key(start_dir.name, "__interval_start_datetime=")
-        if start_val is None:
-            continue
-        for end_dir in sorted(start_dir.iterdir()):
-            if not end_dir.is_dir():
-                continue
-            end_val = _parse_hive_key(end_dir.name, "__interval_end_datetime=")
-            if end_val is None:
-                continue
-            for run_dir in sorted(end_dir.iterdir()):
-                if not run_dir.is_dir():
-                    continue
-                run_val = _parse_hive_key(run_dir.name, "__extract_run_datetime=")
-                if run_val is None:
-                    continue
-                if require_committed and not is_committed_raw_dir(run_dir):
-                    continue
-                out.append(
-                    {
-                        "interval_start": start_val,
-                        "interval_end": end_val,
-                        "extract_run_datetime": run_val,
-                        "path": _rel(run_dir, root),
-                    }
-                )
-                if len(out) >= limit:
-                    return out
-    return out
 
 
 def list_pipelines(*, root: Path | None = None) -> dict[str, Any]:
@@ -255,7 +204,9 @@ def list_raw_partitions(
     config, _ = _load_pipeline(pipeline, base)
     dataset_dir = raw_dataset_dir(config, base)
     capped = max(1, min(int(limit), DEFAULT_LIST_LIMIT))
-    runs = _walk_hive_runs(dataset_dir, root=base, limit=capped, require_committed=True)
+    runs = insp.walk_hive_runs(
+        dataset_dir, root=base, limit=capped, require_committed=True, normalize_iso=False
+    )
     return {
         "pipeline": config.name,
         "dataset_dir": _rel(dataset_dir, base),
@@ -345,7 +296,7 @@ def list_bronze_partitions(
 
     dataset_dir = bronze_dataset_dir(config, base)
     capped = max(1, min(int(limit), DEFAULT_LIST_LIMIT))
-    runs = _walk_hive_runs(dataset_dir, root=base, limit=capped)
+    runs = insp.walk_hive_runs(dataset_dir, root=base, limit=capped, normalize_iso=False)
     return {
         "pipeline": config.name,
         "destination_type": "filesystem",

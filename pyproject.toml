@@ -101,7 +101,7 @@ select = ["E", "F", "I", "UP", "B", "S"]
 "src/det/ingestion/postgres_writer.py" = ["S608"]
 "src/det/ingestion/sql_ddl.py" = ["S608"]
 "src/det/ingestion/sql_replace.py" = ["S608"]
-"src/det/mcp/inspect.py" = ["S608"]
+"src/det/mcp/inspect/**/*.py" = ["S608"]
 "src/det/mcp/query_sql.py" = ["S608"]
 "src/det/runtime/prune.py" = ["S608"]
 # Pytest asserts / fixture secrets / intentional SQL and subprocess tests.
