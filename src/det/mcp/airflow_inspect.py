@@ -26,7 +26,7 @@ DET_DAG_IDS = (
 
 DEFAULT_BASE_URL = "http://localhost:8080"
 DEFAULT_USER = "airflow"
-DEFAULT_PASSWORD = "airflow"
+DEFAULT_PASSWORD = "airflow"  # noqa: S105  # Compose throwaway local default
 DEFAULT_TIMEOUT_SEC = 10.0
 SUPPORTED_AUTH = frozenset({"basic"})
 
@@ -249,7 +249,8 @@ def airflow_health(*, root: Path | None = None) -> dict[str, Any]:
     settings, err = _resolve_settings(root)
     if err is not None:
         return err
-    assert settings is not None
+    if settings is None:
+        raise RuntimeError("airflow settings missing after resolve")
     data, req_err = _request(settings, "GET", "/health")
     if req_err is not None:
         return req_err
@@ -265,7 +266,8 @@ def list_airflow_dags(*, root: Path | None = None) -> dict[str, Any]:
     settings, err = _resolve_settings(root)
     if err is not None:
         return err
-    assert settings is not None
+    if settings is None:
+        raise RuntimeError("airflow settings missing after resolve")
     data, req_err = _request(
         settings,
         "GET",
@@ -317,7 +319,8 @@ def list_airflow_dag_runs(
     settings, err = _resolve_settings(root)
     if err is not None:
         return err
-    assert settings is not None
+    if settings is None:
+        raise RuntimeError("airflow settings missing after resolve")
     capped = clamp_sample_limit(limit)
     data, req_err = _request(
         settings,
