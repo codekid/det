@@ -12,7 +12,10 @@ from datetime import date, datetime
 from typing import Any
 
 from det.ingestion.chunks import iter_chunks
-from det.ingestion.sql_replace import require_bronze_run_identity
+from det.ingestion.sql_replace import (
+    assert_chunk_matches_identity,
+    resolve_run_identity,
+)
 from det.logging import get_logger
 from det.runtime.config import IcebergPartition
 from det.runtime.lake import LakeRef
@@ -383,6 +386,7 @@ def write_iceberg_table(
     json_schema: dict[str, Any],
     chunk_rows: int = 10_000,
     partition: IcebergPartition = "extract_run",
+    run_identity: tuple[str, str, str] | None = None,
 ) -> LakeRef:
     """
     Replace-by-extract-run DET bronze write into an Iceberg table.
@@ -391,14 +395,13 @@ def write_iceberg_table(
     in one transaction. ``partition`` applies on create only; existing tables
     must match YAML or ``ensure_iceberg_table`` raises (use migrate
     ``--recreate-iceberg`` to purge and recreate).
+
+    ``run_identity`` is required for empty streams so replace-by-run still runs.
     """
     _require_iceberg()
     chunks = iter_chunks(records, chunk_rows)
     first_chunk = next(chunks, None)
-    if first_chunk is None:
-        return table_location
-
-    first_identity = require_bronze_run_identity(first_chunk)
+    identity = resolve_run_identity(run_identity, first_chunk)
     col_types = bronze_iceberg_columns(json_schema)
     catalog = hadoop_catalog(lake)
     ident = (namespace, table)
@@ -411,21 +414,30 @@ def write_iceberg_table(
         partition=partition,
     )
     pa_schema = ice_table.schema().as_arrow()
-    filt = _run_filter(first_identity)
+    filt = _run_filter(identity)
 
     def _arrow(chunk: list[dict[str, Any]]) -> Any:
-        identity = require_bronze_run_identity(chunk)
-        if identity != first_identity:
-            raise ValueError(
-                "bronze run identity does not match the batch "
-                f"({identity!r} vs {first_identity!r})"
-            )
+        assert_chunk_matches_identity(chunk, identity)
         return _chunk_to_arrow(chunk, col_types, pa_schema)
 
     total = 0
     live_runs = set(list_iceberg_extract_runs(ice_table))
+    identity_key = tuple(identity_iso(part) for part in identity)
+    if first_chunk is None:
+        if identity_key in live_runs:
+            txn = ice_table.transaction()
+            txn.delete(delete_filter=filt)
+            txn.commit_transaction()
+        logger.info(
+            "iceberg load finished",
+            table=f"{namespace}.{table}",
+            location=location,
+            rows=0,
+            partition=partition,
+        )
+        return table_location
+
     txn = ice_table.transaction()
-    identity_key = tuple(identity_iso(part) for part in first_identity)
     if identity_key in live_runs:
         txn.delete(delete_filter=filt)
     first_arrow = _arrow(first_chunk)

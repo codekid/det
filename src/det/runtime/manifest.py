@@ -5,9 +5,10 @@ import io
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from det.runtime.lake import LakeRef
+from det.runtime.manifest_types import ManifestPayload, ManifestValidation
 
 META_DIR = "meta"
 MANIFEST_NAME = "manifest.json"
@@ -70,7 +71,7 @@ def committed_extract_run_dirs(interval_end_dir: LakePath) -> list[LakePath]:
 
 
 def extract_run_datetime_from_raw(
-    manifest: dict[str, Any], raw_dir: LakePath
+    manifest: ManifestPayload | dict[str, Any], raw_dir: LakePath
 ) -> str:
     """Bronze/load identity: manifest extract_run, else hive leaf value."""
     from det.runtime.meta import from_partition_value, to_interval_datetime
@@ -86,7 +87,7 @@ def extract_run_datetime_from_raw(
     )
 
 
-def write_manifest(raw_dir: LakePath, payload: dict[str, Any]) -> LakePath:
+def write_manifest(raw_dir: LakePath, payload: ManifestPayload) -> LakePath:
     """
     Publish the extract commit object.
 
@@ -111,14 +112,14 @@ def write_manifest(raw_dir: LakePath, payload: dict[str, Any]) -> LakePath:
     return dest
 
 
-def read_manifest(raw_dir: LakePath) -> dict[str, Any]:
+def read_manifest(raw_dir: LakePath) -> ManifestPayload:
     path = manifest_path(raw_dir)
     if not path.exists():
         raise FileNotFoundError(f"No {META_DIR}/{MANIFEST_NAME} in {raw_dir}")
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"Invalid manifest in {path}")
-    return data
+    return cast(ManifestPayload, data)
 
 
 def stamp_validation_success(
@@ -129,7 +130,7 @@ def stamp_validation_success(
     row_count: int,
     wire_version: int,
     validated_at: str,
-) -> dict[str, Any]:
+) -> ManifestPayload:
     """
     Merge a validation success receipt into the raw partition manifest.
 
@@ -137,7 +138,7 @@ def stamp_validation_success(
     ``validation`` never gates load; absence means not yet proven under a recorded schema.
     """
     payload = read_manifest(raw_dir)
-    payload["validation"] = {
+    validation: ManifestValidation = {
         "ok": True,
         "validated_at": validated_at,
         "schema_path": schema_path,
@@ -145,5 +146,6 @@ def stamp_validation_success(
         "row_count": int(row_count),
         "wire_version": int(wire_version),
     }
+    payload["validation"] = validation
     write_manifest(raw_dir, payload)
     return payload

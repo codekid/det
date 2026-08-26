@@ -173,7 +173,7 @@ def test_iceberg_refuses_incompatible_type(tmp_path: Path):
         table="storm_events_v1",
         json_schema=_json_schema(),
     )
-    with pytest.raises(ValueError, match="has type INTEGER, expected STRING"):
+    with pytest.raises(ValueError, match="has type BIGINT, expected STRING"):
         write_iceberg_table(
             [{**_meta(), "event_id": "x"}],
             lake=lake,

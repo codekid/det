@@ -20,6 +20,8 @@ def test_coerce_blank_to_null():
 def test_coerce_number():
     assert coerce_value("2.5", {"type": ["number", "null"]}, field="tor_length") == 2.5
     assert coerce_value("51.00", {"type": ["number", "null"]}, field="magnitude") == 51.0
+    assert coerce_value(51, {"type": "number"}, field="magnitude") == 51.0
+    assert coerce_value("51", {"type": "number"}, field="magnitude") == 51.0
 
 
 def test_coerce_record_uses_schema_properties():

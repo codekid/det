@@ -268,6 +268,73 @@ def test_det_backend_duckdb_replaces_same_extract_run(tmp_path: Path):
         con.close()
 
 
+def test_det_backend_duckdb_empty_reload_clears_run(tmp_path: Path):
+    db_path = tmp_path / "analytics.duckdb"
+    dest = DestinationConfig(
+        type="duckdb",
+        path=str(tmp_path / "lake"),
+        connection=str(db_path),
+        dataset="bronze",
+    )
+    config = _config(tmp_path, "det", destination=dest)
+    backend = DetBackend()
+    first = _records()
+    identity = (
+        first[0]["__interval_start_datetime"],
+        first[0]["__interval_end_datetime"],
+        first[0]["__extract_run_datetime"],
+    )
+    sibling = [
+        {
+            **first[0],
+            "event_id": 2,
+            "__row_hash": "sib",
+            "__extract_run_datetime": "2026-08-06T16:00:00+00:00",
+        }
+    ]
+    backend.write(
+        first,
+        config=config,
+        project_root=tmp_path,
+        partition_dir=tmp_path / "hive1",
+        destination=dest,
+        run_identity=identity,
+    )
+    backend.write(
+        sibling,
+        config=config,
+        project_root=tmp_path,
+        partition_dir=tmp_path / "hive-sib",
+        destination=dest,
+        run_identity=(
+            sibling[0]["__interval_start_datetime"],
+            sibling[0]["__interval_end_datetime"],
+            sibling[0]["__extract_run_datetime"],
+        ),
+    )
+    backend.write(
+        [],
+        config=config,
+        project_root=tmp_path,
+        partition_dir=tmp_path / "hive-empty",
+        destination=dest,
+        run_identity=identity,
+    )
+
+    con = duckdb.connect(str(db_path), read_only=True)
+    try:
+        rows = {
+            (r[0], r[1], identity_iso(r[2]))
+            for r in con.execute(
+                "select event_id, __row_hash, __extract_run_datetime "
+                "from bronze_noaa.storm_events_v1"
+            ).fetchall()
+        }
+        assert rows == {(2, "sib", "2026-08-06T16:00:00+00:00")}
+    finally:
+        con.close()
+
+
 def test_write_duckdb_table_rejects_mixed_extract_run(tmp_path: Path):
     from det.ingestion.duckdb_writer import write_duckdb_table
 
@@ -447,7 +514,7 @@ def test_write_duckdb_null_first_chunk_uses_schema_integer(tmp_path: Path):
             "where table_schema = 'bronze_noaa' and table_name = 'storm_events_v1' "
             "and column_name = 'event_id'"
         ).fetchone()[0]
-        assert str(dtype).upper() == "INTEGER"
+        assert str(dtype).upper() == "BIGINT"
     finally:
         con.close()
 
@@ -541,7 +608,7 @@ def test_write_duckdb_refuses_varchar_vs_integer(tmp_path: Path):
         con.execute('CREATE TABLE bronze_noaa.storm_events_v1 ("event_id" VARCHAR)')
     finally:
         con.close()
-    with pytest.raises(ValueError, match="has type VARCHAR, expected INTEGER"):
+    with pytest.raises(ValueError, match="has type VARCHAR, expected BIGINT"):
         write_duckdb_table(
             [{**_meta(), "event_id": 1}],
             connection_path=db_path,

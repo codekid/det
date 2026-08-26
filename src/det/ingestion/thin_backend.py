@@ -32,6 +32,7 @@ class ThinBackend:
         partition_dir: Path | LakeRef,
         destination: DestinationConfig,
         chunk_rows: int | None = None,
+        run_identity: tuple[str, str, str] | None = None,
     ) -> Path | LakeRef:
         if destination.type != "filesystem":
             raise ValueError(

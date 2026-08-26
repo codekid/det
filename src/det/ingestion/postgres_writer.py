@@ -6,7 +6,11 @@ from typing import Any
 
 from det.ingestion.chunks import iter_chunks
 from det.ingestion.sql_ddl import ensure_bronze_table
-from det.ingestion.sql_replace import delete_extract_run_sql, require_bronze_run_identity
+from det.ingestion.sql_replace import (
+    assert_chunk_matches_identity,
+    delete_extract_run_sql,
+    resolve_run_identity,
+)
 from det.logging import get_logger
 from det.runtime.lease import advisory_lock_keys
 from det.runtime.sql_types import bronze_sql_columns, quote_ident
@@ -39,6 +43,7 @@ def write_postgres_table(
     json_schema: dict[str, Any],
     chunk_rows: int = 10_000,
     pipeline: str | None = None,
+    run_identity: tuple[str, str, str] | None = None,
 ) -> str:
     """
     Replace-by-extract-run DET bronze write into Postgres.
@@ -47,14 +52,13 @@ def write_postgres_table(
     then INSERTs in chunks of ``chunk_rows`` in one transaction. Sibling extract
     runs are kept. CREATE TABLE types come from ``json_schema``, not row values.
     Returns the DSN (connection identity for RunResult.partition_dir).
+
+    ``run_identity`` is required for empty streams so replace-by-run still runs.
     """
     psycopg = _import_psycopg()
     chunks = iter_chunks(records, chunk_rows)
     first_chunk = next(chunks, None)
-    if first_chunk is None:
-        return dsn
-
-    first_identity = require_bronze_run_identity(first_chunk)
+    identity = resolve_run_identity(run_identity, first_chunk)
     col_types = bronze_sql_columns(json_schema, "postgres")
     columns = [name for name, _ in col_types]
     schema_sql = quote_ident(schema)
@@ -80,9 +84,7 @@ def write_postgres_table(
 
                 execute(f"CREATE SCHEMA IF NOT EXISTS {schema_sql}", None)
                 if pipeline:
-                    k1, k2 = advisory_lock_keys(
-                        pipeline, first_identity[0], first_identity[1]
-                    )
+                    k1, k2 = advisory_lock_keys(pipeline, identity[0], identity[1])
                     execute("SELECT pg_advisory_lock(%s, %s)", (k1, k2))
                 ensure_bronze_table(
                     sql_schema=schema,
@@ -94,29 +96,28 @@ def write_postgres_table(
                 )
                 execute(
                     delete_extract_run_sql(qualified, placeholder="%s"),
-                    first_identity,
+                    identity,
                 )
-                col_list = ", ".join(quote_ident(c) for c in columns)
-                placeholders = ", ".join(["%s"] * len(columns))
-                insert_sql = (
-                    f"INSERT INTO {qualified} ({col_list}) VALUES ({placeholders})"
-                )
+                if first_chunk is not None:
+                    col_list = ", ".join(quote_ident(c) for c in columns)
+                    placeholders = ", ".join(["%s"] * len(columns))
+                    insert_sql = (
+                        f"INSERT INTO {qualified} ({col_list}) VALUES ({placeholders})"
+                    )
 
-                def _insert(chunk: list[dict[str, Any]]) -> None:
-                    rows = [tuple(_cell(row.get(c)) for c in columns) for row in chunk]
-                    cur.executemany(insert_sql, rows)
+                    def _insert(chunk: list[dict[str, Any]]) -> None:
+                        rows = [
+                            tuple(_cell(row.get(c)) for c in columns) for row in chunk
+                        ]
+                        cur.executemany(insert_sql, rows)
 
-                _insert(first_chunk)
-                total = len(first_chunk)
-                for chunk in chunks:
-                    identity = require_bronze_run_identity(chunk)
-                    if identity != first_identity:
-                        raise ValueError(
-                            "bronze run identity does not match the batch "
-                            f"({identity!r} vs {first_identity!r})"
-                        )
-                    _insert(chunk)
-                    total += len(chunk)
+                    assert_chunk_matches_identity(first_chunk, identity)
+                    _insert(first_chunk)
+                    total = len(first_chunk)
+                    for chunk in chunks:
+                        assert_chunk_matches_identity(chunk, identity)
+                        _insert(chunk)
+                        total += len(chunk)
             conn.commit()
         except Exception:
             conn.rollback()

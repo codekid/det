@@ -112,7 +112,7 @@ def sql_type_for_prop(prop: dict[str, Any], dialect: Dialect) -> str:
         return "JSON" if dialect == "duckdb" else "JSONB"
     allowed = _allowed_types(prop)
     if "integer" in allowed:
-        return "INTEGER"
+        return "BIGINT"
     if "number" in allowed:
         return "DOUBLE" if dialect == "duckdb" else "DOUBLE PRECISION"
     if "boolean" in allowed:
@@ -133,7 +133,7 @@ def iceberg_type_for_prop(prop: dict[str, Any]) -> str:
         return "STRING"
     allowed = _allowed_types(prop)
     if "integer" in allowed:
-        return "INTEGER"
+        return "BIGINT"
     if "number" in allowed:
         return "DOUBLE"
     if "boolean" in allowed:
