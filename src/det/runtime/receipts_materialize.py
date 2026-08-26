@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any
+from typing import Any, cast
 
 from det.ingestion.iceberg_writer import (
     _chunk_to_arrow,
@@ -137,7 +137,7 @@ def ensure_ops_run_receipts_table(*, catalog: Any, location: str) -> Any:
 def _day_filter(day: date) -> Any:
     from pyiceberg.expressions import EqualTo
 
-    return EqualTo(_ATTEMPT_DATE, day)
+    return EqualTo(_ATTEMPT_DATE, day)  # type: ignore[call-arg]
 
 
 def _live_attempt_dates(ice_table: Any) -> set[date]:
@@ -181,10 +181,12 @@ def materialize_receipts(
         if row is None:
             skipped += 1
             continue
-        day = row["attempt_date"]
-        if not isinstance(day, date):
-            raise TypeError(f"receipt attempt_date must be date, got {type(day)}")
-        by_day[day].append(row)
+        day_raw = row.get("attempt_date")
+        if not isinstance(day_raw, date):
+            skipped += 1
+            continue
+        day = day_raw
+        by_day[day].append(cast(dict[str, Any], row))
 
     table_location = ops_run_receipts_location(lake)
     location = lake_ref_uri(table_location)

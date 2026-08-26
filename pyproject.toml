@@ -163,6 +163,14 @@ include = [
     "src/det/runtime/pipelines.py",
     "src/det/runtime/load_rows.py",
     "src/det/runtime/settings.py",
+    "src/det/runtime/runner.py",
+    "src/det/runtime/migrate.py",
+    "src/det/runtime/receipts.py",
+    "src/det/runtime/receipts_materialize.py",
+    "src/det/runtime/prune.py",
+    "src/det/runtime/check.py",
+    "src/det/runtime/dbt_runner.py",
+    "src/det/runtime/biglake_register.py",
 ]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"

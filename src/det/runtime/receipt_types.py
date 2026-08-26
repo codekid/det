@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import NotRequired, TypedDict
 
 
@@ -14,7 +15,7 @@ class ReceiptPayload(TypedDict):
     command: str
     status: str
     started_at: str
-    attempt_date: NotRequired[str]
+    attempt_date: NotRequired[str | date]
     lake_layout: NotRequired[int]
     interval_start: NotRequired[str | None]
     interval_end: NotRequired[str | None]

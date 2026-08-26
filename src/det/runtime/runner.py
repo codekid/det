@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from det.destinations.models import (
     bronze_dataset_dir,
@@ -20,12 +21,14 @@ from det.runtime.layout import LAKE_LAYOUT
 from det.runtime.lease import pipeline_lease, refresh_lease
 from det.runtime.load_rows import CountingIter, iter_bronze_rows
 from det.runtime.manifest import (
+    LakePath,
     is_committed_raw_dir,
     read_manifest,
     sha256_file,
     stamp_validation_success,
     write_manifest,
 )
+from det.runtime.manifest_types import ManifestPayload
 from det.runtime.meta import (
     data_interval_date,
     format_extract_run_datetime,
@@ -44,7 +47,7 @@ logger = get_logger(__name__)
 @dataclass
 class ExtractResult:
     pipeline: str
-    raw_dir: LakeRef
+    raw_dir: LakePath
     extract_run_datetime: str
     artifacts: int
     interval_start: str
@@ -57,7 +60,7 @@ class RunResult:
     partition_dir: Path | LakeRef
     rows: int
     data_interval_date: str
-    raw_dir: LakeRef | None = None
+    raw_dir: LakePath | None = None
     extract_run_datetime: str | None = None
 
 
@@ -192,8 +195,8 @@ class PipelineRunner:
                             artifacts=len(artifacts),
                             raw_dir=str(raw_dir),
                         )
-                        write_manifest(
-                            raw_dir,
+                        manifest_payload = cast(
+                            ManifestPayload,
                             {
                                 "source": source.name,
                                 "interval_start": start_iso,
@@ -204,6 +207,7 @@ class PipelineRunner:
                                 "artifacts": artifacts,
                             },
                         )
+                        write_manifest(raw_dir, manifest_payload)
                     except Exception:
                         if not is_committed_raw_dir(raw_dir):
                             raw_dir.rmtree(ignore_errors=True)
@@ -430,7 +434,7 @@ class PipelineRunner:
         interval_start: str,
         interval_end: str,
         extract_run_datetime: str | None,
-    ) -> LakeRef:
+    ) -> LakePath:
         base = (
             raw_dataset_dir(config, self.project_root)
             / f"__interval_start_datetime={to_partition_value(interval_start)}"

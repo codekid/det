@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
@@ -57,7 +57,7 @@ class SourcePlugin(Protocol):
         *,
         config: dict[str, Any],
         raw_dir: Path | LakeRef,
-        manifest: dict[str, Any],
+        manifest: Mapping[str, Any],
     ) -> Iterator[SourceRow]:
         """Parse data/ artifacts into source-native rows (no naming; runtime coerces)."""
         ...

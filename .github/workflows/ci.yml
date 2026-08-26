@@ -140,5 +140,6 @@ jobs:
         run: >
           uv sync --extra duckdb --extra iceberg --extra postgres
           --extra scaffold --extra examples --extra mcp --extra dbt
+          --extra bigquery
       - name: Narrow pyright on public modules
         run: uvx --from basedpyright basedpyright
