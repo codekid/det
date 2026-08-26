@@ -572,7 +572,7 @@ def _sample_bronze_postgres(
                     "errors": [{"message": f"table not found: {schema}.{table}"}],
                     "truncated": False,
                 }
-            cur.execute(sql, [*params, limit + 1])
+            cur.execute(sql, [*params, limit + 1])  # pyright: ignore[reportArgumentType]
             cols = [d.name for d in cur.description] if cur.description else []
             fetched = cur.fetchall()
 

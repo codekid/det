@@ -173,6 +173,7 @@ include = [
     "src/det/runtime/biglake_register.py",
     "src/det/cli",
     "src/det/scaffold",
+    "src/det/mcp",
 ]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"

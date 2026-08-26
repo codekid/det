@@ -931,6 +931,7 @@ def query_analytics(
 ) -> dict[str, Any]:
     """Capped read-only SELECT on analytics or ops DuckDB (not certified metrics)."""
     _prepare_tool()
+    from det.mcp.query_sql import Warehouse
     from det.mcp.query_sql import query_analytics as run_query
 
     if warehouse not in {"analytics", "ops"}:
@@ -940,7 +941,8 @@ def query_analytics(
             "detail": "warehouse must be analytics or ops",
             "rows": [],
         }
-    return run_query(sql, warehouse=warehouse, limit=limit, root=_root(root))
+    wh: Warehouse = "ops" if warehouse == "ops" else "analytics"
+    return run_query(sql, warehouse=wh, limit=limit, root=_root(root))
 
 
 def cube_meta(*, root: Path | None = None) -> dict[str, Any]:

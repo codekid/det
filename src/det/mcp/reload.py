@@ -34,7 +34,7 @@ def refresh_det_runtime() -> None:
 
     plugs = sys.modules.get("det.plugins")
     if plugs is not None:
-        plugs._LOADED = False
+        plugs._LOADED = False  # pyright: ignore[reportAttributeAccessIssue]
 
     for name in _RELOAD_MODULES:
         mod = sys.modules.get(name)
