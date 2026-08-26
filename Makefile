@@ -1,4 +1,4 @@
-.PHONY: install unhide test lint run-local dbt all clean airflow-up airflow-down airflow-logs airflow-ps cube-up cube-down cube-logs
+.PHONY: install unhide test lint typecheck run-local dbt all clean airflow-up airflow-down airflow-logs airflow-ps cube-up cube-down cube-logs
 
 INTERVAL_START ?= 2026-08-06
 INTERVAL_END ?=
@@ -19,10 +19,13 @@ unhide:
 		find .venv/lib -name '__editable__*.pth' -exec chflags nohidden {} + 2>/dev/null || true
 
 test:
-	uv run pytest
+	uv run pytest -q --cov=det --cov-report=term-missing:skip-covered
 
 lint:
 	uv run ruff check .
+
+typecheck:
+	uvx --from basedpyright basedpyright
 
 # Same pipeline config as production, pointed at local fixtures via --set.
 # thin cannot Iceberg — opt in to JSONL for this smoke path.

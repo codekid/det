@@ -61,7 +61,7 @@ def _run_dbt_subprocess(
     run_env = dict(env)
     run_env.setdefault("PYTHONUNBUFFERED", "1")
 
-    proc = subprocess.Popen(
+    proc = subprocess.Popen(  # noqa: S603  # argv from build_dbt_argv, not shell
         argv,
         cwd=cwd,
         env=run_env,
@@ -71,7 +71,8 @@ def _run_dbt_subprocess(
         bufsize=1,
     )
     chunks: list[str] = []
-    assert proc.stdout is not None
+    if proc.stdout is None:
+        raise RuntimeError("dbt subprocess stdout pipe was not created")
     for line in proc.stdout:
         chunks.append(line)
         sys.stdout.write(line)

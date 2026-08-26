@@ -169,7 +169,7 @@ def configure_logging(
     if stream is None:
         try:
             sys.stderr.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # noqa: S110  # best-effort; stderr may lack reconfigure
             pass
     log_level = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(

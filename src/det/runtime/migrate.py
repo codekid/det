@@ -327,7 +327,7 @@ class BronzeMigrator:
                 for part in source_parts:
                     try:
                         part_manifest = read_manifest(part)
-                    except Exception:
+                    except Exception:  # noqa: S112  # skip unreadable manifests
                         continue
                     if manifest_wire_version(part_manifest) == wire_version:
                         filtered.append(part)
@@ -344,7 +344,7 @@ class BronzeMigrator:
                         )
                         starts.append(s)
                         ends.append(e)
-                    except Exception:
+                    except Exception:  # noqa: S112  # skip bad manifests in all_raw window
                         continue
                 if starts and ends:
                     window_start, window_end = min(starts), max(ends)

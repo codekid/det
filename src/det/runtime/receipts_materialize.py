@@ -182,7 +182,8 @@ def materialize_receipts(
             skipped += 1
             continue
         day = row["attempt_date"]
-        assert isinstance(day, date)
+        if not isinstance(day, date):
+            raise TypeError(f"receipt attempt_date must be date, got {type(day)}")
         by_day[day].append(row)
 
     table_location = ops_run_receipts_location(lake)

@@ -104,7 +104,7 @@ def _backoff_seconds(attempt: int, retry_after: str | None) -> float:
             except (TypeError, ValueError, OverflowError):
                 pass
     base = min(BACKOFF_CAP_SECONDS, float(2**attempt))
-    return min(BACKOFF_CAP_SECONDS, base + random.uniform(0.0, 0.5 * base))
+    return min(BACKOFF_CAP_SECONDS, base + random.uniform(0.0, 0.5 * base))  # noqa: S311
 
 
 def _unlink(path: Path | LakeRef) -> None:

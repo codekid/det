@@ -138,7 +138,7 @@ def fsspec_gcs_kwargs(env: Mapping[str, str] | None = None) -> dict[str, Any]:
 # PyArrow GcsFileSystem requires access_token + credential_token_expiration
 # together. Emulators ignore the token value; without it PyArrow falls through
 # to ADC and can hang for minutes (metadata server / real Google APIs).
-_GCS_EMULATOR_TOKEN_EXPIRES_MS = "4102444800000"  # 2100-01-01 UTC
+_GCS_EMULATOR_TOKEN_EXPIRES_MS = "4102444800000"  # noqa: S105  # epoch ms, not a password
 
 
 def iceberg_gcs_properties(env: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -227,7 +227,7 @@ def configure_duckdb_s3(
     con: Any,
     env: Mapping[str, str] | None = None,
     *,
-    secret_name: str = "det_s3",
+    secret_name: str = "det_s3",  # noqa: S107  # DuckDB secret object name, not a credential
 ) -> None:
     """Install httpfs/iceberg and register an S3 secret on a DuckDB connection."""
     params = duckdb_s3_secret_params(env)

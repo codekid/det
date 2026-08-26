@@ -512,7 +512,7 @@ def resolve_raw_run(
                 start = from_partition_value(start_compact)
                 end = from_partition_value(end_compact)
                 run = from_partition_value(run_compact)
-        except Exception:
+        except Exception:  # noqa: S110  # skip unparseable hive keys
             pass
         return _run_dict(
             interval_start=start or "",
@@ -549,7 +549,7 @@ def to_interval_or_partition(value: str) -> str:
     if len(compact) == 16 and compact.endswith("Z") and ":" not in compact:
         try:
             return from_partition_value(compact)
-        except Exception:
+        except Exception:  # noqa: S110  # fall through to to_interval_datetime
             pass
     return to_interval_datetime(compact)
 

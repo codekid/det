@@ -67,7 +67,7 @@ def skill_description(skill_dir: str, *, root: Path | None = None) -> str:
 
 def register_skill_prompts(mcp: object) -> None:
     """Register one FastMCP prompt per Cursor skill."""
-    prompt = getattr(mcp, "prompt")
+    prompt = mcp.prompt
     for prompt_name, skill_dir in SKILL_PROMPTS.items():
         description = skill_description(skill_dir)
         _bind_prompt(prompt, prompt_name, skill_dir, description)

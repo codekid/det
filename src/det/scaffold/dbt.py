@@ -416,7 +416,7 @@ def stg_columns_from_schema(
     )
     flat_roots = flattened_roots(leaves)
     reserved: set[str] = set()
-    for name, prop in props.items():
+    for name, _prop in props.items():
         if not isinstance(name, str):
             continue
         if name in relation_paths or name in flat_roots:

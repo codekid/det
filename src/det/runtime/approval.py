@@ -341,7 +341,9 @@ def claim_approval(
     rec = check_approval(project_root, command, argv, approval_id, require=require, now=now)
     if rec is None:
         return None
-    assert approval_id is not None  # check_approval returns None only without an id
+    if approval_id is None:
+        # check_approval returns None only without an id when require is off
+        raise RuntimeError("approval claim requires a non-None approval_id")
 
     stamp = _iso(now or utcnow())
     who = _runner_identity()
