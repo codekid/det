@@ -8,6 +8,7 @@ from typing import Any
 
 from det.runtime.lake import LakeRef
 from det.runtime.lease._common import (
+    _ACTIVE,
     _HELD,
     DEFAULT_LOCK_BACKEND,
     DEFAULT_LOCK_MODE,
@@ -76,6 +77,9 @@ def acquire_lease(
     active_store = store or open_lease_store(lake, opts, resolve_secret=resolve_secret)
 
     if nested == ident:
+        active = _ACTIVE.get()
+        if active is not None:
+            return active
         existing = active_store.inspect(
             pipeline=pipeline,
             interval_start=interval_start,
@@ -171,9 +175,11 @@ def pipeline_lease(
     )
     ident = lock_id(pipeline, interval_start, interval_end)
     nested = _HELD.get() == ident
-    token = None
+    held_token = None
+    active_token = None
     if lease is not None and not nested:
-        token = _HELD.set(ident)
+        held_token = _HELD.set(ident)
+        active_token = _ACTIVE.set(lease)
     try:
         if lease is not None and not nested:
             if store is not None:
@@ -187,8 +193,10 @@ def pipeline_lease(
                 store.release(lease)
             else:
                 release_lease(lease)
-            if token is not None:
-                _HELD.reset(token)
+            if active_token is not None:
+                _ACTIVE.reset(active_token)
+            if held_token is not None:
+                _HELD.reset(held_token)
 
 
 __all__ = [

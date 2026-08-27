@@ -46,6 +46,9 @@ class Lease:
     version: str | None = None
 
 
+_ACTIVE: ContextVar[Lease | None] = ContextVar("det_lease_active", default=None)
+
+
 def locks_enabled(env: Mapping[str, str] | None = None) -> bool:
     environ = os.environ if env is None else env
     raw = (environ.get("DET_LOCK") or "1").strip().lower()

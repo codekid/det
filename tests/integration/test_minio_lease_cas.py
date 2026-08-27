@@ -132,19 +132,27 @@ def test_minio_refresh_release_after_foreign_steal(
         past = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
         body = read_lock(path) or {}
         body["expires_at"] = past
-        path.replace_if_match(
+        first.version = path.replace_if_match(
             first.version or path.object_version() or "",
             json.dumps(body, indent=2, sort_keys=True).encode("utf-8"),
         )
-        second = acquire_lease(
-            lake,
-            pipeline="example_api.events",
-            interval_start=start,
-            interval_end=end,
-            command="load",
-            owner="second",
-            ttl_sec=120,
-        )
+        stolen: dict[str, object] = {}
+
+        def steal() -> None:
+            stolen["lease"] = acquire_lease(
+                lake,
+                pipeline="example_api.events",
+                interval_start=start,
+                interval_end=end,
+                command="load",
+                owner="second",
+                ttl_sec=120,
+            )
+
+        t = threading.Thread(target=steal)
+        t.start()
+        t.join()
+        second = stolen["lease"]
         assert second is not None
         # First holder's refresh/release must not clobber second.
         refresh_lease(first)

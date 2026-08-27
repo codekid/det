@@ -150,14 +150,6 @@ class LakeLeaseStore:
             return
         if lease.path.delete_if_match(lease.version):
             logger.info("released lake lease", path=str(lease.path))
-            return
-        # Version may have advanced (refresh); re-check token then CAS on current.
-        held = read_lock(lease.path)
-        if held is None or str(held.get("token") or "") != lease.token:
-            return
-        current = lease.path.object_version()
-        if current is not None and lease.path.delete_if_match(current):
-            logger.info("released lake lease", path=str(lease.path))
 
     def inspect(
         self,
