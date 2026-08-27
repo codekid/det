@@ -175,3 +175,49 @@ def test_postgres_overlap_blocks_intersecting(overlap_store) -> None:
     )
     store.release(a)
     store.release(c)
+
+
+@pytest.fixture
+def overlap_store_mixed_case(monkeypatch: pytest.MonkeyPatch):
+    pytest.importorskip("psycopg")
+    import psycopg
+
+    monkeypatch.setenv("DET_LOCK_PG_DSN", _DSN)
+    schema, table = "DetLeaseMix", "LeasesMix"
+    lake = open_lake("memory://pg-overlap-mix", Path("/tmp"))
+    options = ResolvedLeaseOptions(
+        backend="postgres",
+        mode="overlap",
+        pg_dsn_env="DET_LOCK_PG_DSN",
+        pg_schema=schema,
+        pg_table=table,
+    )
+    s = open_lease_store(lake, options, resolve_secret=lambda n: os.environ.get(n))
+    yield s, schema, table
+    with psycopg.connect(_DSN) as conn:
+        with conn.cursor() as cur:
+            cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        conn.commit()
+
+
+def test_postgres_overlap_ensure_mixed_case_idempotent(overlap_store_mixed_case) -> None:
+    import psycopg
+
+    store, schema, table = overlap_store_mixed_case
+    store.ensure()  # type: ignore[attr-defined]
+    store._ensured = False  # type: ignore[attr-defined]
+    store.ensure()  # type: ignore[attr-defined]
+
+    constraint = f"{table}_overlap_excl"
+    rel = f'"{schema}"."{table}"'
+    with psycopg.connect(_DSN) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM pg_constraint
+                 WHERE conname = %s
+                   AND conrelid = %s::regclass
+                """,
+                (constraint, rel),
+            )
+            assert cur.fetchone()[0] == 1

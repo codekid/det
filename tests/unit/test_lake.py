@@ -305,6 +305,22 @@ def test_local_replace_if_match_bumps_version_same_size(tmp_path: Path):
     assert not target.exists()
 
 
+def test_local_create_after_delete_increments_generation(tmp_path: Path):
+    from det.runtime.lake import _local_read_gen
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    target = lake / "locks" / "p" / "gen.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    v0 = target.create_exclusive(b"one")
+    assert _local_read_gen(str(target.to_path())) == 1
+    assert target.delete_if_match(v0) is True
+    assert _local_read_gen(str(target.to_path())) == 1
+    v1 = target.create_exclusive(b"two")
+    assert _local_read_gen(str(target.to_path())) == 2
+    assert v1 != v0
+    assert ":2" in v1
+
+
 def test_local_cas_serializes_concurrent_replace(tmp_path: Path):
     import threading
 

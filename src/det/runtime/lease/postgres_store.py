@@ -114,6 +114,8 @@ class PostgresLeaseStore:
                 if self.mode == "overlap":
                     self._exec(cur, "CREATE EXTENSION IF NOT EXISTS btree_gist")
                     constraint = self._overlap_constraint
+                    constraint_sql = quote_ident(constraint)
+                    rel = self._qual
                     self._exec(
                         cur,
                         f"""
@@ -122,10 +124,10 @@ class PostgresLeaseStore:
                           IF NOT EXISTS (
                             SELECT 1 FROM pg_constraint
                             WHERE conname = '{constraint}'
-                              AND conrelid = '{self.schema}.{self.table}'::regclass
+                              AND conrelid = '{rel}'::regclass
                           ) THEN
-                            ALTER TABLE {self._qual}
-                              ADD CONSTRAINT {constraint}
+                            ALTER TABLE {rel}
+                              ADD CONSTRAINT {constraint_sql}
                               EXCLUDE USING gist (
                                 pipeline WITH =,
                                 tstzrange(interval_start, interval_end, '[)') WITH &&

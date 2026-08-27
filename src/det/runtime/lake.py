@@ -596,17 +596,19 @@ class _LocalBackend(_Backend):
 
     def create_exclusive(self, key: str, data: bytes) -> str:
         Path(key).parent.mkdir(parents=True, exist_ok=True)
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-        fd = os.open(key, flags, 0o644)
-        try:
-            os.write(fd, data)
-        finally:
-            os.close(fd)
-        _local_write_gen(key, 1)
-        version = self.object_version(key)
-        if version is None:
-            raise RuntimeError(f"local exclusive create missing version for {key}")
-        return version
+        with _local_cas_guard(key):
+            flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+            fd = os.open(key, flags, 0o644)
+            try:
+                os.write(fd, data)
+            finally:
+                os.close(fd)
+            # Keep prior .detgen across delete/recreate so versions cannot rewind.
+            _local_write_gen(key, _local_read_gen(key) + 1)
+            version = self.object_version(key)
+            if version is None:
+                raise RuntimeError(f"local exclusive create missing version for {key}")
+            return version
 
     def object_version(self, key: str) -> str | None:
         path = Path(key)
@@ -644,7 +646,7 @@ class _LocalBackend(_Backend):
             if current != expected_version:
                 return False
             Path(key).unlink(missing_ok=True)
-            _local_gen_path(key).unlink(missing_ok=True)
+            # Preserve .detgen so a later create_exclusive increments, not restarts.
             return True
 
     def rel_key(self, root: str, child: str) -> str | None:
