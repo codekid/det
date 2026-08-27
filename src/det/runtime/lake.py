@@ -838,11 +838,10 @@ class _FsspecBackend(_Backend):
         if_generation_match: int,
     ) -> str:
         try:
-            self.fs.pipe(
-                key,
-                data,
-                if_generation_match=if_generation_match,
-            )
+            if if_generation_match == 0:
+                self.fs.pipe(key, data, mode="create")
+            else:
+                self._gcs_upload_generation_match(key, data, if_generation_match)
         except Exception as exc:
             if if_generation_match == 0 and (
                 _is_precondition_failed(exc) or self.exists(key)
@@ -858,16 +857,37 @@ class _FsspecBackend(_Backend):
             raise ObjectCasUnsupported(f"gcs put succeeded but generation missing for {key}")
         return version
 
+    def _gcs_upload_generation_match(
+        self, key: str, data: bytes, generation: int
+    ) -> None:
+        from urllib.parse import quote
+
+        bucket, obj = _split_gcs_key(key)
+        base = getattr(self.fs, "_location", "https://storage.googleapis.com")
+        upload_path = f"{base}/upload/storage/v1/b/{quote(bucket)}/o"
+        self.fs.call(
+            "POST",
+            upload_path,
+            uploadType="media",
+            name=obj,
+            ifGenerationMatch=str(generation),
+            data=data,
+            json_out=True,
+        )
+        self.fs.invalidate_cache(key)
+
     def _gcs_delete(self, key: str, *, if_generation_match: int) -> bool:
         try:
-            self.fs.rm(key, if_generation_match=if_generation_match)
+            bucket, obj = _split_gcs_key(key)
+            self.fs.call(
+                "DELETE",
+                "b/{}/o/{}",
+                bucket,
+                obj,
+                generation=str(if_generation_match),
+            )
         except FileNotFoundError:
             return False
-        except TypeError as exc:
-            # Older gcsfs without precondition kwarg — fail closed.
-            raise ObjectCasUnsupported(
-                f"gcs conditional delete unsupported for {key}: {exc}"
-            ) from exc
         except Exception as exc:
             if _is_precondition_failed(exc):
                 return False
@@ -876,6 +896,7 @@ class _FsspecBackend(_Backend):
             raise ObjectCasUnsupported(
                 f"gcs conditional delete failed for {key}: {exc}"
             ) from exc
+        self.fs.invalidate_cache(key)
         return True
 
     def rel_key(self, root: str, child: str) -> str | None:
@@ -905,9 +926,15 @@ def _strip_version_prefix(version: str, prefix: str) -> str:
     return version
 
 
+def _split_gcs_key(key: str) -> tuple[str, str]:
+    return _split_s3_key(key)
+
+
 def _is_precondition_failed(exc: BaseException) -> bool:
     name = type(exc).__name__
     if name in {"PreconditionFailed", "Conflict", "ObjectVersionConflict"}:
+        return True
+    if isinstance(exc, OSError) and getattr(exc, "errno", None) == 22:
         return True
     response = getattr(exc, "response", None)
     if isinstance(response, dict):
@@ -916,7 +943,13 @@ def _is_precondition_failed(exc: BaseException) -> bool:
         if code in {"PreconditionFailed", "412", "ConditionalRequestConflict"}:
             return True
     text = str(exc).lower()
-    return "precondition" in text or "412" in text or "if-match" in text or "if-none-match" in text
+    return (
+        "precondition" in text
+        or "pre-condition" in text
+        or "412" in text
+        or "if-match" in text
+        or "if-none-match" in text
+    )
 
 
 def _is_not_found(exc: BaseException) -> bool:
@@ -934,18 +967,23 @@ def _is_not_found(exc: BaseException) -> bool:
 
 
 def _raise_s3_cas(exc: BaseException, key: str, *, create: bool) -> None:
-    if _is_precondition_failed(exc) or "PreconditionFailed" in type(exc).__name__:
-        if create:
-            raise FileExistsError(key) from exc
-        raise ObjectVersionConflict(key) from exc
-    response = getattr(exc, "response", None)
-    if isinstance(response, dict):
-        status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
-        code = str((response.get("Error") or {}).get("Code") or "")
-        if status == 412 or code == "PreconditionFailed":
+    cur: BaseException | None = exc
+    seen: set[int] = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if _is_precondition_failed(cur) or "PreconditionFailed" in type(cur).__name__:
             if create:
                 raise FileExistsError(key) from exc
             raise ObjectVersionConflict(key) from exc
+        response = getattr(cur, "response", None)
+        if isinstance(response, dict):
+            status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+            code = str((response.get("Error") or {}).get("Code") or "")
+            if status == 412 or code == "PreconditionFailed":
+                if create:
+                    raise FileExistsError(key) from exc
+                raise ObjectVersionConflict(key) from exc
+        cur = cur.__cause__  # type: ignore[assignment]
     raise ObjectCasUnsupported(f"s3 conditional put failed for {key}: {exc}") from exc
 
 
