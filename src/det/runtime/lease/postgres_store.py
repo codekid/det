@@ -112,6 +112,9 @@ class PostgresLeaseStore:
                     """,
                 )
                 if self.mode == "overlap":
+                    # Serialize check+ADD across connections (xact-scoped).
+                    k1, k2 = _ensure_ddl_lock_keys(self.schema, self.table)
+                    self._exec(cur, "SELECT pg_advisory_xact_lock(%s, %s)", (k1, k2))
                     self._exec(cur, "CREATE EXTENSION IF NOT EXISTS btree_gist")
                     constraint = self._overlap_constraint
                     constraint_sql = quote_ident(constraint)
@@ -466,6 +469,17 @@ def _as_dt(value: str | datetime) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
     return dt
+
+
+def _ensure_ddl_lock_keys(schema: str, table: str) -> tuple[int, int]:
+    """int4 pair for pg_advisory_xact_lock around overlap ensure DDL."""
+    import hashlib
+
+    def i32(text: str) -> int:
+        digest = hashlib.sha256(text.encode("utf-8")).digest()
+        return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
+
+    return i32(f"det_lease_ensure:{schema}"), i32(table)
 
 
 def _row_payload(row: Any) -> dict[str, Any]:

@@ -221,3 +221,70 @@ def test_postgres_overlap_ensure_mixed_case_idempotent(overlap_store_mixed_case)
                 (constraint, rel),
             )
             assert cur.fetchone()[0] == 1
+
+
+@pytest.fixture
+def overlap_conc_schema(monkeypatch: pytest.MonkeyPatch):
+    pytest.importorskip("psycopg")
+    import psycopg
+
+    monkeypatch.setenv("DET_LOCK_PG_DSN", _DSN)
+    schema, table = "det_lease_conc", "leases_overlap_conc"
+    yield schema, table
+    with psycopg.connect(_DSN) as conn:
+        with conn.cursor() as cur:
+            cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        conn.commit()
+
+
+def test_postgres_overlap_ensure_concurrent(overlap_conc_schema) -> None:
+    import threading
+
+    schema, table = overlap_conc_schema
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            lake = open_lake(f"memory://pg-overlap-conc-{threading.get_ident()}", Path("/tmp"))
+            options = ResolvedLeaseOptions(
+                backend="postgres",
+                mode="overlap",
+                pg_dsn_env="DET_LOCK_PG_DSN",
+                pg_schema=schema,
+                pg_table=table,
+            )
+            store = open_lease_store(
+                lake, options, resolve_secret=lambda n: os.environ.get(n)
+            )
+            store.ensure()  # type: ignore[attr-defined]
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    t1 = threading.Thread(target=worker)
+    t2 = threading.Thread(target=worker)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    assert errors == []
+
+    lake = open_lake("memory://pg-overlap-conc-main", Path("/tmp"))
+    options = ResolvedLeaseOptions(
+        backend="postgres",
+        mode="overlap",
+        pg_dsn_env="DET_LOCK_PG_DSN",
+        pg_schema=schema,
+        pg_table=table,
+    )
+    store = open_lease_store(lake, options, resolve_secret=lambda n: os.environ.get(n))
+    start, end = resolve_interval("2026-08-20", None)
+    lease = store.acquire(
+        pipeline="example_api.events",
+        interval_start=start,
+        interval_end=end,
+        command="extract",
+        ttl_sec=60,
+        owner="conc",
+    )
+    assert lease is not None
+    store.release(lease)
