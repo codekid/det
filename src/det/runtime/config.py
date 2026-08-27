@@ -791,6 +791,30 @@ class DbtConfig(BaseModel):
     docs: DbtDocsConfig = Field(default_factory=DbtDocsConfig)
 
 
+class LeaseConfig(BaseModel):
+    """Optional per-pipeline lease overlay (env/settings still win when set)."""
+
+    backend: Literal["lake", "postgres"] | None = None
+    mode: Literal["exact", "overlap"] | None = None
+    pg_dsn_env: str | None = None
+    pg_schema: str | None = None
+    pg_table: str | None = None
+
+    @model_validator(mode="after")
+    def validate_lease_overlay(self) -> LeaseConfig:
+        if self.mode == "overlap" and self.backend == "lake":
+            raise ValueError(
+                "lease.mode 'overlap' requires lease.backend: postgres"
+            )
+        if self.pg_dsn_env is not None and str(self.pg_dsn_env).strip():
+            if not looks_like_secret_name(self.pg_dsn_env):
+                raise ValueError(
+                    "lease.pg_dsn_env must be an env var name like "
+                    f"DET_LOCK_PG_DSN, got {self.pg_dsn_env!r}"
+                )
+        return self
+
+
 class PipelineConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -804,6 +828,7 @@ class PipelineConfig(BaseModel):
     medallion: MedallionConfig = Field(default_factory=MedallionConfig)
     bronze: BronzeConfig = Field(default_factory=BronzeConfig)
     dbt: DbtConfig = Field(default_factory=DbtConfig)
+    lease: LeaseConfig | None = None
     # Opt-in fleet SLOs (dbt tests). Omit → pipeline is not in ops_slo_expected.
     slo: SloConfig | None = None
     # Rejected if set: lake ids are always ``{name}_v{wire_version}``. Use

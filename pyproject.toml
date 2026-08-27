@@ -99,6 +99,7 @@ select = ["E", "F", "I", "UP", "B", "S"]
 # SQL is built from quote_ident / fixed meta columns; values are bound params.
 "src/det/ingestion/duckdb_writer.py" = ["S608"]
 "src/det/ingestion/postgres_writer.py" = ["S608"]
+"src/det/runtime/lease/postgres_store.py" = ["S608"]
 "src/det/ingestion/sql_ddl.py" = ["S608"]
 "src/det/ingestion/sql_replace.py" = ["S608"]
 "src/det/mcp/inspect/**/*.py" = ["S608"]
@@ -157,7 +158,7 @@ include = [
     "src/det/runtime/approval.py",
     "src/det/runtime/lake.py",
     "src/det/runtime/manifest.py",
-    "src/det/runtime/lease.py",
+    "src/det/runtime/lease",
     "src/det/runtime/registry.py",
     "src/det/runtime/config.py",
     "src/det/runtime/pipelines.py",

@@ -28,7 +28,18 @@ LakeMode = Literal["local", "cloud"]
 _OBJECT_SCHEMES = ("s3://", "gs://", "gcs://")
 _MEMORY_STORES: dict[str, dict[str, bytes]] = {}
 _MEMORY_DIRS: dict[str, set[str]] = {}
+# Parallel generation counters for memory:// CAS (store_id → key → version str).
+_MEMORY_VERSIONS: dict[str, dict[str, str]] = {}
+_MEMORY_GENS: dict[str, int] = {}
 _CLOUD_EXPERIMENTAL_WARNED = False
+
+
+class ObjectVersionConflict(Exception):
+    """Conditional put/delete failed: object version no longer matches."""
+
+
+class ObjectCasUnsupported(RuntimeError):
+    """Object store cannot apply strong preconditions (fail closed for leases)."""
 
 
 def is_lake_uri(spec: str) -> bool:
@@ -158,6 +169,8 @@ def open_lake(
 def clear_memory_lakes() -> None:
     _MEMORY_STORES.clear()
     _MEMORY_DIRS.clear()
+    _MEMORY_VERSIONS.clear()
+    _MEMORY_GENS.clear()
 
 
 def reset_lake_mode_warning_for_tests() -> None:
@@ -205,9 +218,16 @@ def _open_memory(spec: str) -> LakeRef:
     store_id = store_id or "_default"
     store = _MEMORY_STORES.setdefault(store_id, {})
     dirs = _MEMORY_DIRS.setdefault(store_id, set())
+    versions = _MEMORY_VERSIONS.setdefault(store_id, {})
     key = prefix.strip("/")
     return LakeRef(
-        _MemoryBackend(store, dirs, display_root=f"memory://{store_id}"),
+        _MemoryBackend(
+            store,
+            dirs,
+            versions,
+            store_id=store_id,
+            display_root=f"memory://{store_id}",
+        ),
         key,
     )
 
@@ -347,10 +367,26 @@ class LakeRef:
         with self.open("wb") as fh:
             fh.write(data)
 
-    def create_exclusive(self, data: bytes) -> None:
-        """Create this key only if it does not exist. Raises FileExistsError if it does."""
+    def create_exclusive(self, data: bytes) -> str:
+        """Create this key only if absent. Returns an opaque object version string.
+
+        Raises ``FileExistsError`` if the key already exists. On ``s3://`` /
+        ``gs://`` this uses conditional create (no soft exists+wb fallback).
+        """
         self.parent.mkdir(parents=True, exist_ok=True)
-        self._backend.create_exclusive(self._key, data)
+        return self._backend.create_exclusive(self._key, data)
+
+    def object_version(self) -> str | None:
+        """Opaque version (etag / generation / local stamp) or None if missing."""
+        return self._backend.object_version(self._key)
+
+    def replace_if_match(self, expected_version: str, data: bytes) -> str:
+        """Replace bytes only if ``expected_version`` still matches. Returns new version."""
+        return self._backend.replace_if_match(self._key, expected_version, data)
+
+    def delete_if_match(self, expected_version: str) -> bool:
+        """Delete only if ``expected_version`` still matches. False if gone/mismatched."""
+        return self._backend.delete_if_match(self._key, expected_version)
 
     def unlink(self, missing_ok: bool = False) -> None:
         self._backend.unlink(self._key, missing_ok=missing_ok)
@@ -443,7 +479,16 @@ class _Backend:
     def size(self, key: str) -> int:
         raise NotImplementedError
 
-    def create_exclusive(self, key: str, data: bytes) -> None:
+    def create_exclusive(self, key: str, data: bytes) -> str:
+        raise NotImplementedError
+
+    def object_version(self, key: str) -> str | None:
+        raise NotImplementedError
+
+    def replace_if_match(self, key: str, expected_version: str, data: bytes) -> str:
+        raise NotImplementedError
+
+    def delete_if_match(self, key: str, expected_version: str) -> bool:
         raise NotImplementedError
 
     def rel_key(self, root: str, child: str) -> str | None:
@@ -511,7 +556,7 @@ class _LocalBackend(_Backend):
     def size(self, key: str) -> int:
         return Path(key).stat().st_size
 
-    def create_exclusive(self, key: str, data: bytes) -> None:
+    def create_exclusive(self, key: str, data: bytes) -> str:
         Path(key).parent.mkdir(parents=True, exist_ok=True)
         flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
         fd = os.open(key, flags, 0o644)
@@ -519,6 +564,36 @@ class _LocalBackend(_Backend):
             os.write(fd, data)
         finally:
             os.close(fd)
+        version = self.object_version(key)
+        if version is None:
+            raise RuntimeError(f"local exclusive create missing version for {key}")
+        return version
+
+    def object_version(self, key: str) -> str | None:
+        path = Path(key)
+        if not path.is_file():
+            return None
+        st = path.stat()
+        return f"local:{st.st_mtime_ns}:{st.st_size}:{st.st_ino}"
+
+    def replace_if_match(self, key: str, expected_version: str, data: bytes) -> str:
+        current = self.object_version(key)
+        if current is None or current != expected_version:
+            raise ObjectVersionConflict(key)
+        Path(key).write_bytes(data)
+        version = self.object_version(key)
+        if version is None:
+            raise RuntimeError(f"local replace missing version for {key}")
+        return version
+
+    def delete_if_match(self, key: str, expected_version: str) -> bool:
+        current = self.object_version(key)
+        if current is None:
+            return False
+        if current != expected_version:
+            return False
+        Path(key).unlink(missing_ok=True)
+        return True
 
     def rel_key(self, root: str, child: str) -> str | None:
         try:
@@ -638,29 +713,191 @@ class _FsspecBackend(_Backend):
         info = self.fs.info(key)
         return int(info.get("size") or 0)
 
-    def create_exclusive(self, key: str, data: bytes) -> None:
-        """Create ``key`` only if absent; raise ``FileExistsError`` if it exists.
-
-        Prefer fsspec exclusive open mode ``xb``. If the filesystem rejects that
-        mode, fall back to an exists-check then ``wb``. That fallback is
-        **best-effort** under concurrent writers (not a strong distributed lock).
-        Lake leases on object stores inherit this limit — see
-        ``docs/publication-contract.md``.
-        """
+    def create_exclusive(self, key: str, data: bytes) -> str:
+        """Strong exclusive create on s3/gs. No soft exists+wb fallback."""
         parent = self.parent(key)
         if parent:
             self.mkdir(parent, parents=True, exist_ok=True)
+        if self.scheme == "s3":
+            return self._s3_put(key, data, if_none_match="*")
+        if self.scheme == "gs":
+            return self._gcs_put(key, data, if_generation_match=0)
+        raise ObjectCasUnsupported(
+            f"lake exclusive create requires s3:// or gs://, got scheme={self.scheme!r}"
+        )
+
+    def object_version(self, key: str) -> str | None:
+        if not self.exists(key):
+            return None
         try:
-            with self.fs.open(key, "xb") as fh:
-                fh.write(data)
-            return
+            info = self.fs.info(key)
+        except FileNotFoundError:
+            return None
+        if self.scheme == "s3":
+            etag = info.get("ETag") or info.get("etag")
+            if etag is None:
+                return None
+            return f"etag:{str(etag).strip(chr(34))}"
+        if self.scheme == "gs":
+            gen = info.get("generation")
+            if gen is None:
+                # gcsfs sometimes nests under custom metadata keys
+                gen = info.get("Generation")
+            if gen is None:
+                return None
+            return f"gen:{gen}"
+        raise ObjectCasUnsupported(
+            f"object_version unsupported for scheme={self.scheme!r}"
+        )
+
+    def replace_if_match(self, key: str, expected_version: str, data: bytes) -> str:
+        if self.scheme == "s3":
+            etag = _strip_version_prefix(expected_version, "etag:")
+            return self._s3_put(key, data, if_match=etag)
+        if self.scheme == "gs":
+            gen = int(_strip_version_prefix(expected_version, "gen:"))
+            return self._gcs_put(key, data, if_generation_match=gen)
+        raise ObjectCasUnsupported(
+            f"replace_if_match unsupported for scheme={self.scheme!r}"
+        )
+
+    def delete_if_match(self, key: str, expected_version: str) -> bool:
+        if self.scheme == "s3":
+            etag = _strip_version_prefix(expected_version, "etag:")
+            return self._s3_delete(key, if_match=etag)
+        if self.scheme == "gs":
+            gen = int(_strip_version_prefix(expected_version, "gen:"))
+            return self._gcs_delete(key, if_generation_match=gen)
+        raise ObjectCasUnsupported(
+            f"delete_if_match unsupported for scheme={self.scheme!r}"
+        )
+
+    def _s3_put(
+        self,
+        key: str,
+        data: bytes,
+        *,
+        if_none_match: str | None = None,
+        if_match: str | None = None,
+    ) -> str:
+        bucket, obj = _split_s3_key(key)
+        kwargs: dict[str, Any] = {
+            "Bucket": bucket,
+            "Key": obj,
+            "Body": data,
+        }
+        if if_none_match is not None:
+            kwargs["IfNoneMatch"] = if_none_match
+        if if_match is not None:
+            kwargs["IfMatch"] = if_match
+        try:
+            out = self.fs.call_s3("put_object", **kwargs)
         except FileExistsError:
             raise
-        except (OSError, ValueError, TypeError):
-            if self.exists(key):
-                raise FileExistsError(key) from None
-            with self.fs.open(key, "wb") as fh:
-                fh.write(data)
+        except Exception as exc:
+            _raise_s3_cas(exc, key, create=(if_none_match is not None))
+            raise  # pragma: no cover
+        self.fs.invalidate_cache(key)
+        etag = (out or {}).get("ETag") if isinstance(out, dict) else None
+        if not etag:
+            version = self.object_version(key)
+            if version is None:
+                raise ObjectCasUnsupported(
+                    f"s3 put succeeded but etag missing for {key}"
+                )
+            return version
+        return f"etag:{str(etag).strip(chr(34))}"
+
+    def _s3_delete(self, key: str, *, if_match: str) -> bool:
+        bucket, obj = _split_s3_key(key)
+        try:
+            self.fs.call_s3(
+                "delete_object",
+                Bucket=bucket,
+                Key=obj,
+                IfMatch=if_match,
+            )
+        except FileNotFoundError:
+            return False
+        except Exception as exc:
+            if _is_precondition_failed(exc):
+                return False
+            if _is_not_found(exc):
+                return False
+            raise ObjectCasUnsupported(
+                f"s3 conditional delete failed for {key}: {exc}"
+            ) from exc
+        self.fs.invalidate_cache(key)
+        return True
+
+    def _gcs_put(
+        self,
+        key: str,
+        data: bytes,
+        *,
+        if_generation_match: int,
+    ) -> str:
+        try:
+            if if_generation_match == 0:
+                self.fs.pipe(key, data, mode="create")
+            else:
+                self._gcs_upload_generation_match(key, data, if_generation_match)
+        except Exception as exc:
+            if if_generation_match == 0 and (
+                _is_precondition_failed(exc) or self.exists(key)
+            ):
+                raise FileExistsError(key) from exc
+            if _is_precondition_failed(exc):
+                raise ObjectVersionConflict(key) from exc
+            raise ObjectCasUnsupported(
+                f"gcs conditional put failed for {key}: {exc}"
+            ) from exc
+        version = self.object_version(key)
+        if version is None:
+            raise ObjectCasUnsupported(f"gcs put succeeded but generation missing for {key}")
+        return version
+
+    def _gcs_upload_generation_match(
+        self, key: str, data: bytes, generation: int
+    ) -> None:
+        from urllib.parse import quote
+
+        bucket, obj = _split_gcs_key(key)
+        base = getattr(self.fs, "_location", "https://storage.googleapis.com")
+        upload_path = f"{base}/upload/storage/v1/b/{quote(bucket)}/o"
+        self.fs.call(
+            "POST",
+            upload_path,
+            uploadType="media",
+            name=obj,
+            ifGenerationMatch=str(generation),
+            data=data,
+            json_out=True,
+        )
+        self.fs.invalidate_cache(key)
+
+    def _gcs_delete(self, key: str, *, if_generation_match: int) -> bool:
+        try:
+            bucket, obj = _split_gcs_key(key)
+            self.fs.call(
+                "DELETE",
+                "b/{}/o/{}",
+                bucket,
+                obj,
+                generation=str(if_generation_match),
+            )
+        except FileNotFoundError:
+            return False
+        except Exception as exc:
+            if _is_precondition_failed(exc):
+                return False
+            if _is_not_found(exc):
+                return False
+            raise ObjectCasUnsupported(
+                f"gcs conditional delete failed for {key}: {exc}"
+            ) from exc
+        self.fs.invalidate_cache(key)
+        return True
 
     def rel_key(self, root: str, child: str) -> str | None:
         root_n = root.rstrip("/")
@@ -675,15 +912,103 @@ class _FsspecBackend(_Backend):
         return None
 
 
+def _split_s3_key(key: str) -> tuple[str, str]:
+    text = key.lstrip("/")
+    if "/" not in text:
+        raise ValueError(f"s3 key must be bucket/object, got {key!r}")
+    bucket, obj = text.split("/", 1)
+    return bucket, obj
+
+
+def _strip_version_prefix(version: str, prefix: str) -> str:
+    if version.startswith(prefix):
+        return version[len(prefix) :]
+    return version
+
+
+def _split_gcs_key(key: str) -> tuple[str, str]:
+    return _split_s3_key(key)
+
+
+def _is_precondition_failed(exc: BaseException) -> bool:
+    name = type(exc).__name__
+    if name in {"PreconditionFailed", "Conflict", "ObjectVersionConflict"}:
+        return True
+    if isinstance(exc, OSError) and getattr(exc, "errno", None) == 22:
+        return True
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        err = response.get("Error") or {}
+        code = str(err.get("Code") or "")
+        if code in {"PreconditionFailed", "412", "ConditionalRequestConflict"}:
+            return True
+    text = str(exc).lower()
+    return (
+        "precondition" in text
+        or "pre-condition" in text
+        or "412" in text
+        or "if-match" in text
+        or "if-none-match" in text
+    )
+
+
+def _is_not_found(exc: BaseException) -> bool:
+    if isinstance(exc, FileNotFoundError):
+        return True
+    name = type(exc).__name__
+    if name in {"NoSuchKey", "NotFound"}:
+        return True
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        err = response.get("Error") or {}
+        if str(err.get("Code") or "") in {"NoSuchKey", "404", "NotFound"}:
+            return True
+    return False
+
+
+def _raise_s3_cas(exc: BaseException, key: str, *, create: bool) -> None:
+    cur: BaseException | None = exc
+    seen: set[int] = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if _is_precondition_failed(cur) or "PreconditionFailed" in type(cur).__name__:
+            if create:
+                raise FileExistsError(key) from exc
+            raise ObjectVersionConflict(key) from exc
+        response = getattr(cur, "response", None)
+        if isinstance(response, dict):
+            status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+            code = str((response.get("Error") or {}).get("Code") or "")
+            if status == 412 or code == "PreconditionFailed":
+                if create:
+                    raise FileExistsError(key) from exc
+                raise ObjectVersionConflict(key) from exc
+        cur = cur.__cause__  # type: ignore[assignment]
+    raise ObjectCasUnsupported(f"s3 conditional put failed for {key}: {exc}") from exc
+
+
 class _MemoryBackend(_Backend):
     kind = "memory"
 
     def __init__(
-        self, store: dict[str, bytes], dirs: set[str], display_root: str
+        self,
+        store: dict[str, bytes],
+        dirs: set[str],
+        versions: dict[str, str],
+        *,
+        store_id: str,
+        display_root: str,
     ) -> None:
         self.store = store
         self._dirs = dirs
+        self._versions = versions
+        self._store_id = store_id
         self.display_root = display_root.rstrip("/")
+
+    def _bump(self) -> str:
+        n = _MEMORY_GENS.get(self._store_id, 1)
+        _MEMORY_GENS[self._store_id] = n + 1
+        return f"mem:{n}"
 
     def identity(self) -> object:
         return ("memory", id(self.store))
@@ -765,7 +1090,7 @@ class _MemoryBackend(_Backend):
             if "b" in mode:
                 return raw
             return io.TextIOWrapper(raw, encoding=encoding, errors=errors, newline=newline)
-        buf = _MemoryWriter(self.store, key)
+        buf = _MemoryWriter(self.store, self._versions, key, self)
         if "b" in mode:
             return buf
         return io.TextIOWrapper(buf, encoding=encoding, errors=errors, newline=newline)
@@ -774,6 +1099,7 @@ class _MemoryBackend(_Backend):
         key = key.strip("/")
         if key in self.store:
             del self.store[key]
+            self._versions.pop(key, None)
             return
         if not missing_ok:
             raise FileNotFoundError(key)
@@ -795,13 +1121,43 @@ class _MemoryBackend(_Backend):
             raise FileNotFoundError(key)
         return len(self.store[key])
 
-    def create_exclusive(self, key: str, data: bytes) -> None:
+    def create_exclusive(self, key: str, data: bytes) -> str:
         key = key.strip("/")
         parent = self.parent(key)
         if parent:
             self.mkdir(parent, parents=True, exist_ok=True)
         if self.store.setdefault(key, data) is not data:
             raise FileExistsError(key)
+        version = self._bump()
+        self._versions[key] = version
+        return version
+
+    def object_version(self, key: str) -> str | None:
+        key = key.strip("/")
+        if key not in self.store:
+            return None
+        return self._versions.get(key)
+
+    def replace_if_match(self, key: str, expected_version: str, data: bytes) -> str:
+        key = key.strip("/")
+        current = self._versions.get(key) if key in self.store else None
+        if current is None or current != expected_version:
+            raise ObjectVersionConflict(key)
+        self.store[key] = data
+        version = self._bump()
+        self._versions[key] = version
+        return version
+
+    def delete_if_match(self, key: str, expected_version: str) -> bool:
+        key = key.strip("/")
+        current = self._versions.get(key) if key in self.store else None
+        if current is None:
+            return False
+        if current != expected_version:
+            return False
+        del self.store[key]
+        self._versions.pop(key, None)
+        return True
 
     def rel_key(self, root: str, child: str) -> str | None:
         root_n = root.strip("/")
@@ -817,17 +1173,23 @@ class _MemoryBackend(_Backend):
 
 
 class _MemoryWriter(io.BytesIO):
-    def __init__(self, store: dict[str, bytes], key: str) -> None:
+    def __init__(
+        self, store: dict[str, bytes], versions: dict[str, str], key: str, backend: _MemoryBackend
+    ) -> None:
         super().__init__()
         self._store = store
+        self._versions = versions
         self._key = key
+        self._backend = backend
 
     def flush(self) -> None:
         super().flush()
         self._store[self._key] = self.getvalue()
+        self._versions[self._key] = self._backend._bump()
 
     def close(self) -> None:
         if not self.closed:
             self._store[self._key] = self.getvalue()
+            self._versions[self._key] = self._backend._bump()
         super().close()
 

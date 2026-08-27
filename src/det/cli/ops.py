@@ -240,26 +240,40 @@ def lock_show(
     lake_path: str | None = typer.Option(None, "--lake-path"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
 ) -> None:
-    """Print the lake lease for a pipeline interval (or 'no lock')."""
+    """Print the lease for a pipeline interval (or 'no lock')."""
     from det.destinations.models import lake_root
     from det.runtime.config import load_pipeline_config
-    from det.runtime.lease import lock_path, read_lock
+    from det.runtime.lease import lock_path, open_lease_store, resolve_lease_options
+    from det.runtime.settings import DetSettings
 
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
     config = load_pipeline_config(resolved.path)
-    path = lock_path(
-        lake_root(config.destination, root, cli_lake_path=lake_path),
-        config.name,
-        start_iso,
-        end_iso,
+    settings = DetSettings.from_env(project_root=root)
+    if lake_path is not None:
+        settings = settings.with_overrides(lake_override=lake_path)
+    options = resolve_lease_options(settings=settings, pipeline=config)
+    lake = lake_root(config.destination, root, cli_lake_path=lake_path, settings=settings)
+    store = open_lease_store(lake, options, resolve_secret=settings.resolve_secret)
+    payload = store.inspect(
+        pipeline=config.name, interval_start=start_iso, interval_end=end_iso
     )
-    payload = read_lock(path)
     if payload is None:
-        typer.echo(f"no lock path={path}")
+        if options.backend == "lake":
+            path = lock_path(lake, config.name, start_iso, end_iso)
+            typer.echo(f"no lock path={path}")
+        else:
+            typer.echo(
+                f"no lock backend=postgres schema={options.pg_schema} "
+                f"table={options.pg_table}"
+            )
         return
-    typer.echo(f"path={path}")
+    if options.backend == "lake":
+        path = lock_path(lake, config.name, start_iso, end_iso)
+        typer.echo(f"path={path}")
+    else:
+        typer.echo(f"backend=postgres schema={options.pg_schema} table={options.pg_table}")
     for key in (
         "pipeline",
         "interval_start",
@@ -285,11 +299,12 @@ def lock_release(
     approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
-    """Force-delete a lake lease. Kill the worker first or you can dual-insert."""
+    """Force-delete a lease. Kill the worker first or you can dual-insert."""
     from det.destinations.models import lake_root
     from det.runtime.approval import lock_release_write_argv
     from det.runtime.config import load_pipeline_config
-    from det.runtime.lease import force_release_lock, lock_path, read_lock
+    from det.runtime.lease import lock_path, open_lease_store, resolve_lease_options
+    from det.runtime.settings import DetSettings
 
     if not force:
         raise typer.BadParameter("--force is required to delete a lock", param_hint="--force")
@@ -308,22 +323,69 @@ def lock_release(
         ctx=ctx,
     )
     config = load_pipeline_config(resolved.path)
-    path = lock_path(
-        lake_root(config.destination, root, cli_lake_path=lake_path),
-        config.name,
-        start_iso,
-        end_iso,
+    settings = DetSettings.from_env(project_root=root)
+    if lake_path is not None:
+        settings = settings.with_overrides(lake_override=lake_path)
+    options = resolve_lease_options(settings=settings, pipeline=config)
+    lake = lake_root(config.destination, root, cli_lake_path=lake_path, settings=settings)
+    store = open_lease_store(lake, options, resolve_secret=settings.resolve_secret)
+    held = store.inspect(
+        pipeline=config.name, interval_start=start_iso, interval_end=end_iso
     )
-    held = read_lock(path)
+    location = (
+        str(lock_path(lake, config.name, start_iso, end_iso))
+        if options.backend == "lake"
+        else f"postgres:{options.pg_schema}.{options.pg_table}"
+    )
     if held is None:
         _consume_approval(root, approval)
-        typer.echo(f"no lock path={path}")
+        typer.echo(f"no lock location={location}")
         return
     typer.echo(
-        f"releasing owner={held.get('owner')} expires_at={held.get('expires_at')} path={path}",
+        f"releasing owner={held.get('owner')} expires_at={held.get('expires_at')} "
+        f"location={location}",
         err=True,
     )
-    force_release_lock(path)
+    store.force_release(
+        pipeline=config.name, interval_start=start_iso, interval_end=end_iso
+    )
     _consume_approval(root, approval)
-    typer.echo(f"OK lock-release path={path}")
+    typer.echo(f"OK lock-release location={location}")
 
+
+@app.command("lock-init")
+def lock_init(
+    pipeline: str | None = typer.Option(
+        None, "--pipeline", "-p", help="Optional pipeline for lease: YAML overlay"
+    ),
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+) -> None:
+    """Ensure Postgres lease schema/table exist (no-op for lake backend)."""
+    from pathlib import Path as _Path
+
+    from det.runtime.config import load_pipeline_config
+    from det.runtime.lake import open_lake
+    from det.runtime.lease import open_lease_store, resolve_lease_options
+    from det.runtime.lease.postgres_store import PostgresLeaseStore
+    from det.runtime.settings import DetSettings
+
+    root = _project_root(project_root)
+    settings = DetSettings.from_env(project_root=root)
+    config = None
+    if pipeline is not None:
+        resolved = _resolve_pipeline(pipeline, root)
+        config = load_pipeline_config(resolved.path)
+    options = resolve_lease_options(settings=settings, pipeline=config)
+    if options.backend != "postgres":
+        typer.echo("OK lock-init backend=lake (no DDL)")
+        return
+    # Postgres store ignores lake; open a throwaway local root for the factory.
+    lake = open_lake(str(root / ".det" / "lock-init-lake"), _Path(root))
+    store = open_lease_store(lake, options, resolve_secret=settings.resolve_secret)
+    if not isinstance(store, PostgresLeaseStore):
+        raise typer.Exit(code=1)
+    store.ensure()
+    typer.echo(
+        f"OK lock-init backend=postgres schema={options.pg_schema} "
+        f"table={options.pg_table} mode={options.mode}"
+    )
