@@ -33,6 +33,7 @@ from det.runtime.lake import LakeRef, open_lake
 from det.runtime.layout import LAKE_LAYOUT
 from det.runtime.lease import (
     Lease,
+    LeaseFencedError,
     LeaseHeldError,
     inspect_lease,
     release_lock,
@@ -77,6 +78,7 @@ __all__ = [
     "Interval",
     "LakeRef",
     "Lease",
+    "LeaseFencedError",
     "LeaseHeldError",
     "MigratePlan",
     "MigrateResult",

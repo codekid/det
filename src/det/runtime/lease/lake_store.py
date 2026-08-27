@@ -9,6 +9,7 @@ from det.logging import get_logger
 from det.runtime.lake import LakeRef, ObjectVersionConflict
 from det.runtime.lease._common import (
     Lease,
+    LeaseFencedError,
     LeaseHeldError,
     expires_at_iso,
     held_message,
@@ -135,6 +136,39 @@ class LakeLeaseStore:
             lease.version = lease.path.replace_if_match(lease.version, raw)
         except ObjectVersionConflict:
             return
+
+    def ensure_held(self, lease: Lease) -> None:
+        if not lease.token or lease.path is None:
+            raise LeaseFencedError(
+                "lake lease fence requires a token and lock path",
+                payload={},
+            )
+        held = read_lock(lease.path)
+        if held is None:
+            raise LeaseFencedError(
+                f"lake lease missing at {lease.path} (lost or released)",
+                payload={},
+            )
+        if str(held.get("token") or "") != lease.token:
+            raise LeaseFencedError(
+                held_message(str(lease.path), held),
+                payload=dict(held),
+            )
+        if lease.version is None:
+            raise LeaseFencedError(
+                f"lake lease fence requires a CAS version at {lease.path}",
+                payload=dict(held),
+            )
+        held["expires_at"] = expires_at_iso(lease.ttl_sec)
+        held["ttl_sec"] = lease.ttl_sec
+        raw = json.dumps(held, indent=2, sort_keys=True).encode("utf-8")
+        try:
+            lease.version = lease.path.replace_if_match(lease.version, raw)
+        except ObjectVersionConflict as exc:
+            raise LeaseFencedError(
+                held_message(str(lease.path), held),
+                payload=dict(held),
+            ) from exc
 
     def release(self, lease: Lease) -> None:
         if not lease.token or lease.path is None:

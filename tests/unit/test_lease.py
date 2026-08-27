@@ -10,12 +10,16 @@ import pytest
 from det.runtime.lake import clear_memory_lakes, open_lake
 from det.runtime.lease import (
     DEFAULT_LOCK_TTL_SEC,
+    LeaseFencedError,
     LeaseHeldError,
+    acquire_lease,
     advisory_lock_keys,
+    assert_lease_held,
     force_release_lock,
     lock_path,
     pipeline_lease,
     read_lock,
+    refresh_lease,
     resolve_lock_ttl_sec,
 )
 from det.runtime.meta import resolve_interval
@@ -264,6 +268,133 @@ def test_read_lock_returns_none_on_undecodable_utf8(tmp_path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"\xff\xfe not utf-8")
     assert read_lock(path) is None
+
+
+def test_ensure_held_ok_and_fenced_after_steal(tmp_path: Path):
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    start, end = resolve_interval("2026-08-15", None)
+    first = acquire_lease(
+        lake,
+        pipeline="example_api.events",
+        interval_start=start,
+        interval_end=end,
+        command="extract",
+        owner="a",
+        ttl_sec=1,
+    )
+    assert first is not None
+    assert_lease_held(first)
+    # Expire and steal as another owner (empty ContextVar via thread).
+    path = first.path
+    assert path is not None
+    past = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+    body = read_lock(path) or {}
+    body["expires_at"] = past
+    first.version = path.replace_if_match(
+        first.version or path.object_version() or "",
+        json.dumps(body, indent=2, sort_keys=True).encode("utf-8"),
+    )
+    stolen: dict[str, object] = {}
+
+    def steal() -> None:
+        stolen["lease"] = acquire_lease(
+            lake,
+            pipeline="example_api.events",
+            interval_start=start,
+            interval_end=end,
+            command="load",
+            owner="b",
+            ttl_sec=120,
+        )
+
+    t = threading.Thread(target=steal)
+    t.start()
+    t.join()
+    second = stolen["lease"]
+    assert second is not None
+    refresh_lease(first)  # soft no-op
+    with pytest.raises(LeaseFencedError):
+        assert_lease_held(first)
+    assert_lease_held(second)  # type: ignore[arg-type]
+    from det.runtime.lease import release_lease
+
+    release_lease(second)  # type: ignore[arg-type]
+
+
+def test_assert_lease_held_noop_when_disabled(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("DET_LOCK", "0")
+    lake = _lake("fence-off")
+    start, end = resolve_interval("2026-08-15", None)
+    with pipeline_lease(
+        lake,
+        pipeline="example_api.events",
+        interval_start=start,
+        interval_end=end,
+        command="extract",
+    ) as lease:
+        assert lease is None
+        assert_lease_held(lease)
+
+
+def test_runner_fence_blocks_write_after_steal(
+    tmp_path: Path, project_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import yaml
+
+    from det.runtime.runner import PipelineRunner
+
+    schema_src = project_root / "schemas/example_api/events/events.schema.yaml"
+    schema_dst = tmp_path / "schemas/example_api/events/events.schema.yaml"
+    schema_dst.parent.mkdir(parents=True)
+    schema_dst.write_text(schema_src.read_text(encoding="utf-8"), encoding="utf-8")
+    pipe = tmp_path / "configs/pipelines/example_api/events.yaml"
+    pipe.parent.mkdir(parents=True)
+    pipe.write_text(
+        yaml.safe_dump(
+            {
+                "name": "example_api.events",
+                "source": {
+                    "type": "example_api.events",
+                    "overrides": {"fixture_records": [{"id": "e1"}]},
+                },
+                "schema": "schemas/example_api/events/events.schema.yaml",
+                "destination": {"type": "filesystem", "path": str(tmp_path / "lake")},
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = PipelineRunner(tmp_path)
+    writes: list[str] = []
+
+    def tracking_write(self, records, **kwargs):  # noqa: ANN001
+        writes.append("write")
+        from det.ingestion.jsonl import write_jsonl_partition
+
+        return write_jsonl_partition(
+            records, kwargs["partition_dir"], chunk_rows=kwargs.get("chunk_rows", 1000)
+        )
+
+    monkeypatch.setattr(
+        "det.ingestion.det_backend.DetBackend.write",
+        tracking_write,
+    )
+
+    extracted = runner.extract(
+        pipe, interval_start="2026-08-06", interval_end="2026-08-07"
+    )
+
+    def boom(lease, *, store=None):  # noqa: ANN001
+        raise LeaseFencedError("injected fence")
+
+    monkeypatch.setattr("det.runtime.runner.assert_lease_held", boom)
+    with pytest.raises(LeaseFencedError, match="injected fence"):
+        runner.load(
+            pipe,
+            interval_start="2026-08-06",
+            interval_end="2026-08-07",
+            extract_run_datetime=extracted.extract_run_datetime,
+        )
+    assert writes == []
 
 
 def test_local_exclusive_create(tmp_path: Path):

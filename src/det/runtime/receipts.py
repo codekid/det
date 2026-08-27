@@ -24,7 +24,7 @@ from det.logging import get_logger, scrub_secrets
 from det.runtime.coerce import CoerceError
 from det.runtime.lake import LakeRef
 from det.runtime.layout import LAKE_LAYOUT
-from det.runtime.lease import LeaseHeldError, default_lock_owner
+from det.runtime.lease import LeaseFencedError, LeaseHeldError, default_lock_owner
 from det.runtime.meta import to_interval_datetime, to_partition_value
 from det.runtime.receipt_types import ReceiptPayload
 from det.runtime.secrets import SecretError, SecretNotSetError
@@ -116,6 +116,8 @@ def classify_error(exc: BaseException) -> tuple[str, str, str]:
         return "integrity_error", error_class, message
     if isinstance(probe, HttpError):
         return "http_error", error_class, message
+    if isinstance(probe, LeaseFencedError):
+        return "lease_fenced", error_class, message
     if isinstance(probe, LeaseHeldError):
         return "lease_held", error_class, message
     if isinstance(probe, SecretNotSetError):

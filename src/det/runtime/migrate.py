@@ -26,7 +26,7 @@ from det.runtime.config import (
 from det.runtime.ids import validate_canonical_id
 from det.runtime.lake import LakeRef
 from det.runtime.lake import relpath as lake_relpath
-from det.runtime.lease import pipeline_lease, resolve_lease_options
+from det.runtime.lease import assert_lease_held, pipeline_lease, resolve_lease_options
 from det.runtime.load_rows import CountingIter, iter_bronze_rows
 from det.runtime.manifest import (
     committed_extract_run_dirs,
@@ -471,7 +471,7 @@ class BronzeMigrator:
                         enabled=ctx_settings.locks_enabled,
                     ),
                     resolve_secret=ctx_settings.resolve_secret,
-                ):
+                ) as lease:
                     bronze_loaded_at = format_extract_run_datetime()
                     stream = iter_bronze_rows(
                         source.records_from_raw(
@@ -494,6 +494,9 @@ class BronzeMigrator:
                         interval_start_datetime=start_iso,
                         interval_end_datetime=end_iso,
                         extract_run_datetime=extract_ts,
+                    )
+                    assert_lease_held(
+                        lease, store=None if lease is None else lease.store
                     )
                     backend.write(
                         counted,

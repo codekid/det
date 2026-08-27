@@ -17,6 +17,7 @@ from det.runtime.lease._common import (
     DEFAULT_LOCK_PG_TABLE,
     DEFAULT_LOCK_TTL_SEC,
     Lease,
+    LeaseFencedError,
     LeaseHeldError,
     advisory_lock_keys,
     default_lock_owner,
@@ -126,6 +127,23 @@ def refresh_lease(lease: Lease | None, *, store: LeaseStore | None = None) -> No
         LakeLeaseStore(lease.path).refresh(lease)
 
 
+def assert_lease_held(lease: Lease | None, *, store: LeaseStore | None = None) -> None:
+    """Fail closed if this handle no longer owns the live lease (pre-publish fence)."""
+    if lease is None or not lease.token:
+        return
+    resolved = store if store is not None else lease.store
+    if resolved is not None:
+        resolved.ensure_held(lease)
+        return
+    if lease.path is not None:
+        LakeLeaseStore(lease.path).ensure_held(lease)
+        return
+    raise LeaseFencedError(
+        "lease fence requires a bound store or lake lock path",
+        payload={},
+    )
+
+
 def release_lease(lease: Lease | None, *, store: LeaseStore | None = None) -> None:
     if lease is None or not lease.token:
         return
@@ -212,11 +230,13 @@ __all__ = [
     "DEFAULT_LOCK_PG_TABLE",
     "DEFAULT_LOCK_TTL_SEC",
     "Lease",
+    "LeaseFencedError",
     "LeaseHeldError",
     "LeaseStore",
     "ResolvedLeaseOptions",
     "acquire_lease",
     "advisory_lock_keys",
+    "assert_lease_held",
     "default_lock_owner",
     "force_release_lock",
     "inspect_lease",

@@ -10,6 +10,7 @@ from det.logging import get_logger
 from det.runtime.ids import require_sql_ident
 from det.runtime.lease._common import (
     Lease,
+    LeaseFencedError,
     LeaseHeldError,
     expires_at_iso,
     held_message,
@@ -370,6 +371,52 @@ class PostgresLeaseStore:
                     ),
                 )
             conn.commit()
+
+    def ensure_held(self, lease: Lease) -> None:
+        if not lease.token:
+            raise LeaseFencedError(
+                "postgres lease fence requires a token",
+                payload={},
+            )
+        expires = _as_dt(expires_at_iso(lease.ttl_sec))
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._exec(
+                    cur,
+                    f"""
+                    UPDATE {self._qual}
+                       SET expires_at = %s, ttl_sec = %s
+                     WHERE pipeline = %s
+                       AND interval_start = %s
+                       AND interval_end = %s
+                       AND token = %s
+                    """,
+                    (
+                        expires,
+                        lease.ttl_sec,
+                        lease.pipeline,
+                        _as_dt(lease.interval_start),
+                        _as_dt(lease.interval_end),
+                        lease.token,
+                    ),
+                )
+                updated = cur.rowcount
+            conn.commit()
+        if updated == 0:
+            held = self.inspect(
+                pipeline=lease.pipeline,
+                interval_start=lease.interval_start,
+                interval_end=lease.interval_end,
+            )
+            raise LeaseFencedError(
+                held_message(f"postgres:{self._qual}", held or {})
+                if held
+                else (
+                    f"postgres lease lost for {lease.pipeline} "
+                    f"[{lease.interval_start}, {lease.interval_end})"
+                ),
+                payload=dict(held) if held else {},
+            )
 
     def release(self, lease: Lease) -> None:
         if not lease.token:
