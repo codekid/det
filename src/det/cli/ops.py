@@ -92,12 +92,16 @@ def runs_cmd(
         typer.echo(json.dumps(payload, indent=2, default=str))
         return
     if summary:
+        if not isinstance(payload, dict):
+            raise TypeError("summarize_receipts must return a dict")
         groups = payload.get("groups") or []
         if not groups:
             typer.echo(f"(no receipts in {payload.get('since')}..{payload.get('until')})")
             return
         _print_run_summary(payload, include_pipeline=pipe_id is None)
         return
+    if not isinstance(payload, list):
+        raise TypeError("list_receipts must return a list")
     if not payload:
         typer.echo("(no receipts)")
         return
