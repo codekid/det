@@ -91,6 +91,16 @@ class PostgresLeaseStore:
         dsn = self._dsn()
         with psycopg.connect(dsn) as conn:
             with conn.cursor() as cur:
+                if self.mode == "overlap":
+                    # DB-wide lock: extension install is not schema-scoped.
+                    ek1, ek2 = _btree_gist_extension_lock_keys()
+                    self._exec(
+                        cur, "SELECT pg_advisory_xact_lock(%s, %s)", (ek1, ek2)
+                    )
+                    self._exec(cur, "CREATE EXTENSION IF NOT EXISTS btree_gist")
+                    # Schema/table lock: serialize table bootstrap + constraint.
+                    k1, k2 = _ensure_ddl_lock_keys(self.schema, self.table)
+                    self._exec(cur, "SELECT pg_advisory_xact_lock(%s, %s)", (k1, k2))
                 self._exec(
                     cur, f"CREATE SCHEMA IF NOT EXISTS {quote_ident(self.schema)}"
                 )
@@ -112,10 +122,6 @@ class PostgresLeaseStore:
                     """,
                 )
                 if self.mode == "overlap":
-                    # Serialize check+ADD across connections (xact-scoped).
-                    k1, k2 = _ensure_ddl_lock_keys(self.schema, self.table)
-                    self._exec(cur, "SELECT pg_advisory_xact_lock(%s, %s)", (k1, k2))
-                    self._exec(cur, "CREATE EXTENSION IF NOT EXISTS btree_gist")
                     constraint = self._overlap_constraint
                     constraint_sql = quote_ident(constraint)
                     rel = self._qual
@@ -471,15 +477,21 @@ def _as_dt(value: str | datetime) -> datetime:
     return dt
 
 
-def _ensure_ddl_lock_keys(schema: str, table: str) -> tuple[int, int]:
-    """int4 pair for pg_advisory_xact_lock around overlap ensure DDL."""
+def _advisory_i32(text: str) -> int:
     import hashlib
 
-    def i32(text: str) -> int:
-        digest = hashlib.sha256(text.encode("utf-8")).digest()
-        return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
+    digest = hashlib.sha256(text.encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
 
-    return i32(f"det_lease_ensure:{schema}"), i32(table)
+
+def _btree_gist_extension_lock_keys() -> tuple[int, int]:
+    """Database-wide keys for CREATE EXTENSION btree_gist serialization."""
+    return _advisory_i32("det_lease_ensure:btree_gist"), _advisory_i32("extension")
+
+
+def _ensure_ddl_lock_keys(schema: str, table: str) -> tuple[int, int]:
+    """Schema/table keys for CREATE TABLE + overlap constraint ensure DDL."""
+    return _advisory_i32(f"det_lease_ensure:{schema}"), _advisory_i32(table)
 
 
 def _row_payload(row: Any) -> dict[str, Any]:
