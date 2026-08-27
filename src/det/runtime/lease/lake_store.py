@@ -154,6 +154,11 @@ class LakeLeaseStore:
                 held_message(str(lease.path), held),
                 payload=dict(held),
             )
+        if is_expired(held):
+            raise LeaseFencedError(
+                held_message(str(lease.path), held),
+                payload=dict(held),
+            )
         if lease.version is None:
             raise LeaseFencedError(
                 f"lake lease fence requires a CAS version at {lease.path}",

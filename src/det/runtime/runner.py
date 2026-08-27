@@ -19,6 +19,7 @@ from det.runtime.dlt_hygiene import check_raw_hygiene
 from det.runtime.lake import LakeRef
 from det.runtime.layout import LAKE_LAYOUT
 from det.runtime.lease import (
+    LeaseFencedError,
     assert_lease_held,
     pipeline_lease,
     refresh_lease,
@@ -227,6 +228,10 @@ class PipelineRunner:
                             lease, store=None if lease is None else lease.store
                         )
                         write_manifest(raw_dir, manifest_payload)
+                    except LeaseFencedError:
+                        # Bytes may still be useful for ops; do not scrub the
+                        # prefix when publish was refused by the lease fence.
+                        raise
                     except Exception:
                         if not is_committed_raw_dir(raw_dir):
                             raw_dir.rmtree(ignore_errors=True)

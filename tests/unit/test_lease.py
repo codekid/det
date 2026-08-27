@@ -321,6 +321,41 @@ def test_ensure_held_ok_and_fenced_after_steal(tmp_path: Path):
     release_lease(second)  # type: ignore[arg-type]
 
 
+def test_ensure_held_fenced_after_ttl_expiry_same_token(tmp_path: Path):
+    """Expired lease with unchanged token must not renew via fence."""
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    start, end = resolve_interval("2026-08-15", None)
+    lease = acquire_lease(
+        lake,
+        pipeline="example_api.events",
+        interval_start=start,
+        interval_end=end,
+        command="extract",
+        owner="stale",
+        ttl_sec=120,
+    )
+    assert lease is not None
+    path = lease.path
+    assert path is not None
+    past = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+    body = read_lock(path) or {}
+    body["expires_at"] = past
+    lease.version = path.replace_if_match(
+        lease.version or path.object_version() or "",
+        json.dumps(body, indent=2, sort_keys=True).encode("utf-8"),
+    )
+    token_before = lease.token
+    with pytest.raises(LeaseFencedError):
+        assert_lease_held(lease)
+    held = read_lock(path)
+    assert held is not None
+    assert held.get("token") == token_before
+    assert held.get("expires_at") == past
+    from det.runtime.lease import release_lease
+
+    release_lease(lease)
+
+
 def test_assert_lease_held_noop_when_disabled(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DET_LOCK", "0")
     lake = _lake("fence-off")
@@ -334,6 +369,52 @@ def test_assert_lease_held_noop_when_disabled(monkeypatch: pytest.MonkeyPatch):
     ) as lease:
         assert lease is None
         assert_lease_held(lease)
+
+
+def test_extract_fence_preserves_raw_dir(
+    tmp_path: Path, project_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import yaml
+
+    from det.runtime.manifest import is_committed_raw_dir
+    from det.runtime.runner import PipelineRunner
+
+    schema_src = project_root / "schemas/example_api/events/events.schema.yaml"
+    schema_dst = tmp_path / "schemas/example_api/events/events.schema.yaml"
+    schema_dst.parent.mkdir(parents=True)
+    schema_dst.write_text(schema_src.read_text(encoding="utf-8"), encoding="utf-8")
+    pipe = tmp_path / "configs/pipelines/example_api/events.yaml"
+    pipe.parent.mkdir(parents=True)
+    pipe.write_text(
+        yaml.safe_dump(
+            {
+                "name": "example_api.events",
+                "source": {
+                    "type": "example_api.events",
+                    "overrides": {"fixture_records": [{"id": "e1"}]},
+                },
+                "schema": "schemas/example_api/events/events.schema.yaml",
+                "destination": {"type": "filesystem", "path": str(tmp_path / "lake")},
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = PipelineRunner(tmp_path)
+
+    def boom(lease, *, store=None):  # noqa: ANN001
+        raise LeaseFencedError("injected fence")
+
+    monkeypatch.setattr("det.runtime.runner.assert_lease_held", boom)
+    with pytest.raises(LeaseFencedError, match="injected fence"):
+        runner.extract(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
+
+    raw_root = tmp_path / "lake" / "raw"
+    data_dirs = list(raw_root.rglob("data"))
+    assert len(data_dirs) == 1
+    raw_dir = data_dirs[0].parent
+    assert list(raw_dir.rglob("*"))  # extract bytes retained
+    assert not is_committed_raw_dir(raw_dir)
+    assert list(raw_root.rglob("manifest.json")) == []
 
 
 def test_runner_fence_blocks_write_after_steal(

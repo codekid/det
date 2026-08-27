@@ -42,7 +42,7 @@ COMMITTED    meta/manifest.json published → prefix is visible
 | --- | --- |
 | Prefix already **COMMITTED** | `DetConflictError` — do not overwrite; use a new extract-run id |
 | Prefix exists, **not** committed | Delete the prefix, then write (retry after crash) |
-| Failure before commit | Delete the incomplete prefix when extract handles the error |
+| Failure before commit | Delete the incomplete prefix when extract handles the error (`LeaseFencedError` preserves the prefix) |
 | Success | Write manifest last — that publish is the commit |
 
 ### Manifest commit mechanics
@@ -92,7 +92,8 @@ under a schema hash.
   no-op (heartbeat only).
 - **Pre-publish fence:** extract (before raw manifest), load/migrate (before
   bronze write), and leased prune call `assert_lease_held`. Lost token /
-  version → `LeaseFencedError` (receipt `lease_fenced`). This authorizes the
+  version / expired TTL (even with matching token) → `LeaseFencedError`
+  (receipt `lease_fenced`). This authorizes the
   side effect at the publish boundary; it is not bound into the Iceberg
   transaction itself, so a residual assert→commit race remains.
 - `DET_LOCK=0` disables leases (tests / explicit local break-glass only).

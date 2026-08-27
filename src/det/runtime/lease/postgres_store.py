@@ -390,6 +390,7 @@ class PostgresLeaseStore:
                        AND interval_start = %s
                        AND interval_end = %s
                        AND token = %s
+                       AND expires_at > NOW()
                     """,
                     (
                         expires,
