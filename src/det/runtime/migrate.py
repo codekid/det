@@ -26,7 +26,7 @@ from det.runtime.config import (
 from det.runtime.ids import validate_canonical_id
 from det.runtime.lake import LakeRef
 from det.runtime.lake import relpath as lake_relpath
-from det.runtime.lease import pipeline_lease
+from det.runtime.lease import pipeline_lease, resolve_lease_options
 from det.runtime.load_rows import CountingIter, iter_bronze_rows
 from det.runtime.manifest import (
     committed_extract_run_dirs,
@@ -463,6 +463,14 @@ class BronzeMigrator:
                     ttl_sec=ctx_settings.effective_lock_ttl(lock_ttl_sec),
                     owner=ctx_settings.lock_owner,
                     enabled=ctx_settings.locks_enabled,
+                    options=resolve_lease_options(
+                        settings=ctx_settings,
+                        pipeline=config,
+                        ttl_sec=ctx_settings.effective_lock_ttl(lock_ttl_sec),
+                        owner=ctx_settings.lock_owner,
+                        enabled=ctx_settings.locks_enabled,
+                    ),
+                    resolve_secret=ctx_settings.resolve_secret,
                 ):
                     bronze_loaded_at = format_extract_run_datetime()
                     stream = iter_bronze_rows(

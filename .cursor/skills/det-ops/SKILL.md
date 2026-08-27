@@ -41,8 +41,10 @@ Install: `uv pip install -e ".[mcp]"`.
    `extract_run_datetime`. Laptop TTY stays console (`--log-format` / `DET_LOG_FORMAT`).
    `LeaseHeldError` / grep lake lease: another extract/load holds `(pipeline, interval)`.
    Kill that worker, then `det lock-release -p … -s … --force` (or DAG `det_clear_lock`).
-   Do not force-clear while the job is still running. TTL: `--lock-ttl-sec` / `DET_LOCK_TTL_SEC`.
-   `DET_LOCK=0` disables the lake lease (unsafe; tests only). MCP must not delete locks.
+   Do not force-clear while the job is still running.    TTL: `--lock-ttl-sec` / `DET_LOCK_TTL_SEC` / Airflow conf `lock_ttl_sec`.
+   Backend: lake (default, CAS on s3/gs) or `DET_LOCK_BACKEND=postgres` /
+   pipeline `lease.backend: postgres` (DSN in `DET_LOCK_PG_DSN`).
+   `DET_LOCK=0` disables the lease (unsafe; tests only). MCP must not delete locks.
    For a failed or slow run, prefer `list_runs` / `summarize_runs` (or `det runs`)
    over grepping task logs: receipts survive a failed extract's partition rmtree
    and carry `status`, `duration_ms`, `error_code`, and `owner`. Manifest remains

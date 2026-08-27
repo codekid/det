@@ -64,7 +64,7 @@ under a schema hash.
 
 | Capability | Local | `memory://` | Object store (fsspec) |
 | --- | --- | --- | --- |
-| Exclusive create (`create_exclusive`) | `O_CREAT\|O_EXCL` | atomic `setdefault` | Prefer open mode `xb`; if unsupported, may fall back to existence check + `wb` (**weaker under races**) |
+| Exclusive create (`create_exclusive`) | `O_CREAT\|O_EXCL` | atomic `setdefault` | Conditional put (`If-None-Match: *` / generation 0); **fail closed** if preconditions unavailable |
 | Manifest publish | rename replace | key write | single object write |
 | List consistency | strong | strong | **not assumed strong** — do not rely on list-after-write for commit |
 | Own-key read-after-write | yes | yes | assumed for the manifest key after successful write |
@@ -72,15 +72,27 @@ under a schema hash.
 
 ### Leases
 
-- Lock identity: `(pipeline, interval_start, interval_end)` — **equality only**.
-- Object: `{lake}/locks/{pipeline}/{start}_{end}.json`.
-- Acquire via `create_exclusive`. Live lock → `LeaseHeldError`.
-- Expired lock may be **stolen** by overwrite (owner presumed dead).
+- Lock identity: `(pipeline, interval_start, interval_end)` — **equality** by
+  default (`DET_LOCK_MODE=exact`). Postgres may use `overlap` to block
+  intersecting intervals.
+- **Lake backend (default):** object `{lake}/locks/{pipeline}/{start}_{end}.json`.
+  Acquire / steal / refresh / release use strong conditional writes on
+  `s3://` and `gs://` (If-None-Match / If-Match or generation match). Local and
+  `memory://` use exclusive create + versioned CAS. Soft exists+`wb` is **not**
+  used for cloud lease mutates.
+- **Postgres backend (opt-in):** `DET_LOCK_BACKEND=postgres` or pipeline
+  `lease.backend: postgres`. Rows in `{DET_LOCK_PG_SCHEMA}.{DET_LOCK_PG_TABLE}`
+  (defaults `det_lease.leases`). DSN from `DET_LOCK_PG_DSN` (name overridable via
+  `DET_LOCK_PG_DSN_ENV`). Never auto-reuses bronze `destination.connection_env`.
+- Live lock → `LeaseHeldError`. Expired lock may be **stolen** via CAS (owner
+  presumed dead). TTL: `DET_LOCK_TTL_SEC` / `--lock-ttl-sec` / Airflow conf
+  `lock_ttl_sec` (default 7200).
 - `DET_LOCK=0` disables leases (tests / explicit local break-glass only).
 
-**Production note:** on object stores where exclusive create is emulated, leases
-are **best-effort**, not a ZooKeeper-class lock. Prefer one writer per
-pipeline+interval (e.g. Airflow pool) and treat the lease as a safety net.
+**Production note:** lake leases on s3/gs are strong when the store honors
+preconditions (fail closed otherwise). Prefer one writer per pipeline+interval
+(e.g. Airflow pool for capacity) and treat the lease as the identity mutex.
+Postgres is the portable strong option when you already run a database.
 
 ---
 

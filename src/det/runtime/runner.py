@@ -18,7 +18,7 @@ from det.runtime.config import PipelineConfig, load_pipeline, resolve_path
 from det.runtime.dlt_hygiene import check_raw_hygiene
 from det.runtime.lake import LakeRef
 from det.runtime.layout import LAKE_LAYOUT
-from det.runtime.lease import pipeline_lease, refresh_lease
+from det.runtime.lease import pipeline_lease, refresh_lease, resolve_lease_options
 from det.runtime.load_rows import CountingIter, iter_bronze_rows
 from det.runtime.manifest import (
     LakePath,
@@ -82,11 +82,22 @@ class PipelineRunner:
     def _lake(self, destination):
         return lake_root(destination, self.project_root, settings=self.settings)
 
-    def _lease_kwargs(self, lock_ttl_sec: int | None = None) -> dict:
+    def _lease_kwargs(
+        self, lock_ttl_sec: int | None = None, config: PipelineConfig | None = None
+    ) -> dict:
+        options = resolve_lease_options(
+            settings=self.settings,
+            pipeline=config,
+            ttl_sec=self.settings.effective_lock_ttl(lock_ttl_sec),
+            owner=self.settings.lock_owner,
+            enabled=self.settings.locks_enabled,
+        )
         return {
             "ttl_sec": self.settings.effective_lock_ttl(lock_ttl_sec),
             "owner": self.settings.lock_owner,
             "enabled": self.settings.locks_enabled,
+            "options": options,
+            "resolve_secret": self.settings.resolve_secret,
         }
     def extract(
         self,
@@ -163,7 +174,7 @@ class PipelineRunner:
                 interval_start=start_iso,
                 interval_end=end_iso,
                 command="extract",
-                **self._lease_kwargs(lock_ttl_sec),
+                **self._lease_kwargs(lock_ttl_sec, config),
             ) as lease:
                 with bound_run_context(
                     command="extract",
@@ -281,7 +292,7 @@ class PipelineRunner:
                 interval_start=start_iso,
                 interval_end=end_iso,
                 command="load",
-                **self._lease_kwargs(lock_ttl_sec),
+                **self._lease_kwargs(lock_ttl_sec, config),
             ) as lease:
                 with bound_run_context(
                     command="load",
@@ -399,7 +410,7 @@ class PipelineRunner:
                 interval_start=start_iso,
                 interval_end=end_iso,
                 command="run",
-                **self._lease_kwargs(lock_ttl_sec),
+                **self._lease_kwargs(lock_ttl_sec, config),
             ):
                 extracted = self._extract(
                     config,

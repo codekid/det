@@ -18,11 +18,17 @@ from typing import Any
 
 from det.runtime.lake import LakeMode, lake_mode_from_env
 from det.runtime.lease import (
+    DEFAULT_LOCK_BACKEND,
+    DEFAULT_LOCK_MODE,
+    DEFAULT_LOCK_PG_DSN_ENV,
+    DEFAULT_LOCK_PG_SCHEMA,
+    DEFAULT_LOCK_PG_TABLE,
     DEFAULT_LOCK_TTL_SEC,
     default_lock_owner,
     locks_enabled,
     resolve_lock_ttl_sec,
 )
+from det.runtime.lease.resolve import parse_lock_backend, parse_lock_mode
 from det.runtime.pipelines import resolve_project_root
 from det.runtime.secrets import (
     DEFAULT_CACHE_TTL_SEC,
@@ -141,6 +147,11 @@ class DetSettings:
     locks_enabled: bool
     lock_ttl_sec: int
     lock_owner: str
+    lock_backend: str
+    lock_mode: str
+    lock_pg_dsn_env: str
+    lock_pg_schema: str
+    lock_pg_table: str
     # CLI ``--lake-path`` (wins over destination.path). Embedders usually set lake_path.
     lake_override: str | None = None
     _secret_cache: _SecretCache = field(default_factory=_SecretCache, compare=False, repr=False)
@@ -194,6 +205,15 @@ class DetSettings:
             locks_enabled=locks_enabled(environ),
             lock_ttl_sec=resolve_lock_ttl_sec(None, env=environ),
             lock_owner=default_lock_owner(environ),
+            lock_backend=parse_lock_backend(environ.get("DET_LOCK_BACKEND"))
+            or DEFAULT_LOCK_BACKEND,
+            lock_mode=parse_lock_mode(environ.get("DET_LOCK_MODE")) or DEFAULT_LOCK_MODE,
+            lock_pg_dsn_env=(environ.get("DET_LOCK_PG_DSN_ENV") or "").strip()
+            or DEFAULT_LOCK_PG_DSN_ENV,
+            lock_pg_schema=(environ.get("DET_LOCK_PG_SCHEMA") or "").strip()
+            or DEFAULT_LOCK_PG_SCHEMA,
+            lock_pg_table=(environ.get("DET_LOCK_PG_TABLE") or "").strip()
+            or DEFAULT_LOCK_PG_TABLE,
             lake_override=None,
             _secret_cache=cache,
         )
@@ -207,6 +227,11 @@ class DetSettings:
         locks_enabled: Any = _MISSING,
         lock_ttl_sec: Any = _MISSING,
         lock_owner: Any = _MISSING,
+        lock_backend: Any = _MISSING,
+        lock_mode: Any = _MISSING,
+        lock_pg_dsn_env: Any = _MISSING,
+        lock_pg_schema: Any = _MISSING,
+        lock_pg_table: Any = _MISSING,
         secrets_backend: Any = _MISSING,
         secrets_file: Any = _MISSING,
         secrets_ttl_sec: Any = _MISSING,
@@ -230,6 +255,30 @@ class DetSettings:
             )
         if lock_owner is not _MISSING:
             kwargs["lock_owner"] = str(lock_owner)
+        if lock_backend is not _MISSING:
+            parsed = parse_lock_backend(None if lock_backend is None else str(lock_backend))
+            kwargs["lock_backend"] = parsed or DEFAULT_LOCK_BACKEND
+        if lock_mode is not _MISSING:
+            parsed_mode = parse_lock_mode(None if lock_mode is None else str(lock_mode))
+            kwargs["lock_mode"] = parsed_mode or DEFAULT_LOCK_MODE
+        if lock_pg_dsn_env is not _MISSING:
+            kwargs["lock_pg_dsn_env"] = (
+                DEFAULT_LOCK_PG_DSN_ENV
+                if lock_pg_dsn_env is None or not str(lock_pg_dsn_env).strip()
+                else str(lock_pg_dsn_env).strip()
+            )
+        if lock_pg_schema is not _MISSING:
+            kwargs["lock_pg_schema"] = (
+                DEFAULT_LOCK_PG_SCHEMA
+                if lock_pg_schema is None or not str(lock_pg_schema).strip()
+                else str(lock_pg_schema).strip()
+            )
+        if lock_pg_table is not _MISSING:
+            kwargs["lock_pg_table"] = (
+                DEFAULT_LOCK_PG_TABLE
+                if lock_pg_table is None or not str(lock_pg_table).strip()
+                else str(lock_pg_table).strip()
+            )
         if secrets_backend is not _MISSING:
             kwargs["secrets_backend"] = secrets_backend
         if secrets_file is not _MISSING:

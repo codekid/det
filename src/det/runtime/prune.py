@@ -15,7 +15,7 @@ from det.optional_deps import require_duckdb
 from det.runtime.config import PipelineConfig, load_pipeline
 from det.runtime.ids import sql_names_for_config
 from det.runtime.lake import LakeRef
-from det.runtime.lease import pipeline_lease
+from det.runtime.lease import pipeline_lease, resolve_lease_options
 from det.runtime.meta import from_partition_value, identity_iso, resolve_interval
 from det.runtime.settings import DetSettings, use_settings
 
@@ -169,6 +169,14 @@ class BronzePruner:
                 ttl_sec=self.settings.effective_lock_ttl(lock_ttl_sec),
                 owner=self.settings.lock_owner,
                 enabled=self.settings.locks_enabled,
+                options=resolve_lease_options(
+                    settings=self.settings,
+                    pipeline=config,
+                    ttl_sec=self.settings.effective_lock_ttl(lock_ttl_sec),
+                    owner=self.settings.lock_owner,
+                    enabled=self.settings.locks_enabled,
+                ),
+                resolve_secret=self.settings.resolve_secret,
             ):
                 return self._apply_body(config, plan)
         return self._apply_body(config, plan)
