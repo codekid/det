@@ -119,7 +119,8 @@ def test_postgres_expire_steal_and_token_mismatch(store) -> None:
     store.release(b)
 
 
-def test_postgres_overlap_blocks_intersecting(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def overlap_store(monkeypatch: pytest.MonkeyPatch):
     pytest.importorskip("psycopg")
     monkeypatch.setenv("DET_LOCK_PG_DSN", _DSN)
     lake = open_lake("memory://pg-overlap", Path("/tmp"))
@@ -130,8 +131,19 @@ def test_postgres_overlap_blocks_intersecting(monkeypatch: pytest.MonkeyPatch) -
         pg_schema="det_lease_test",
         pg_table="leases_overlap",
     )
-    store = open_lease_store(lake, options, resolve_secret=lambda n: os.environ.get(n))
-    store.ensure()  # type: ignore[attr-defined]
+    s = open_lease_store(lake, options, resolve_secret=lambda n: os.environ.get(n))
+    s.ensure()  # type: ignore[attr-defined]
+    yield s
+    import psycopg
+
+    with psycopg.connect(_DSN) as conn:
+        with conn.cursor() as cur:
+            cur.execute('DELETE FROM "det_lease_test"."leases_overlap"')
+        conn.commit()
+
+
+def test_postgres_overlap_blocks_intersecting(overlap_store) -> None:
+    store = overlap_store
     a0, a1 = resolve_interval("2026-08-15", "2026-08-17")
     b0, b1 = resolve_interval("2026-08-16", "2026-08-18")
     c0, c1 = resolve_interval("2026-08-17", "2026-08-18")  # adjacent to [15,17) at 17
@@ -163,9 +175,116 @@ def test_postgres_overlap_blocks_intersecting(monkeypatch: pytest.MonkeyPatch) -
     )
     store.release(a)
     store.release(c)
+
+
+@pytest.fixture
+def overlap_store_mixed_case(monkeypatch: pytest.MonkeyPatch):
+    pytest.importorskip("psycopg")
     import psycopg
 
+    monkeypatch.setenv("DET_LOCK_PG_DSN", _DSN)
+    schema, table = "DetLeaseMix", "LeasesMix"
+    lake = open_lake("memory://pg-overlap-mix", Path("/tmp"))
+    options = ResolvedLeaseOptions(
+        backend="postgres",
+        mode="overlap",
+        pg_dsn_env="DET_LOCK_PG_DSN",
+        pg_schema=schema,
+        pg_table=table,
+    )
+    s = open_lease_store(lake, options, resolve_secret=lambda n: os.environ.get(n))
+    yield s, schema, table
     with psycopg.connect(_DSN) as conn:
         with conn.cursor() as cur:
-            cur.execute('DELETE FROM "det_lease_test"."leases_overlap"')
+            cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         conn.commit()
+
+
+def test_postgres_overlap_ensure_mixed_case_idempotent(overlap_store_mixed_case) -> None:
+    import psycopg
+
+    store, schema, table = overlap_store_mixed_case
+    store.ensure()  # type: ignore[attr-defined]
+    store._ensured = False  # type: ignore[attr-defined]
+    store.ensure()  # type: ignore[attr-defined]
+
+    constraint = f"{table}_overlap_excl"
+    rel = f'"{schema}"."{table}"'
+    with psycopg.connect(_DSN) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM pg_constraint
+                 WHERE conname = %s
+                   AND conrelid = %s::regclass
+                """,
+                (constraint, rel),
+            )
+            assert cur.fetchone()[0] == 1
+
+
+@pytest.fixture
+def overlap_conc_schema(monkeypatch: pytest.MonkeyPatch):
+    pytest.importorskip("psycopg")
+    import psycopg
+
+    monkeypatch.setenv("DET_LOCK_PG_DSN", _DSN)
+    schema, table = "det_lease_conc", "leases_overlap_conc"
+    yield schema, table
+    with psycopg.connect(_DSN) as conn:
+        with conn.cursor() as cur:
+            cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        conn.commit()
+
+
+def test_postgres_overlap_ensure_concurrent(overlap_conc_schema) -> None:
+    import threading
+
+    schema, table = overlap_conc_schema
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            lake = open_lake(f"memory://pg-overlap-conc-{threading.get_ident()}", Path("/tmp"))
+            options = ResolvedLeaseOptions(
+                backend="postgres",
+                mode="overlap",
+                pg_dsn_env="DET_LOCK_PG_DSN",
+                pg_schema=schema,
+                pg_table=table,
+            )
+            store = open_lease_store(
+                lake, options, resolve_secret=lambda n: os.environ.get(n)
+            )
+            store.ensure()  # type: ignore[attr-defined]
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    t1 = threading.Thread(target=worker)
+    t2 = threading.Thread(target=worker)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    assert errors == []
+
+    lake = open_lake("memory://pg-overlap-conc-main", Path("/tmp"))
+    options = ResolvedLeaseOptions(
+        backend="postgres",
+        mode="overlap",
+        pg_dsn_env="DET_LOCK_PG_DSN",
+        pg_schema=schema,
+        pg_table=table,
+    )
+    store = open_lease_store(lake, options, resolve_secret=lambda n: os.environ.get(n))
+    start, end = resolve_interval("2026-08-20", None)
+    lease = store.acquire(
+        pipeline="example_api.events",
+        interval_start=start,
+        interval_end=end,
+        command="extract",
+        ttl_sec=60,
+        owner="conc",
+    )
+    assert lease is not None
+    store.release(lease)

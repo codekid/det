@@ -286,3 +286,185 @@ def test_open_lake_enforces_mode_before_import(monkeypatch: pytest.MonkeyPatch, 
     with pytest.raises(ValueError, match="DET_LAKE_MODE=cloud requires"):
         open_lake("./data/lake", tmp_path)
     assert called["n"] == 0
+
+
+def test_local_replace_if_match_bumps_version_same_size(tmp_path: Path):
+    from det.runtime.lake import ObjectVersionConflict
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    target = lake / "locks" / "p" / "x.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    v0 = target.create_exclusive(b"same-size-body")
+    v1 = target.replace_if_match(v0, b"same-size-BODY")
+    assert v1 != v0
+    assert target.read_bytes() == b"same-size-BODY"
+    with pytest.raises(ObjectVersionConflict):
+        target.replace_if_match(v0, b"stale-writer")
+    assert target.delete_if_match(v0) is False
+    assert target.delete_if_match(v1) is True
+    assert not target.exists()
+
+
+def test_local_create_after_delete_increments_generation(tmp_path: Path):
+    from det.runtime.lake import _local_read_gen
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    target = lake / "locks" / "p" / "gen.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    v0 = target.create_exclusive(b"one")
+    assert _local_read_gen(str(target.to_path())) == 1
+    assert target.delete_if_match(v0) is True
+    assert _local_read_gen(str(target.to_path())) == 1
+    v1 = target.create_exclusive(b"two")
+    assert _local_read_gen(str(target.to_path())) == 2
+    assert v1 != v0
+    assert ":2" in v1
+
+
+def test_local_read_gen_corrupt_fails_closed(tmp_path: Path):
+    from det.runtime.lake import _local_gen_path, _local_read_gen
+
+    key = str(tmp_path / "obj.json")
+    Path(key).write_bytes(b"x")
+    _local_gen_path(key).write_text("not-an-int", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="corrupt"):
+        _local_read_gen(key)
+    assert _local_read_gen(str(tmp_path / "missing.json")) == 0
+
+
+def test_local_create_exclusive_rolls_back_when_gen_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import det.runtime.lake as lake_mod
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    target = lake / "locks" / "p" / "fail-create.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    def boom(key: str, gen: int) -> None:
+        raise OSError("injected gen write failure")
+
+    monkeypatch.setattr(lake_mod, "_local_write_gen", boom)
+    with pytest.raises(OSError, match="injected"):
+        target.create_exclusive(b"payload")
+    assert not target.exists()
+
+
+def test_local_replace_if_match_fails_before_publish_when_gen_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import det.runtime.lake as lake_mod
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    target = lake / "locks" / "p" / "fail-replace.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    v0 = target.create_exclusive(b"original")
+
+    def boom(key: str, gen: int) -> None:
+        raise OSError("injected gen write failure")
+
+    monkeypatch.setattr(lake_mod, "_local_write_gen", boom)
+    with pytest.raises(OSError, match="injected"):
+        target.replace_if_match(v0, b"mutated")
+    assert target.read_bytes() == b"original"
+    assert target.object_version() == v0
+
+
+def test_local_replace_restores_gen_when_publish_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import det.runtime.lake as lake_mod
+    from det.runtime.lake import _local_read_gen
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    target = lake / "locks" / "p" / "fail-publish.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    v0 = target.create_exclusive(b"original")
+    key = str(target.to_path())
+    assert _local_read_gen(key) == 1
+
+    real_replace = lake_mod.os.replace
+
+    def selective_replace(src: object, dst: object, *args: object, **kwargs: object) -> None:
+        src_name = str(src)
+        dst_name = str(dst)
+        if dst_name.endswith(".detgen") or ".detgen" in src_name:
+            real_replace(src, dst, *args, **kwargs)
+            return
+        raise OSError("injected publish failure")
+
+    monkeypatch.setattr(lake_mod.os, "replace", selective_replace)
+    with pytest.raises(OSError, match="injected publish"):
+        target.replace_if_match(v0, b"mutated")
+    assert target.read_bytes() == b"original"
+    assert _local_read_gen(key) == 1
+    assert target.object_version() == v0
+
+
+def test_local_iter_excludes_cas_sidecars(tmp_path: Path):
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    folder = lake / "locks" / "p"
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / "x.json"
+    target.create_exclusive(b"body")
+    names = {Path(p).name for p in folder.iterdir()}
+    assert "x.json" in names
+    assert not any(n.endswith(".detcas") or n.endswith(".detgen") for n in names)
+    files = {p.name for p in folder.rglob("*") if p.is_file()}
+    assert files == {"x.json"}
+
+
+def test_local_cas_serializes_concurrent_replace(tmp_path: Path):
+    import threading
+
+    from det.runtime.lake import ObjectVersionConflict
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    target = lake / "locks" / "p" / "race.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    version = target.create_exclusive(b"seed")
+    results: list[str | BaseException] = []
+
+    def worker(payload: bytes) -> None:
+        try:
+            results.append(target.replace_if_match(version, payload))
+        except BaseException as exc:  # noqa: BLE001
+            results.append(exc)
+
+    t1 = threading.Thread(target=worker, args=(b"one",))
+    t2 = threading.Thread(target=worker, args=(b"two",))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    wins = [r for r in results if isinstance(r, str)]
+    losses = [r for r in results if isinstance(r, ObjectVersionConflict)]
+    assert len(wins) == 1
+    assert len(losses) == 1
+    assert target.read_bytes() in {b"one", b"two"}
+
+
+def test_is_precondition_failed_requires_structured_signal():
+    from det.runtime.lake import _is_precondition_failed, _raise_s3_cas
+
+    class PreconditionFailed(Exception):
+        pass
+
+    assert _is_precondition_failed(PreconditionFailed("x"))
+
+    wrapped = OSError(22, "pre-condition failed")
+    wrapped.__cause__ = Exception("noise")
+    assert not _is_precondition_failed(wrapped)
+    assert not _is_precondition_failed(OSError("If-Match header missing"))
+
+    client = Exception("ClientError")
+    client.response = {  # type: ignore[attr-defined]
+        "Error": {"Code": "PreconditionFailed"},
+        "ResponseMetadata": {"HTTPStatusCode": 412},
+    }
+    outer = OSError(22, "Invalid argument")
+    outer.__cause__ = client
+    assert _is_precondition_failed(outer)
+
+    with pytest.raises(FileExistsError):
+        _raise_s3_cas(outer, "b/k", create=True)

@@ -9,11 +9,14 @@ writer path. Unset defaults to local.
 
 from __future__ import annotations
 
+import fcntl
 import fnmatch
 import io
 import os
+import secrets
 import shutil
 from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any, Literal
@@ -495,6 +498,74 @@ class _Backend:
         raise NotImplementedError
 
 
+def _local_cas_lock_path(key: str) -> Path:
+    path = Path(key)
+    return path.with_name(f".{path.name}.detcas")
+
+
+def _local_gen_path(key: str) -> Path:
+    path = Path(key)
+    return path.with_name(f".{path.name}.detgen")
+
+
+def _is_local_sidecar(path: Path) -> bool:
+    name = path.name
+    return name.endswith(".detcas") or name.endswith(".detgen")
+
+
+def _local_read_gen(key: str) -> int:
+    """Return generation; missing file → 0; corrupt/unreadable → raise."""
+    path = _local_gen_path(key)
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return 0
+    except OSError as exc:
+        raise RuntimeError(
+            f"local lease generation unreadable for {key}: {exc}"
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise RuntimeError(
+            f"local lease generation not utf-8 for {key}"
+        ) from exc
+    if not text:
+        raise RuntimeError(f"local lease generation empty for {key}")
+    try:
+        value = int(text)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"local lease generation corrupt for {key}: {text!r}"
+        ) from exc
+    if value < 0:
+        raise RuntimeError(f"local lease generation negative for {key}: {value}")
+    return value
+
+
+def _local_write_gen(key: str, gen: int) -> None:
+    path = _local_gen_path(key)
+    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}.{secrets.token_hex(4)}")
+    try:
+        tmp.write_text(str(gen), encoding="utf-8")
+        os.replace(tmp, path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+@contextmanager
+def _local_cas_guard(key: str) -> Iterator[None]:
+    """Exclusive flock around local version check + mutate (cross-process CAS)."""
+    lock_path = _local_cas_lock_path(key)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
 class _LocalBackend(_Backend):
     kind = "local"
 
@@ -529,15 +600,19 @@ class _LocalBackend(_Backend):
         p = Path(key)
         if not p.is_dir():
             return []
-        return sorted(str(c) for c in p.iterdir())
+        return sorted(str(c) for c in p.iterdir() if not _is_local_sidecar(c))
 
     def iter_files(self, key: str) -> list[str]:
         p = Path(key)
         if not p.exists():
             return []
         if p.is_file():
-            return [str(p)]
-        return sorted(str(c) for c in p.rglob("*") if c.is_file())
+            return [] if _is_local_sidecar(p) else [str(p)]
+        return sorted(
+            str(c)
+            for c in p.rglob("*")
+            if c.is_file() and not _is_local_sidecar(c)
+        )
 
     def open(self, key: str, mode: str, **kwargs: Any) -> Any:
         encoding = kwargs.get("encoding")
@@ -558,42 +633,81 @@ class _LocalBackend(_Backend):
 
     def create_exclusive(self, key: str, data: bytes) -> str:
         Path(key).parent.mkdir(parents=True, exist_ok=True)
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-        fd = os.open(key, flags, 0o644)
-        try:
-            os.write(fd, data)
-        finally:
-            os.close(fd)
-        version = self.object_version(key)
-        if version is None:
-            raise RuntimeError(f"local exclusive create missing version for {key}")
-        return version
+        with _local_cas_guard(key):
+            flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+            fd = os.open(key, flags, 0o644)
+            try:
+                os.write(fd, data)
+            finally:
+                os.close(fd)
+            try:
+                # Keep prior .detgen across delete/recreate so versions cannot rewind.
+                _local_write_gen(key, _local_read_gen(key) + 1)
+            except Exception:
+                Path(key).unlink(missing_ok=True)
+                raise
+            version = self.object_version(key)
+            if version is None:
+                raise RuntimeError(f"local exclusive create missing version for {key}")
+            return version
 
     def object_version(self, key: str) -> str | None:
         path = Path(key)
         if not path.is_file():
             return None
         st = path.stat()
-        return f"local:{st.st_mtime_ns}:{st.st_size}:{st.st_ino}"
+        return f"local:{st.st_mtime_ns}:{st.st_size}:{st.st_ino}:{_local_read_gen(key)}"
 
     def replace_if_match(self, key: str, expected_version: str, data: bytes) -> str:
-        current = self.object_version(key)
-        if current is None or current != expected_version:
-            raise ObjectVersionConflict(key)
-        Path(key).write_bytes(data)
-        version = self.object_version(key)
-        if version is None:
-            raise RuntimeError(f"local replace missing version for {key}")
-        return version
+        with _local_cas_guard(key):
+            current = self.object_version(key)
+            if current is None or current != expected_version:
+                raise ObjectVersionConflict(key)
+            path = Path(key)
+            tmp = path.with_name(
+                f".{path.name}.tmp.{os.getpid()}.{secrets.token_hex(4)}"
+            )
+            prior_gen = _local_read_gen(key)
+            next_gen = prior_gen + 1
+            gen_committed = False
+            try:
+                tmp.write_bytes(data)
+                # Bump generation before publishing bytes so a failed metadata
+                # write cannot leave new object content under a stale stamp.
+                _local_write_gen(key, next_gen)
+                gen_committed = True
+                os.replace(tmp, path)
+            except Exception:
+                tmp.unlink(missing_ok=True)
+                if gen_committed:
+                    try:
+                        if prior_gen == 0:
+                            _local_gen_path(key).unlink(missing_ok=True)
+                        else:
+                            _local_write_gen(key, prior_gen)
+                    except Exception as restore_exc:
+                        logger.warning(
+                            "failed to restore local lease generation after publish error",
+                            key=key,
+                            prior_gen=prior_gen,
+                            error=str(restore_exc),
+                        )
+                raise
+            version = self.object_version(key)
+            if version is None:
+                raise RuntimeError(f"local replace missing version for {key}")
+            return version
 
     def delete_if_match(self, key: str, expected_version: str) -> bool:
-        current = self.object_version(key)
-        if current is None:
-            return False
-        if current != expected_version:
-            return False
-        Path(key).unlink(missing_ok=True)
-        return True
+        with _local_cas_guard(key):
+            current = self.object_version(key)
+            if current is None:
+                return False
+            if current != expected_version:
+                return False
+            Path(key).unlink(missing_ok=True)
+            # Preserve .detgen so a later create_exclusive increments, not restarts.
+            return True
 
     def rel_key(self, root: str, child: str) -> str | None:
         try:
@@ -884,7 +998,7 @@ class _FsspecBackend(_Backend):
                 "b/{}/o/{}",
                 bucket,
                 obj,
-                generation=str(if_generation_match),
+                ifGenerationMatch=str(if_generation_match),
             )
         except FileNotFoundError:
             return False
@@ -931,25 +1045,30 @@ def _split_gcs_key(key: str) -> tuple[str, str]:
 
 
 def _is_precondition_failed(exc: BaseException) -> bool:
-    name = type(exc).__name__
-    if name in {"PreconditionFailed", "Conflict", "ObjectVersionConflict"}:
-        return True
-    if isinstance(exc, OSError) and getattr(exc, "errno", None) == 22:
-        return True
-    response = getattr(exc, "response", None)
-    if isinstance(response, dict):
-        err = response.get("Error") or {}
-        code = str(err.get("Code") or "")
-        if code in {"PreconditionFailed", "412", "ConditionalRequestConflict"}:
+    """True only for explicit 412 / precondition conflict signals (no message heuristics)."""
+    names = {"PreconditionFailed", "Conflict", "ObjectVersionConflict"}
+    codes = {"PreconditionFailed", "412", "ConditionalRequestConflict"}
+    cur: BaseException | None = exc
+    seen: set[int] = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if type(cur).__name__ in names:
             return True
-    text = str(exc).lower()
-    return (
-        "precondition" in text
-        or "pre-condition" in text
-        or "412" in text
-        or "if-match" in text
-        or "if-none-match" in text
-    )
+        response = getattr(cur, "response", None)
+        if isinstance(response, dict):
+            err = response.get("Error") or {}
+            if str(err.get("Code") or "") in codes:
+                return True
+            status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+            if status == 412:
+                return True
+        status = getattr(cur, "status_code", None)
+        if status is None:
+            status = getattr(cur, "code", None)
+        if status == 412:
+            return True
+        cur = cur.__cause__  # type: ignore[assignment]
+    return False
 
 
 def _is_not_found(exc: BaseException) -> bool:
@@ -967,23 +1086,10 @@ def _is_not_found(exc: BaseException) -> bool:
 
 
 def _raise_s3_cas(exc: BaseException, key: str, *, create: bool) -> None:
-    cur: BaseException | None = exc
-    seen: set[int] = set()
-    while cur is not None and id(cur) not in seen:
-        seen.add(id(cur))
-        if _is_precondition_failed(cur) or "PreconditionFailed" in type(cur).__name__:
-            if create:
-                raise FileExistsError(key) from exc
-            raise ObjectVersionConflict(key) from exc
-        response = getattr(cur, "response", None)
-        if isinstance(response, dict):
-            status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
-            code = str((response.get("Error") or {}).get("Code") or "")
-            if status == 412 or code == "PreconditionFailed":
-                if create:
-                    raise FileExistsError(key) from exc
-                raise ObjectVersionConflict(key) from exc
-        cur = cur.__cause__  # type: ignore[assignment]
+    if _is_precondition_failed(exc):
+        if create:
+            raise FileExistsError(key) from exc
+        raise ObjectVersionConflict(key) from exc
     raise ObjectCasUnsupported(f"s3 conditional put failed for {key}: {exc}") from exc
 
 

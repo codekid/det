@@ -230,6 +230,42 @@ def test_advisory_lock_keys_stable():
     )[0]
 
 
+def test_refresh_lease_uses_bound_store_when_path_missing():
+    from det.runtime.lease import Lease, refresh_lease
+
+    calls: list[object] = []
+
+    class _Store:
+        def refresh(self, lease: object) -> None:
+            calls.append(lease)
+
+    lease = Lease(
+        token="t",
+        pipeline="p",
+        interval_start="2026-08-15T00:00:00+00:00",
+        interval_end="2026-08-16T00:00:00+00:00",
+        ttl_sec=60,
+        lock_id="p/x",
+        path=None,
+        store=_Store(),
+    )
+    refresh_lease(lease)
+    assert calls == [lease]
+    refresh_lease(lease, store=lease.store)
+    assert len(calls) == 2
+
+
+def test_read_lock_returns_none_on_undecodable_utf8(tmp_path: Path):
+    from det.runtime.lease import lock_path, read_lock
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    start, end = resolve_interval("2026-08-15", None)
+    path = lock_path(lake, "example_api.events", start, end)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xff\xfe not utf-8")
+    assert read_lock(path) is None
+
+
 def test_local_exclusive_create(tmp_path: Path):
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     target = lake / "locks" / "p" / "x.json"

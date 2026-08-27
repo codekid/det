@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from det.logging import get_logger
+from det.runtime.ids import require_sql_ident
 from det.runtime.lease._common import (
     Lease,
     LeaseHeldError,
@@ -19,6 +20,7 @@ from det.runtime.lease._common import (
 )
 from det.runtime.lease.store import LockMode
 from det.runtime.secrets import DSN_KEYS
+from det.runtime.sql_types import quote_ident
 
 logger = get_logger(__name__)
 
@@ -47,9 +49,13 @@ class PostgresLeaseStore:
     ) -> None:
         self._resolve_secret = resolve_secret
         self.dsn_env = dsn_env
-        self.schema = schema
-        self.table = table
+        self.schema = require_sql_ident(schema, what="postgres lease schema")
+        self.table = require_sql_ident(table, what="postgres lease table")
         self.mode = mode
+        self._overlap_constraint = require_sql_ident(
+            f"{self.table}_overlap_excl",
+            what="postgres lease overlap constraint",
+        )
         self._ensured = False
 
     def _dsn(self) -> str:
@@ -76,7 +82,7 @@ class PostgresLeaseStore:
 
     @property
     def _qual(self) -> str:
-        return f'"{self.schema}"."{self.table}"'
+        return f"{quote_ident(self.schema)}.{quote_ident(self.table)}"
 
     def ensure(self) -> None:
         if self._ensured:
@@ -85,7 +91,19 @@ class PostgresLeaseStore:
         dsn = self._dsn()
         with psycopg.connect(dsn) as conn:
             with conn.cursor() as cur:
-                self._exec(cur, f'CREATE SCHEMA IF NOT EXISTS "{self.schema}"')
+                if self.mode == "overlap":
+                    # DB-wide lock: extension install is not schema-scoped.
+                    ek1, ek2 = _btree_gist_extension_lock_keys()
+                    self._exec(
+                        cur, "SELECT pg_advisory_xact_lock(%s, %s)", (ek1, ek2)
+                    )
+                    self._exec(cur, "CREATE EXTENSION IF NOT EXISTS btree_gist")
+                    # Schema/table lock: serialize table bootstrap + constraint.
+                    k1, k2 = _ensure_ddl_lock_keys(self.schema, self.table)
+                    self._exec(cur, "SELECT pg_advisory_xact_lock(%s, %s)", (k1, k2))
+                self._exec(
+                    cur, f"CREATE SCHEMA IF NOT EXISTS {quote_ident(self.schema)}"
+                )
                 self._exec(
                     cur,
                     f"""
@@ -104,7 +122,9 @@ class PostgresLeaseStore:
                     """,
                 )
                 if self.mode == "overlap":
-                    self._exec(cur, "CREATE EXTENSION IF NOT EXISTS btree_gist")
+                    constraint = self._overlap_constraint
+                    constraint_sql = quote_ident(constraint)
+                    rel = self._qual
                     self._exec(
                         cur,
                         f"""
@@ -112,11 +132,11 @@ class PostgresLeaseStore:
                         BEGIN
                           IF NOT EXISTS (
                             SELECT 1 FROM pg_constraint
-                            WHERE conname = '{self.table}_overlap_excl'
-                              AND conrelid = '{self.schema}.{self.table}'::regclass
+                            WHERE conname = '{constraint}'
+                              AND conrelid = '{rel}'::regclass
                           ) THEN
-                            ALTER TABLE {self._qual}
-                              ADD CONSTRAINT {self.table}_overlap_excl
+                            ALTER TABLE {rel}
+                              ADD CONSTRAINT {constraint_sql}
                               EXCLUDE USING gist (
                                 pipeline WITH =,
                                 tstzrange(interval_start, interval_end, '[)') WITH &&
@@ -166,24 +186,27 @@ class PostgresLeaseStore:
             with conn.cursor() as cur:
                 self._clear_expired(cur, pipeline, start, end)
                 try:
-                    self._exec(cur, 
-                        f"""
-                        INSERT INTO {self._qual}
-                          (pipeline, interval_start, interval_end, owner, command,
-                           token, expires_at, ttl_sec)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            pipeline,
-                            start,
-                            end,
-                            owner,
-                            command,
-                            token,
-                            expires,
-                            ttl_sec,
-                        ),
-                    )
+                    # Savepoint: constraint failure must not abort the outer txn.
+                    with conn.transaction():
+                        self._exec(
+                            cur,
+                            f"""
+                            INSERT INTO {self._qual}
+                              (pipeline, interval_start, interval_end, owner, command,
+                               token, expires_at, ttl_sec)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            (
+                                pipeline,
+                                start,
+                                end,
+                                owner,
+                                command,
+                                token,
+                                expires,
+                                ttl_sec,
+                            ),
+                        )
                 except Exception as exc:
                     if not _is_unique_or_exclusion(exc):
                         raise
@@ -386,20 +409,12 @@ class PostgresLeaseStore:
     ) -> dict[str, Any] | None:
         with self._connect() as conn:
             with conn.cursor() as cur:
-                self._exec(cur, 
-                    f"""
-                    SELECT pipeline, interval_start, interval_end, owner, command,
-                           token, expires_at, ttl_sec
-                      FROM {self._qual}
-                     WHERE pipeline = %s
-                       AND interval_start = %s
-                       AND interval_end = %s
-                     LIMIT 1
-                    """,
-                    (pipeline, _as_dt(interval_start), _as_dt(interval_end)),
+                return self._fetch_blocking(
+                    cur,
+                    pipeline,
+                    _as_dt(interval_start),
+                    _as_dt(interval_end),
                 )
-                row = cur.fetchone()
-        return _row_payload(row) if row is not None else None
 
     def force_release(
         self,
@@ -408,19 +423,36 @@ class PostgresLeaseStore:
         interval_start: str,
         interval_end: str,
     ) -> dict[str, Any] | None:
+        start = _as_dt(interval_start)
+        end = _as_dt(interval_end)
         with self._connect() as conn:
             with conn.cursor() as cur:
-                self._exec(cur, 
-                    f"""
-                    DELETE FROM {self._qual}
-                     WHERE pipeline = %s
-                       AND interval_start = %s
-                       AND interval_end = %s
-                     RETURNING pipeline, interval_start, interval_end, owner, command,
-                               token, expires_at, ttl_sec
-                    """,
-                    (pipeline, _as_dt(interval_start), _as_dt(interval_end)),
-                )
+                if self.mode == "overlap":
+                    self._exec(
+                        cur,
+                        f"""
+                        DELETE FROM {self._qual}
+                         WHERE pipeline = %s
+                           AND tstzrange(interval_start, interval_end, '[)')
+                               && tstzrange(%s, %s, '[)')
+                         RETURNING pipeline, interval_start, interval_end, owner, command,
+                                   token, expires_at, ttl_sec
+                        """,
+                        (pipeline, start, end),
+                    )
+                else:
+                    self._exec(
+                        cur,
+                        f"""
+                        DELETE FROM {self._qual}
+                         WHERE pipeline = %s
+                           AND interval_start = %s
+                           AND interval_end = %s
+                         RETURNING pipeline, interval_start, interval_end, owner, command,
+                                   token, expires_at, ttl_sec
+                        """,
+                        (pipeline, start, end),
+                    )
                 row = cur.fetchone()
             conn.commit()
         if row is None:
@@ -443,6 +475,23 @@ def _as_dt(value: str | datetime) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
     return dt
+
+
+def _advisory_i32(text: str) -> int:
+    import hashlib
+
+    digest = hashlib.sha256(text.encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
+
+
+def _btree_gist_extension_lock_keys() -> tuple[int, int]:
+    """Database-wide keys for CREATE EXTENSION btree_gist serialization."""
+    return _advisory_i32("det_lease_ensure:btree_gist"), _advisory_i32("extension")
+
+
+def _ensure_ddl_lock_keys(schema: str, table: str) -> tuple[int, int]:
+    """Schema/table keys for CREATE TABLE + overlap constraint ensure DDL."""
+    return _advisory_i32(f"det_lease_ensure:{schema}"), _advisory_i32(table)
 
 
 def _row_payload(row: Any) -> dict[str, Any]:

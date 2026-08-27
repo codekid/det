@@ -6,7 +6,7 @@ import os
 import secrets
 from collections.abc import Mapping
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -44,7 +44,8 @@ class Lease:
     lock_id: str
     path: LakeRef | None = None
     version: str | None = None
-
+    # Bound LeaseStore for mid-run refresh/release (esp. Postgres where path is None).
+    store: Any | None = field(default=None, repr=False, compare=False)
 
 _ACTIVE: ContextVar[Lease | None] = ContextVar("det_lease_active", default=None)
 

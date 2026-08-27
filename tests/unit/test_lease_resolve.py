@@ -98,3 +98,31 @@ def test_pipeline_yaml_lease_roundtrip(tmp_path: Path, project_root: Path) -> No
     opts = resolve_lease_options(pipeline=config, env={})
     assert opts.backend == "postgres"
     assert opts.mode == "exact"
+
+
+def test_lease_config_rejects_unsafe_pg_idents() -> None:
+    with pytest.raises(ValueError, match="lease.pg_schema"):
+        LeaseConfig(pg_schema='evil"; DROP TABLE')
+    with pytest.raises(ValueError, match="lease.pg_table"):
+        LeaseConfig(pg_table="leases;--")
+    ok = LeaseConfig(pg_schema="det_lease", pg_table="leases")
+    assert ok.pg_schema == "det_lease"
+
+
+def test_postgres_store_rejects_unsafe_idents() -> None:
+    from det.runtime.lease.postgres_store import PostgresLeaseStore
+
+    with pytest.raises(ValueError, match="postgres lease schema"):
+        PostgresLeaseStore(
+            resolve_secret=lambda _k: "postgres://x",
+            dsn_env="DET_LOCK_PG_DSN",
+            schema="bad-name",
+            table="leases",
+        )
+    with pytest.raises(ValueError, match="overlap constraint"):
+        PostgresLeaseStore(
+            resolve_secret=lambda _k: "postgres://x",
+            dsn_env="DET_LOCK_PG_DSN",
+            schema="det_lease",
+            table="t" * 60,
+        )

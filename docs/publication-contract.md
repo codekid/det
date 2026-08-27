@@ -10,8 +10,9 @@ DET’s invariants:
 2. Re-extract of a committed prefix conflicts; a new attempt uses a new
    `__extract_run_datetime=` sibling (or an explicit new extract-run id).
 3. Load reads only committed raw and writes bronze with replace-by-run semantics.
-4. A lake lease serializes writers for the same `pipeline` + interval
-   (equality only — not overlap).
+4. A lease serializes writers for the same `pipeline` + interval identity
+   (equality by default; optional Postgres `overlap` mode for intersecting
+   intervals).
 5. DET owns wire → typed bronze; dbt owns analytical meaning.
 
 ---
@@ -145,4 +146,3 @@ DET does not promise a background sweeper of all orphans in v1.
 - Rich run state machine (`EXTRACTING` / `LOADING` / …) beyond receipts
 - Resolved `config_sha256` artifact per attempt
 - Strong cross-region list consistency guarantees
-- Overlap locking for intersecting intervals
