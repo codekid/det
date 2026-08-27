@@ -321,6 +321,68 @@ def test_local_create_after_delete_increments_generation(tmp_path: Path):
     assert ":2" in v1
 
 
+def test_local_read_gen_corrupt_fails_closed(tmp_path: Path):
+    from det.runtime.lake import _local_gen_path, _local_read_gen
+
+    key = str(tmp_path / "obj.json")
+    Path(key).write_bytes(b"x")
+    _local_gen_path(key).write_text("not-an-int", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="corrupt"):
+        _local_read_gen(key)
+    assert _local_read_gen(str(tmp_path / "missing.json")) == 0
+
+
+def test_local_create_exclusive_rolls_back_when_gen_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import det.runtime.lake as lake_mod
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    target = lake / "locks" / "p" / "fail-create.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    def boom(key: str, gen: int) -> None:
+        raise OSError("injected gen write failure")
+
+    monkeypatch.setattr(lake_mod, "_local_write_gen", boom)
+    with pytest.raises(OSError, match="injected"):
+        target.create_exclusive(b"payload")
+    assert not target.exists()
+
+
+def test_local_replace_if_match_fails_before_publish_when_gen_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import det.runtime.lake as lake_mod
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    target = lake / "locks" / "p" / "fail-replace.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    v0 = target.create_exclusive(b"original")
+
+    def boom(key: str, gen: int) -> None:
+        raise OSError("injected gen write failure")
+
+    monkeypatch.setattr(lake_mod, "_local_write_gen", boom)
+    with pytest.raises(OSError, match="injected"):
+        target.replace_if_match(v0, b"mutated")
+    assert target.read_bytes() == b"original"
+    assert target.object_version() == v0
+
+
+def test_local_iter_excludes_cas_sidecars(tmp_path: Path):
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    folder = lake / "locks" / "p"
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / "x.json"
+    target.create_exclusive(b"body")
+    names = {Path(p).name for p in folder.iterdir()}
+    assert "x.json" in names
+    assert not any(n.endswith(".detcas") or n.endswith(".detgen") for n in names)
+    files = {p.name for p in folder.rglob("*") if p.is_file()}
+    assert files == {"x.json"}
+
+
 def test_local_cas_serializes_concurrent_replace(tmp_path: Path):
     import threading
 

@@ -508,15 +508,48 @@ def _local_gen_path(key: str) -> Path:
     return path.with_name(f".{path.name}.detgen")
 
 
+def _is_local_sidecar(path: Path) -> bool:
+    name = path.name
+    return name.endswith(".detcas") or name.endswith(".detgen")
+
+
 def _local_read_gen(key: str) -> int:
+    """Return generation; missing file → 0; corrupt/unreadable → raise."""
+    path = _local_gen_path(key)
     try:
-        return int(_local_gen_path(key).read_text(encoding="utf-8").strip() or "0")
-    except (OSError, ValueError):
+        text = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
         return 0
+    except OSError as exc:
+        raise RuntimeError(
+            f"local lease generation unreadable for {key}: {exc}"
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise RuntimeError(
+            f"local lease generation not utf-8 for {key}"
+        ) from exc
+    if not text:
+        raise RuntimeError(f"local lease generation empty for {key}")
+    try:
+        value = int(text)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"local lease generation corrupt for {key}: {text!r}"
+        ) from exc
+    if value < 0:
+        raise RuntimeError(f"local lease generation negative for {key}: {value}")
+    return value
 
 
 def _local_write_gen(key: str, gen: int) -> None:
-    _local_gen_path(key).write_text(str(gen), encoding="utf-8")
+    path = _local_gen_path(key)
+    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}.{secrets.token_hex(4)}")
+    try:
+        tmp.write_text(str(gen), encoding="utf-8")
+        os.replace(tmp, path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 @contextmanager
@@ -567,15 +600,19 @@ class _LocalBackend(_Backend):
         p = Path(key)
         if not p.is_dir():
             return []
-        return sorted(str(c) for c in p.iterdir())
+        return sorted(str(c) for c in p.iterdir() if not _is_local_sidecar(c))
 
     def iter_files(self, key: str) -> list[str]:
         p = Path(key)
         if not p.exists():
             return []
         if p.is_file():
-            return [str(p)]
-        return sorted(str(c) for c in p.rglob("*") if c.is_file())
+            return [] if _is_local_sidecar(p) else [str(p)]
+        return sorted(
+            str(c)
+            for c in p.rglob("*")
+            if c.is_file() and not _is_local_sidecar(c)
+        )
 
     def open(self, key: str, mode: str, **kwargs: Any) -> Any:
         encoding = kwargs.get("encoding")
@@ -603,8 +640,12 @@ class _LocalBackend(_Backend):
                 os.write(fd, data)
             finally:
                 os.close(fd)
-            # Keep prior .detgen across delete/recreate so versions cannot rewind.
-            _local_write_gen(key, _local_read_gen(key) + 1)
+            try:
+                # Keep prior .detgen across delete/recreate so versions cannot rewind.
+                _local_write_gen(key, _local_read_gen(key) + 1)
+            except Exception:
+                Path(key).unlink(missing_ok=True)
+                raise
             version = self.object_version(key)
             if version is None:
                 raise RuntimeError(f"local exclusive create missing version for {key}")
@@ -626,13 +667,16 @@ class _LocalBackend(_Backend):
             tmp = path.with_name(
                 f".{path.name}.tmp.{os.getpid()}.{secrets.token_hex(4)}"
             )
+            next_gen = _local_read_gen(key) + 1
             try:
                 tmp.write_bytes(data)
+                # Bump generation before publishing bytes so a failed metadata
+                # write cannot leave new object content under a stale stamp.
+                _local_write_gen(key, next_gen)
                 os.replace(tmp, path)
             except Exception:
                 tmp.unlink(missing_ok=True)
                 raise
-            _local_write_gen(key, _local_read_gen(key) + 1)
             version = self.object_version(key)
             if version is None:
                 raise RuntimeError(f"local replace missing version for {key}")
