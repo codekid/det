@@ -685,8 +685,13 @@ class _LocalBackend(_Backend):
                             _local_gen_path(key).unlink(missing_ok=True)
                         else:
                             _local_write_gen(key, prior_gen)
-                    except Exception:
-                        pass
+                    except Exception as restore_exc:
+                        logger.warning(
+                            "failed to restore local lease generation after publish error",
+                            key=key,
+                            prior_gen=prior_gen,
+                            error=str(restore_exc),
+                        )
                 raise
             version = self.object_version(key)
             if version is None:

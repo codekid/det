@@ -374,7 +374,6 @@ def test_local_replace_restores_gen_when_publish_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     import det.runtime.lake as lake_mod
-
     from det.runtime.lake import _local_read_gen
 
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
