@@ -212,14 +212,14 @@ def _lake_bucket(lake_uri: str) -> str:
 def _lookup_connection_sa(project: str, location: str, connection: str) -> str | None:
     """Best-effort connection SA lookup; None when offline or connection missing."""
     try:
-        from google.cloud import bigquery
+        from google.cloud import bigquery  # pyright: ignore[reportAttributeAccessIssue]
     except ImportError:
         return None
 
     try:
         client = bigquery.Client(project=project)
         conn_name = f"projects/{project}/locations/{location}/connections/{connection}"
-        conn = client.get_connection(conn_name)
+        conn = client.get_connection(conn_name)  # pyright: ignore[reportAttributeAccessIssue]
     except Exception:
         return None
 
@@ -317,7 +317,7 @@ def approval_plan_for_register(plan: BigLakeRegisterPlan, argv: list[str]) -> Ap
 
 
 def _ensure_dataset(client: Any, project: str, dataset_id: str, location: str) -> None:
-    from google.cloud import bigquery
+    from google.cloud import bigquery  # pyright: ignore[reportAttributeAccessIssue]
 
     ref = bigquery.Dataset(f"{project}.{dataset_id}")
     ref.location = location
@@ -329,7 +329,7 @@ def _ensure_dataset(client: Any, project: str, dataset_id: str, location: str) -
 
 def apply_biglake_register(plan: BigLakeRegisterPlan) -> dict[str, Any]:
     try:
-        from google.cloud import bigquery
+        from google.cloud import bigquery  # pyright: ignore[reportAttributeAccessIssue]
     except ImportError as exc:
         raise RuntimeError(
             'google-cloud-bigquery is required. Install: uv pip install -e ".[bigquery]"'

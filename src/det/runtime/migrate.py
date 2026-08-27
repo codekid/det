@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -126,7 +127,7 @@ class MigratePlan:
         }
 
 
-def manifest_wire_version(manifest: dict[str, Any]) -> int:
+def manifest_wire_version(manifest: Mapping[str, Any]) -> int:
     """Legacy manifests without the field are treated as wire_version 1."""
     raw = manifest.get("wire_version", 1)
     try:
@@ -292,6 +293,8 @@ class BronzeMigrator:
         if all_raw:
             window_start = window_end = None
         else:
+            if interval_start is None:
+                raise ValueError("-s/--interval-start is required unless --all-raw")
             window_start, window_end = resolve_interval(interval_start, interval_end)
 
         ctx_settings = (
@@ -340,7 +343,8 @@ class BronzeMigrator:
                     try:
                         man = read_manifest(part)
                         s, e = resolve_interval(
-                            str(man["interval_start"]), str(man["interval_end"])
+                            str(man.get("interval_start", "")),
+                            str(man.get("interval_end", "")),
                         )
                         starts.append(s)
                         ends.append(e)
@@ -353,7 +357,7 @@ class BronzeMigrator:
             to_config = PipelineConfig(
                 name=config.name,
                 source=SourceConfig(type=config.source.type, overrides=config.source.overrides),
-                schema_path=str(schema_path),
+                schema=str(schema_path),
                 validation=ValidationConfig(),
                 ingestion=IngestionConfig(
                     library=ingestion_library,  # type: ignore[arg-type]
@@ -529,7 +533,7 @@ class BronzeMigrator:
         mapper_name: str,
         raw_name: str,
         to_bronze_id: str,
-        source_parts: list[Path],
+        source_parts: list[Path | LakeRef],
         window_start: str,
         window_end: str,
         validate_limit: int | None,

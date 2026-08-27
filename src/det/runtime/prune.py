@@ -320,8 +320,7 @@ class BronzePruner:
                 exists = cur.fetchone()
                 if not exists or exists[0] == 0:
                     return PrunePlan(keep=keep)
-                cur.execute(
-                    f"""
+                query = f"""
                     select distinct
                         __interval_start_datetime,
                         __interval_end_datetime,
@@ -330,9 +329,8 @@ class BronzePruner:
                     where __interval_start_datetime >= %s
                       and __interval_start_datetime < %s
                     order by 1, 2, 3
-                    """,
-                    (window_start, window_end),
-                )
+                    """
+                cur.execute(query, (window_start, window_end))  # pyright: ignore[reportArgumentType]
                 rows = cur.fetchall()
         return _plan_from_run_rows(rows, keep=keep)
 
@@ -394,8 +392,9 @@ class BronzePruner:
         with psycopg.connect(dsn) as conn:
             with conn.cursor() as cur:
                 for ref in plan.to_remove:
+                    delete_sql = delete_extract_run_sql(qualified, placeholder="%s")
                     cur.execute(
-                        delete_extract_run_sql(qualified, placeholder="%s"),
+                        delete_sql,  # pyright: ignore[reportArgumentType]
                         (
                             ref.interval_start,
                             ref.interval_end,
