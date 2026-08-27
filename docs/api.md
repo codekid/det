@@ -91,7 +91,7 @@ Registration for production: entry points or project-local `sources/`
 | `check_project`, `check_pipeline_config`, `Finding` | Structure / config checks |
 | `has_errors`, `has_warnings`, `findings_payload` | Check helpers |
 | `list_receipts`, `summarize_receipts` | Read run receipts (observability) |
-| `Lease`, `LeaseHeldError` | Lease types (lake or Postgres backend) |
+| `Lease`, `LeaseHeldError`, `LeaseFencedError` | Lease types (acquire conflict vs lost-lease fence) |
 | `inspect_lease`, `release_lock` | Inspect / force-release lake lock files |
 
 `PipelineRunner`, `BronzeMigrator`, and `BronzePruner` accept a canonical pipeline
@@ -161,7 +161,8 @@ helpers. The CLI configures logging in its Typer callback as today.
 | `DetContractError` | Schema / coerce failures |
 | `DetConflictError` | Lease held, committed raw already exists, … |
 | `DetNotFoundError` | Missing pipeline, raw partition, plugin id |
-| `LeaseHeldError` | Subclass of `DetConflictError` (pipeline lease) |
+| `LeaseHeldError` | Subclass of `DetConflictError` (another writer holds the lease on acquire) |
+| `LeaseFencedError` | Subclass of `DetConflictError` (this worker lost the lease before publish) |
 
 `SecretError` / `PluginLoadError` / `SchemaValidationError` fold into this tree
 internally; prefer catching the public `Det*` types.
@@ -180,8 +181,10 @@ normative in [publication-contract.md](publication-contract.md).
 | **Many processes**, one lake | Leases serialize the same `pipeline` + interval; other pipelines may run in parallel |
 | **One process, sequential** runs | Call `PipelineRunner` / migrator / pruner one after another |
 
-Catch `LeaseHeldError` (or `DetConflictError`) when another writer holds the lock;
-retry or wait — do not disable locks in production (`DET_LOCK=0` is for tests).
+Catch `LeaseHeldError` (or `DetConflictError`) when another writer holds the lock
+on acquire; retry or wait — do not disable locks in production (`DET_LOCK=0` is
+for tests). Catch `LeaseFencedError` when a mid-run pre-publish fence fails after
+a steal or force-release (`assert_lease_held`). Soft refresh is best-effort only.
 Default backend is lake files with strong CAS on s3/gs; set
 `DET_LOCK_BACKEND=postgres` (or pipeline `lease.backend`) for an external store.
 Long extracts: raise TTL via `--lock-ttl-sec` / `DET_LOCK_TTL_SEC` / DagRun

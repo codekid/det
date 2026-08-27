@@ -45,6 +45,10 @@ class LeaseStore(Protocol):
 
     def refresh(self, lease: Lease) -> None: ...
 
+    def ensure_held(self, lease: Lease) -> None:
+        """Hard fence: raise if this handle no longer owns the live lease."""
+        ...
+
     def release(self, lease: Lease) -> None: ...
 
     def inspect(

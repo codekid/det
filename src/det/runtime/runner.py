@@ -18,7 +18,13 @@ from det.runtime.config import PipelineConfig, load_pipeline, resolve_path
 from det.runtime.dlt_hygiene import check_raw_hygiene
 from det.runtime.lake import LakeRef
 from det.runtime.layout import LAKE_LAYOUT
-from det.runtime.lease import pipeline_lease, refresh_lease, resolve_lease_options
+from det.runtime.lease import (
+    LeaseFencedError,
+    assert_lease_held,
+    pipeline_lease,
+    refresh_lease,
+    resolve_lease_options,
+)
 from det.runtime.load_rows import CountingIter, iter_bronze_rows
 from det.runtime.manifest import (
     LakePath,
@@ -218,7 +224,14 @@ class PipelineRunner:
                                 "artifacts": artifacts,
                             },
                         )
+                        assert_lease_held(
+                            lease, store=None if lease is None else lease.store
+                        )
                         write_manifest(raw_dir, manifest_payload)
+                    except LeaseFencedError:
+                        # Bytes may still be useful for ops; do not scrub the
+                        # prefix when publish was refused by the lease fence.
+                        raise
                     except Exception:
                         if not is_committed_raw_dir(raw_dir):
                             raw_dir.rmtree(ignore_errors=True)
@@ -351,6 +364,9 @@ class PipelineRunner:
                             backend=config.ingestion.library,
                             chunk_rows=config.ingestion.chunk_rows,
                             partition=str(partition),
+                        )
+                        assert_lease_held(
+                            lease, store=None if lease is None else lease.store
                         )
                         written = backend.write(
                             counted,

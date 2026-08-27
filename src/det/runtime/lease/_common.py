@@ -32,6 +32,14 @@ class LeaseHeldError(DetConflictError):
         self.payload = payload or {}
 
 
+class LeaseFencedError(DetConflictError):
+    """This worker no longer holds the lease (stolen, expired, or missing)."""
+
+    def __init__(self, message: str, *, payload: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.payload = payload or {}
+
+
 @dataclass
 class Lease:
     """Runtime lease handle. ``version`` is mutated on lake CAS refresh."""

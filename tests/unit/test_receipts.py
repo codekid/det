@@ -16,7 +16,7 @@ from det.logging import register_secret_value
 from det.runtime.coerce import CoerceError
 from det.runtime.config import load_pipeline_config
 from det.runtime.lake import LakeRef, clear_memory_lakes, open_lake
-from det.runtime.lease import LeaseHeldError, pipeline_lease
+from det.runtime.lease import LeaseFencedError, LeaseHeldError, pipeline_lease
 from det.runtime.manifest import is_committed_raw_dir
 from det.runtime.meta import resolve_interval
 from det.runtime.receipts import (
@@ -117,6 +117,7 @@ def _put(
         (HttpIntegrityError("len"), "integrity_error"),
         (HttpError("404"), "http_error"),
         (LeaseHeldError("held"), "lease_held"),
+        (LeaseFencedError("lost"), "lease_fenced"),
         (SecretNotSetError("missing"), "secret_not_set"),
         (CoerceError("bad"), "schema_invalid"),
         (JsonSchemaValidationError("nope", validator="type", schema={}), "schema_invalid"),

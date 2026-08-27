@@ -42,7 +42,7 @@ COMMITTED    meta/manifest.json published → prefix is visible
 | --- | --- |
 | Prefix already **COMMITTED** | `DetConflictError` — do not overwrite; use a new extract-run id |
 | Prefix exists, **not** committed | Delete the prefix, then write (retry after crash) |
-| Failure before commit | Delete the incomplete prefix when extract handles the error |
+| Failure before commit | Delete the incomplete prefix when extract handles the error (`LeaseFencedError` preserves the prefix) |
 | Success | Write manifest last — that publish is the commit |
 
 ### Manifest commit mechanics
@@ -85,15 +85,24 @@ under a schema hash.
   `lease.backend: postgres`. Rows in `{DET_LOCK_PG_SCHEMA}.{DET_LOCK_PG_TABLE}`
   (defaults `det_lease.leases`). DSN from `DET_LOCK_PG_DSN` (name overridable via
   `DET_LOCK_PG_DSN_ENV`). Never auto-reuses bronze `destination.connection_env`.
-- Live lock → `LeaseHeldError`. Expired lock may be **stolen** via CAS (owner
-  presumed dead). TTL: `DET_LOCK_TTL_SEC` / `--lock-ttl-sec` / Airflow conf
-  `lock_ttl_sec` (default 7200).
+- Live lock → `LeaseHeldError` on acquire. Expired lock may be **stolen** via
+  CAS (owner presumed dead). TTL: `DET_LOCK_TTL_SEC` / `--lock-ttl-sec` /
+  Airflow conf `lock_ttl_sec` (default 7200).
+- Soft `refresh` extends TTL when the token still matches; mismatch is a
+  no-op (heartbeat only).
+- **Pre-publish fence:** extract (before raw manifest), load/migrate (before
+  bronze write), and leased prune call `assert_lease_held`. Lost token /
+  version / expired TTL (even with matching token) → `LeaseFencedError`
+  (receipt `lease_fenced`). This authorizes the
+  side effect at the publish boundary; it is not bound into the Iceberg
+  transaction itself, so a residual assert→commit race remains.
 - `DET_LOCK=0` disables leases (tests / explicit local break-glass only).
 
 **Production note:** lake leases on s3/gs are strong when the store honors
 preconditions (fail closed otherwise). Prefer one writer per pipeline+interval
-(e.g. Airflow pool for capacity) and treat the lease as the identity mutex.
-Postgres is the portable strong option when you already run a database.
+(e.g. Airflow pool for capacity) and treat the lease as the identity mutex
+plus pre-publish fence. Do not `--force` release while a worker may still be
+alive. Postgres is the portable strong option when you already run a database.
 
 ---
 
@@ -107,7 +116,7 @@ Postgres is the portable strong option when you already run a database.
 | **load** same extract_run | Replace-by-run (delete rows/files for that run identity, then write) | Re-load same extract_run |
 | **load** without committed raw | `DetNotFoundError` | — |
 | **run** | One lease; extract then load share nested lease | Mid-extract → no commit; mid-load → raw committed, re-load |
-| **Concurrent** same pipeline+interval | Serialized by lease (when strong) | Loser: `LeaseHeldError` |
+| **Concurrent** same pipeline+interval | Serialized by lease (when strong); zombie after steal fenced before publish | Loser: `LeaseHeldError`; fenced: `LeaseFencedError` |
 
 Bronze **replace-by-run** is keyed by DET run-identity meta columns (interval +
 extract_run), not by “append forever.” Reloading the same extract-run is
