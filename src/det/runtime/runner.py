@@ -200,7 +200,7 @@ class PipelineRunner:
                                 exc, plugin=source.name, action="extract_to_raw"
                             )
                         check_raw_hygiene(raw_dir, artifacts)
-                        refresh_lease(lease)
+                        refresh_lease(lease, store=None if lease is None else lease.store)
                         logger.info(
                             "writing raw manifest",
                             artifacts=len(artifacts),
@@ -318,7 +318,7 @@ class PipelineRunner:
                     )
                     receipt.extract_run_datetime = extract_ts
                     update_run_context(extract_run_datetime=extract_ts)
-                    refresh_lease(lease)
+                    refresh_lease(lease, store=None if lease is None else lease.store)
 
                     bronze_loaded_at = format_extract_run_datetime()
                     try:

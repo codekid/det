@@ -13,6 +13,7 @@ from det.runtime.ids import (
     default_schema_path,
     fs_dataset_relpath,
     lake_dataset_id,
+    require_sql_ident,
     validate_canonical_id,
 )
 from det.runtime.naming import BronzeConfig
@@ -812,6 +813,14 @@ class LeaseConfig(BaseModel):
                     "lease.pg_dsn_env must be an env var name like "
                     f"DET_LOCK_PG_DSN, got {self.pg_dsn_env!r}"
                 )
+        if self.pg_schema is not None and str(self.pg_schema).strip():
+            require_sql_ident(self.pg_schema, what="lease.pg_schema")
+        if self.pg_table is not None and str(self.pg_table).strip():
+            require_sql_ident(self.pg_table, what="lease.pg_table")
+            require_sql_ident(
+                f"{str(self.pg_table).strip()}_overlap_excl",
+                what="lease.pg_table overlap constraint",
+            )
         return self
 
 

@@ -99,9 +99,10 @@ def acquire_lease(
             ttl_sec=ttl,
             lock_id=ident,
             version=path.object_version() if path is not None else None,
+            store=active_store,
         )
 
-    return active_store.acquire(
+    lease = active_store.acquire(
         pipeline=pipeline,
         interval_start=interval_start,
         interval_end=interval_end,
@@ -109,13 +110,16 @@ def acquire_lease(
         ttl_sec=ttl,
         owner=who,
     )
+    lease.store = active_store
+    return lease
 
 
 def refresh_lease(lease: Lease | None, *, store: LeaseStore | None = None) -> None:
     if lease is None or not lease.token:
         return
-    if store is not None:
-        store.refresh(lease)
+    resolved = store if store is not None else lease.store
+    if resolved is not None:
+        resolved.refresh(lease)
         return
     if lease.path is not None:
         # LakeLeaseStore.refresh only uses lease.path; lake root arg is unused.
@@ -125,8 +129,9 @@ def refresh_lease(lease: Lease | None, *, store: LeaseStore | None = None) -> No
 def release_lease(lease: Lease | None, *, store: LeaseStore | None = None) -> None:
     if lease is None or not lease.token:
         return
-    if store is not None:
-        store.release(lease)
+    resolved = store if store is not None else lease.store
+    if resolved is not None:
+        resolved.release(lease)
         return
     if lease.path is not None:
         LakeLeaseStore(lease.path).release(lease)

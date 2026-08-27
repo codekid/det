@@ -119,7 +119,8 @@ def test_postgres_expire_steal_and_token_mismatch(store) -> None:
     store.release(b)
 
 
-def test_postgres_overlap_blocks_intersecting(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def overlap_store(monkeypatch: pytest.MonkeyPatch):
     pytest.importorskip("psycopg")
     monkeypatch.setenv("DET_LOCK_PG_DSN", _DSN)
     lake = open_lake("memory://pg-overlap", Path("/tmp"))
@@ -130,8 +131,19 @@ def test_postgres_overlap_blocks_intersecting(monkeypatch: pytest.MonkeyPatch) -
         pg_schema="det_lease_test",
         pg_table="leases_overlap",
     )
-    store = open_lease_store(lake, options, resolve_secret=lambda n: os.environ.get(n))
-    store.ensure()  # type: ignore[attr-defined]
+    s = open_lease_store(lake, options, resolve_secret=lambda n: os.environ.get(n))
+    s.ensure()  # type: ignore[attr-defined]
+    yield s
+    import psycopg
+
+    with psycopg.connect(_DSN) as conn:
+        with conn.cursor() as cur:
+            cur.execute('DELETE FROM "det_lease_test"."leases_overlap"')
+        conn.commit()
+
+
+def test_postgres_overlap_blocks_intersecting(overlap_store) -> None:
+    store = overlap_store
     a0, a1 = resolve_interval("2026-08-15", "2026-08-17")
     b0, b1 = resolve_interval("2026-08-16", "2026-08-18")
     c0, c1 = resolve_interval("2026-08-17", "2026-08-18")  # adjacent to [15,17) at 17
@@ -163,9 +175,3 @@ def test_postgres_overlap_blocks_intersecting(monkeypatch: pytest.MonkeyPatch) -
     )
     store.release(a)
     store.release(c)
-    import psycopg
-
-    with psycopg.connect(_DSN) as conn:
-        with conn.cursor() as cur:
-            cur.execute('DELETE FROM "det_lease_test"."leases_overlap"')
-        conn.commit()

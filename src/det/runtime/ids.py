@@ -19,6 +19,21 @@ CANONICAL_ID_RE = re.compile(
     r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$"
 )
 
+_SQL_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_SQL_IDENT_MAX = 63
+
+
+def require_sql_ident(name: str, *, what: str = "SQL identifier") -> str:
+    """Accept only safe unquoted PostgreSQL/DuckDB identifier names."""
+    text = str(name).strip()
+    if not text or len(text) > _SQL_IDENT_MAX or not _SQL_IDENT.fullmatch(text):
+        raise ValueError(
+            f"{what} must be a SQL identifier "
+            f"[A-Za-z_][A-Za-z0-9_]{{0,{_SQL_IDENT_MAX - 1}}} "
+            f"(max {_SQL_IDENT_MAX} chars), got {name!r}"
+        )
+    return text
+
 
 def parse_canonical_id(canonical_id: str) -> tuple[str, str]:
     """

@@ -286,3 +286,76 @@ def test_open_lake_enforces_mode_before_import(monkeypatch: pytest.MonkeyPatch, 
     with pytest.raises(ValueError, match="DET_LAKE_MODE=cloud requires"):
         open_lake("./data/lake", tmp_path)
     assert called["n"] == 0
+
+
+def test_local_replace_if_match_bumps_version_same_size(tmp_path: Path):
+    from det.runtime.lake import ObjectVersionConflict
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    target = lake / "locks" / "p" / "x.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    v0 = target.create_exclusive(b"same-size-body")
+    v1 = target.replace_if_match(v0, b"same-size-BODY")
+    assert v1 != v0
+    assert target.read_bytes() == b"same-size-BODY"
+    with pytest.raises(ObjectVersionConflict):
+        target.replace_if_match(v0, b"stale-writer")
+    assert target.delete_if_match(v0) is False
+    assert target.delete_if_match(v1) is True
+    assert not target.exists()
+
+
+def test_local_cas_serializes_concurrent_replace(tmp_path: Path):
+    import threading
+
+    from det.runtime.lake import ObjectVersionConflict
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    target = lake / "locks" / "p" / "race.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    version = target.create_exclusive(b"seed")
+    results: list[str | BaseException] = []
+
+    def worker(payload: bytes) -> None:
+        try:
+            results.append(target.replace_if_match(version, payload))
+        except BaseException as exc:  # noqa: BLE001
+            results.append(exc)
+
+    t1 = threading.Thread(target=worker, args=(b"one",))
+    t2 = threading.Thread(target=worker, args=(b"two",))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    wins = [r for r in results if isinstance(r, str)]
+    losses = [r for r in results if isinstance(r, ObjectVersionConflict)]
+    assert len(wins) == 1
+    assert len(losses) == 1
+    assert target.read_bytes() in {b"one", b"two"}
+
+
+def test_is_precondition_failed_requires_structured_signal():
+    from det.runtime.lake import _is_precondition_failed, _raise_s3_cas
+
+    class PreconditionFailed(Exception):
+        pass
+
+    assert _is_precondition_failed(PreconditionFailed("x"))
+
+    wrapped = OSError(22, "pre-condition failed")
+    wrapped.__cause__ = Exception("noise")
+    assert not _is_precondition_failed(wrapped)
+    assert not _is_precondition_failed(OSError("If-Match header missing"))
+
+    client = Exception("ClientError")
+    client.response = {  # type: ignore[attr-defined]
+        "Error": {"Code": "PreconditionFailed"},
+        "ResponseMetadata": {"HTTPStatusCode": 412},
+    }
+    outer = OSError(22, "Invalid argument")
+    outer.__cause__ = client
+    assert _is_precondition_failed(outer)
+
+    with pytest.raises(FileExistsError):
+        _raise_s3_cas(outer, "b/k", create=True)
