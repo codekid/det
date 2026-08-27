@@ -370,6 +370,38 @@ def test_local_replace_if_match_fails_before_publish_when_gen_write_fails(
     assert target.object_version() == v0
 
 
+def test_local_replace_restores_gen_when_publish_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import det.runtime.lake as lake_mod
+
+    from det.runtime.lake import _local_read_gen
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    target = lake / "locks" / "p" / "fail-publish.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    v0 = target.create_exclusive(b"original")
+    key = str(target.to_path())
+    assert _local_read_gen(key) == 1
+
+    real_replace = lake_mod.os.replace
+
+    def selective_replace(src: object, dst: object, *args: object, **kwargs: object) -> None:
+        src_name = str(src)
+        dst_name = str(dst)
+        if dst_name.endswith(".detgen") or ".detgen" in src_name:
+            real_replace(src, dst, *args, **kwargs)
+            return
+        raise OSError("injected publish failure")
+
+    monkeypatch.setattr(lake_mod.os, "replace", selective_replace)
+    with pytest.raises(OSError, match="injected publish"):
+        target.replace_if_match(v0, b"mutated")
+    assert target.read_bytes() == b"original"
+    assert _local_read_gen(key) == 1
+    assert target.object_version() == v0
+
+
 def test_local_iter_excludes_cas_sidecars(tmp_path: Path):
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     folder = lake / "locks" / "p"

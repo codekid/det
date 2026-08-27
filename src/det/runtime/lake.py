@@ -667,15 +667,26 @@ class _LocalBackend(_Backend):
             tmp = path.with_name(
                 f".{path.name}.tmp.{os.getpid()}.{secrets.token_hex(4)}"
             )
-            next_gen = _local_read_gen(key) + 1
+            prior_gen = _local_read_gen(key)
+            next_gen = prior_gen + 1
+            gen_committed = False
             try:
                 tmp.write_bytes(data)
                 # Bump generation before publishing bytes so a failed metadata
                 # write cannot leave new object content under a stale stamp.
                 _local_write_gen(key, next_gen)
+                gen_committed = True
                 os.replace(tmp, path)
             except Exception:
                 tmp.unlink(missing_ok=True)
+                if gen_committed:
+                    try:
+                        if prior_gen == 0:
+                            _local_gen_path(key).unlink(missing_ok=True)
+                        else:
+                            _local_write_gen(key, prior_gen)
+                    except Exception:
+                        pass
                 raise
             version = self.object_version(key)
             if version is None:
