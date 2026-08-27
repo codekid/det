@@ -162,6 +162,62 @@ def test_iceberg_replaces_same_extract_run(tmp_path: Path):
     assert len(runs) == 2
 
 
+def test_write_iceberg_table_does_not_call_list_extract_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Replace-by-run must not full-scan the table to decide whether to delete."""
+    import det.ingestion.iceberg_writer as iw
+
+    def _boom(*_a, **_k):
+        raise AssertionError("write_iceberg_table must not call list_iceberg_extract_runs")
+
+    monkeypatch.setattr(iw, "list_iceberg_extract_runs", _boom)
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    loc = lake / "bronze" / "noaa" / "storm_events_v1"
+    schema = _json_schema()
+    identity = (
+        "2026-08-06T00:00:00+00:00",
+        "2026-08-07T00:00:00+00:00",
+        "2026-08-06T15:04:05+00:00",
+    )
+    write_iceberg_table(
+        _records(),
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_noaa",
+        table="storm_events_v1",
+        json_schema=schema,
+        run_identity=identity,
+    )
+    write_iceberg_table(
+        _records(
+            event_id=2,
+            __row_hash="sib",
+            __extract_run_datetime="2026-08-06T16:00:00+00:00",
+        ),
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_noaa",
+        table="storm_events_v1",
+        json_schema=schema,
+    )
+    write_iceberg_table(
+        [],
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_noaa",
+        table="storm_events_v1",
+        json_schema=schema,
+        run_identity=identity,
+    )
+    ice = load_iceberg_table(
+        lake=lake, namespace="bronze_noaa", table="storm_events_v1", table_location=loc
+    )
+    rows = scan_iceberg_rows(ice, limit=10)
+    assert {r["__row_hash"] for r in rows} == {"sib"}
+
+
 def test_iceberg_refuses_incompatible_type(tmp_path: Path):
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     loc = lake / "bronze" / "noaa" / "storm_events_v1"

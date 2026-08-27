@@ -7,6 +7,7 @@ live at ``{lake}/bronze/{provider}/{source}_vN/`` (Iceberg owns data-file names)
 from __future__ import annotations
 
 import json
+import warnings
 from collections.abc import Iterable, Mapping
 from datetime import date, datetime
 from typing import Any
@@ -392,10 +393,13 @@ def write_iceberg_table(
     """
     Replace-by-extract-run DET bronze write into an Iceberg table.
 
-    Deletes rows matching the three run-identity columns, then appends Parquet
-    in one transaction. ``partition`` applies on create only; existing tables
-    must match YAML or ``ensure_iceberg_table`` raises (use migrate
-    ``--recreate-iceberg`` to purge and recreate).
+    Unconditionally deletes rows matching the three run-identity columns
+    (predicate may match zero rows), then appends Parquet in one transaction.
+    Does not scan the live table to decide whether to delete.
+
+    ``partition`` applies on create only; existing tables must match YAML or
+    ``ensure_iceberg_table`` raises (use migrate ``--recreate-iceberg`` to purge
+    and recreate).
 
     ``run_identity`` is required for empty streams so replace-by-run still runs.
     """
@@ -421,32 +425,22 @@ def write_iceberg_table(
         assert_chunk_matches_identity(chunk, identity)
         return _chunk_to_arrow(chunk, col_types, pa_schema)
 
-    total = 0
-    live_runs = set(list_iceberg_extract_runs(ice_table))
-    identity_key = tuple(identity_iso(part) for part in identity)
-    if first_chunk is None:
-        if identity_key in live_runs:
-            txn = ice_table.transaction()
-            txn.delete(delete_filter=filt)
-            txn.commit_transaction()
-        logger.info(
-            "iceberg load finished",
-            table=f"{namespace}.{table}",
-            location=location,
-            rows=0,
-            partition=partition,
-        )
-        return table_location
-
     txn = ice_table.transaction()
-    if identity_key in live_runs:
+    # Unconditional replace-by-run: zero matches is fine (first write / empty table).
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Delete operation did not match any records",
+            category=UserWarning,
+        )
         txn.delete(delete_filter=filt)
-    first_arrow = _arrow(first_chunk)
-    txn.append(first_arrow)
-    total += len(first_chunk)
-    for chunk in chunks:
-        txn.append(_arrow(chunk))
-        total += len(chunk)
+    total = 0
+    if first_chunk is not None:
+        txn.append(_arrow(first_chunk))
+        total = len(first_chunk)
+        for chunk in chunks:
+            txn.append(_arrow(chunk))
+            total += len(chunk)
     txn.commit_transaction()
     logger.info(
         "iceberg load finished",
