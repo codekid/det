@@ -59,7 +59,7 @@ def test_lease_yaml_overlap_with_lake_rejected(tmp_path: Path) -> None:
 
 
 def test_postgres_store_fail_closed_without_dsn(tmp_path: Path) -> None:
-    lake = open_lake(f"memory://pgfail", Path("/tmp"))
+    lake = open_lake("memory://pgfail", Path("/tmp"))
     options = ResolvedLeaseOptions(backend="postgres", pg_dsn_env="DET_LOCK_PG_DSN_MISSING")
     store = open_lease_store(lake, options, resolve_secret=lambda _n: None)
     with pytest.raises(RuntimeError, match="DET_LOCK_PG_DSN_MISSING"):

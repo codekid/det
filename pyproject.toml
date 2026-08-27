@@ -158,7 +158,7 @@ include = [
     "src/det/runtime/approval.py",
     "src/det/runtime/lake.py",
     "src/det/runtime/manifest.py",
-    "src/det/runtime/lease.py",
+    "src/det/runtime/lease",
     "src/det/runtime/registry.py",
     "src/det/runtime/config.py",
     "src/det/runtime/pipelines.py",
