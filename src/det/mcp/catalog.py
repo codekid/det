@@ -100,8 +100,10 @@ def _yaml_columns(entry: dict[str, Any] | None) -> list[dict[str, Any]]:
 def _yaml_grain(entry: dict[str, Any] | None) -> list[str]:
     if not entry:
         return []
-    config = entry.get("config") if isinstance(entry.get("config"), dict) else {}
-    meta = config.get("meta") if isinstance(config.get("meta"), dict) else {}
+    raw_config = entry.get("config")
+    config: dict[str, Any] = raw_config if isinstance(raw_config, dict) else {}
+    raw_meta = config.get("meta")
+    meta: dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
     grain = meta.get("grain")
     if isinstance(grain, list):
         return [str(g) for g in grain]

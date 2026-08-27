@@ -157,8 +157,7 @@ def _list_bronze_sql_runs(
                 if not exists or exists[0] == 0:
                     return [], f"table not found: {schema}.{table}"
                 if window is None:
-                    cur.execute(
-                        f"""
+                    query = f"""
                         select distinct
                             __interval_start_datetime,
                             __interval_end_datetime,
@@ -166,12 +165,10 @@ def _list_bronze_sql_runs(
                         from {qualified}
                         order by 1, 2, 3
                         limit %s
-                        """,
-                        (limit,),
-                    )
+                        """
+                    cur.execute(query, (limit,))  # pyright: ignore[reportArgumentType]
                 else:
-                    cur.execute(
-                        f"""
+                    query = f"""
                         select distinct
                             __interval_start_datetime,
                             __interval_end_datetime,
@@ -181,9 +178,8 @@ def _list_bronze_sql_runs(
                           and __interval_start_datetime < %s
                         order by 1, 2, 3
                         limit %s
-                        """,
-                        (window[0], window[1], limit),
-                    )
+                        """
+                    cur.execute(query, (window[0], window[1], limit))  # pyright: ignore[reportArgumentType]
                 rows = cur.fetchall()
         return [
             _run_dict(

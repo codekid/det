@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
 
 import yaml
 
@@ -16,6 +18,12 @@ SKILL_PROMPTS: dict[str, str] = {
     "det_dbt": "det-dbt",
     "det_airflow": "det-airflow",
 }
+
+
+class _PromptRegistry(Protocol):
+    def prompt(
+        self, name: str, *, description: str
+    ) -> Callable[[Callable[[], str]], Callable[[], str]]: ...
 
 
 def _skills_candidates(*, root: Path | None = None) -> list[Path]:
@@ -65,7 +73,7 @@ def skill_description(skill_dir: str, *, root: Path | None = None) -> str:
     return str(raw)
 
 
-def register_skill_prompts(mcp: object) -> None:
+def register_skill_prompts(mcp: _PromptRegistry) -> None:
     """Register one FastMCP prompt per Cursor skill."""
     prompt = mcp.prompt
     for prompt_name, skill_dir in SKILL_PROMPTS.items():
@@ -74,7 +82,7 @@ def register_skill_prompts(mcp: object) -> None:
 
 
 def _bind_prompt(
-    prompt_decorator: object,
+    prompt_decorator: Callable[..., Callable[[Callable[[], str]], Callable[[], str]]],
     prompt_name: str,
     skill_dir: str,
     description: str,
