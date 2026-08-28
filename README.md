@@ -178,7 +178,7 @@ det run -p noaa.storm_events -s 2026-08-06
 det extract -p noaa.storm_events -s 2026-08-06
 det load -p noaa.storm_events -s 2026-08-06
 det dbt -p noaa.storm_events
-det check
+det check          # CI runs det check --strict (warnings fail the build)
 det list-pipelines
 det list-sources
 ```
