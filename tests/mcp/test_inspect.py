@@ -246,6 +246,58 @@ def test_sample_raw_and_validate(tmp_path: Path):
     assert bad["coerce_errors"] or bad["schema_errors"]
 
 
+def test_validate_sample_get_source_uses_mcp_resolved_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default-root validate_sample must not diverge from pipeline/run/schema base."""
+    from det.mcp.inspect._common import _root
+    from det.runtime.registry import get_source
+    from det.runtime.settings import DetSettings, use_settings
+
+    settings_root = tmp_path / "settings"
+    env_root = tmp_path / "env"
+    settings_root.mkdir()
+    env_root.mkdir()
+    monkeypatch.setenv("DET_PROJECT_ROOT", str(env_root))
+
+    _write_pipeline(env_root)
+    start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
+    run = "2026-08-06T10:00:00+00:00"
+    run_dir = _write_example_raw(
+        env_root,
+        start=start,
+        end=end,
+        run=run,
+        events=[{"id": 1, "eventName": "alpha"}],
+    )
+
+    expected_base = _root(None)
+    assert expected_base == env_root.resolve()
+
+    seen: list[Path | None] = []
+    real_get_source = get_source
+
+    def tracking_get_source(name: str, *, project_root=None):  # noqa: ANN001
+        seen.append(project_root)
+        return real_get_source(name, project_root=project_root)
+
+    monkeypatch.setattr("det.mcp.inspect._sample.get_source", tracking_get_source)
+
+    settings = DetSettings.from_env(project_root=settings_root)
+    with use_settings(settings):
+        result = validate_sample(
+            "example_api.events",
+            limit=5,
+            run_path=str(run_dir.relative_to(env_root)),
+            root=None,
+        )
+
+    assert result["ok"] is True
+    assert len(seen) == 1
+    assert seen[0] == expected_base
+    assert seen[0] != settings_root.resolve()
+
+
 def test_sample_raw_wire_oserror_does_not_leak_abs_path(tmp_path: Path, monkeypatch):
     """Wire-sample OSError messages must not expose absolute filesystem paths."""
     from det.mcp.inspect import _sample_wire
