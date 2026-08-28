@@ -14,7 +14,7 @@ from det.logging import get_logger
 from det.optional_deps import require_beautifulsoup
 from det.runtime.lake import LakeRef
 from det.runtime.manifest import sha256_file
-from det.sources.base import Interval, SourceRow
+from det.sources.base import Interval, SourceRow, mapper
 from det.sources.http import http_get, http_get_file
 
 logger = get_logger(__name__)
@@ -301,4 +301,15 @@ class NoaaStormEventsSource:
         logger.info("NOAA year→file map", mapping=best)
         return selected
 
+
+@mapper("noaa_storm_events_episode_id_str")
+def noaa_storm_events_episode_id_str(row: dict[str, Any]) -> dict[str, Any]:
+    """Example migrate mapper: string-coerce episode_id for a schema bump.
+
+    See ``det-migrate`` skill / ``det list-mappers`` for operator workflow.
+    """
+    out = dict(row)
+    if "episode_id" in out and out["episode_id"] is not None:
+        out["episode_id"] = str(out["episode_id"])
+    return out
 

@@ -155,3 +155,23 @@ def test_get_source_does_not_import_other_providers():
     assert source.name == "example_api.orders"
     assert "det.sources.example_api.orders" in sys.modules
     assert "det.sources.noaa.storm_events" not in sys.modules
+
+
+def test_noaa_storm_events_mapper_in_tree():
+    from det.runtime.registry import get_mapper, list_mappers
+
+    name = "noaa_storm_events_episode_id_str"
+    assert name in list_mappers()
+    mapper = get_mapper(name)
+
+    row = {"event_id": 1, "episode_id": 12345, "state": "TX"}
+    original = dict(row)
+    out = mapper(row)
+    assert row == original
+    assert out == {"event_id": 1, "episode_id": "12345", "state": "TX"}
+
+    null_row = {"event_id": 2, "episode_id": None}
+    null_original = dict(null_row)
+    null_out = mapper(null_row)
+    assert null_row == null_original
+    assert null_out == {"event_id": 2, "episode_id": None}

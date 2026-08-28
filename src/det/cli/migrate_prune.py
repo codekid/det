@@ -10,6 +10,7 @@ from det.cli.common import (
     _PIPELINE_HELP,
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
+    _claimed_approval_work,
     _consume_approval,
     _gate_approval,
     _project_root,
@@ -112,8 +113,14 @@ def migrate_bronze(
         start, end = _resolve_interval(interval_start, interval_end)
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
+    if validate_limit is not None and not dry_run:
+        raise typer.BadParameter(
+            "--validate-limit requires --dry-run",
+            param_hint="--validate-limit",
+        )
+    claimed = False
     if not dry_run:
-        _gate_approval(
+        claimed = _gate_approval(
             root,
             "migrate",
             migrate_write_argv(
@@ -136,32 +143,30 @@ def migrate_bronze(
             require_approval,
             ctx=ctx,
         )
-    if validate_limit is not None and not dry_run:
-        raise typer.BadParameter(
-            "--validate-limit requires --dry-run",
-            param_hint="--validate-limit",
-        )
     try:
-        result = BronzeMigrator(
-            settings=_settings(root, lake_path=lake_path, lock_ttl_sec=lock_ttl_sec)
-        ).migrate(
-            pipeline=resolved.path,
-            to_bronze=to_bronze,
-            schema_path=schema if schema.is_absolute() else root / schema,
-            mapper_name=mapper,
-            interval_start=start,
-            interval_end=end,
-            from_raw=from_raw,
-            lake_path=lake_path,
-            ingestion_library=ingestion,
-            overrides=set_,
-            dry_run=dry_run,
-            validate_limit=validate_limit,
-            wire_version=wire_version,
-            recreate_iceberg=recreate_iceberg,
-            all_raw=all_raw,
-            all_raw_runs=all_raw_runs,
-        )
+        with _claimed_approval_work(claimed, approval):
+            result = BronzeMigrator(
+                settings=_settings(root, lake_path=lake_path, lock_ttl_sec=lock_ttl_sec)
+            ).migrate(
+                pipeline=resolved.path,
+                to_bronze=to_bronze,
+                schema_path=schema if schema.is_absolute() else root / schema,
+                mapper_name=mapper,
+                interval_start=start,
+                interval_end=end,
+                from_raw=from_raw,
+                lake_path=lake_path,
+                ingestion_library=ingestion,
+                overrides=set_,
+                dry_run=dry_run,
+                validate_limit=validate_limit,
+                wire_version=wire_version,
+                recreate_iceberg=recreate_iceberg,
+                all_raw=all_raw,
+                all_raw_runs=all_raw_runs,
+            )
+            if not dry_run and not isinstance(result, MigratePlan):
+                _consume_approval(root, approval)
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -193,7 +198,6 @@ def migrate_bronze(
         if not result.ok:
             raise typer.Exit(code=1)
         return
-    _consume_approval(root, approval)
     typer.echo(
         f"OK migrate {result.from_raw} -> {result.to_bronze} "
         f"partitions={result.partitions} rows={result.rows}"
@@ -240,8 +244,9 @@ def prune_bronze(
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
+    claimed = False
     if apply:
-        _gate_approval(
+        claimed = _gate_approval(
             root,
             "prune",
             prune_write_argv(
@@ -278,12 +283,13 @@ def prune_bronze(
         return
 
     try:
-        removed = pruner.apply(
-            config,
-            plan,
-            interval_start=start_iso,
-            interval_end=end_iso,
-        )
+        with _claimed_approval_work(claimed, approval):
+            removed = pruner.apply(
+                config,
+                plan,
+                interval_start=start_iso,
+                interval_end=end_iso,
+            )
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
