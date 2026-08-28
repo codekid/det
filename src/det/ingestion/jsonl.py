@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,7 @@ def write_jsonl_partition(
     partition_dir: LakePath,
     *,
     chunk_rows: int = 10_000,
+    on_chunk: Callable[[], None] | None = None,
 ) -> LakePath:
     """
     Replace `partition_dir` with a single data.jsonl streamed from *records*.
@@ -45,6 +46,8 @@ def write_jsonl_partition(
                 n += 1
                 if n % chunk_rows == 0:
                     f.flush()
+                    if on_chunk is not None:
+                        on_chunk()
     except Exception:
         _rmtree(partition_dir, ignore_errors=True)
         raise

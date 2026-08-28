@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import warnings
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import date, datetime
 from typing import Any
 
@@ -18,6 +18,7 @@ from det.ingestion.sql_replace import (
     resolve_run_identity,
 )
 from det.logging import get_logger
+from det.optional_deps import pip_extra_hint
 from det.runtime.config import IcebergPartition
 from det.runtime.lake import LakeRef
 from det.runtime.meta import identity_iso
@@ -33,7 +34,7 @@ logger = get_logger(__name__)
 _START = "__interval_start_datetime"
 _END = "__interval_end_datetime"
 _RUN = "__extract_run_datetime"
-_ICEBERG_HINT = "pip install 'det[iceberg]'"
+_ICEBERG_HINT = pip_extra_hint("iceberg")
 
 
 def _require_iceberg() -> None:
@@ -389,6 +390,7 @@ def write_iceberg_table(
     chunk_rows: int = 10_000,
     partition: IcebergPartition = "extract_run",
     run_identity: tuple[str, str, str] | None = None,
+    on_chunk: Callable[[], None] | None = None,
 ) -> LakeRef:
     """
     Replace-by-extract-run DET bronze write into an Iceberg table.
@@ -438,9 +440,13 @@ def write_iceberg_table(
     if first_chunk is not None:
         txn.append(_arrow(first_chunk))
         total = len(first_chunk)
+        if on_chunk is not None:
+            on_chunk()
         for chunk in chunks:
             txn.append(_arrow(chunk))
             total += len(chunk)
+            if on_chunk is not None:
+                on_chunk()
     txn.commit_transaction()
     logger.info(
         "iceberg load finished",
