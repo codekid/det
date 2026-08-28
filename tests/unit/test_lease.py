@@ -582,6 +582,24 @@ def test_cli_lock_release_rejects_blank_dataset_id():
         )
 
 
+def test_cli_lock_release_rejects_invalid_dataset_id():
+    import typer
+
+    from det.cli import lock_release
+
+    with pytest.raises(typer.BadParameter, match="canonical id"):
+        lock_release(
+            ctx=None,
+            pipeline="example_api.events",
+            interval_start=None,
+            interval_end=None,
+            dataset_id="not-valid",
+            force=True,
+            lake_path=None,
+            project_root=None,
+        )
+
+
 def test_cli_lock_release_rejects_mixed_dataset_and_interval():
     import typer
 

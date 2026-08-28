@@ -137,8 +137,16 @@ def test_shared_blocked_by_exclusive_intent_while_waiting(tmp_path: Path):
     t = threading.Thread(target=take_exclusive)
     t.start()
     assert waiter_started.wait(timeout=2)
-    time.sleep(0.15)
-    body = read_dataset_lock(dataset_lock_path(lake, dataset_id))
+    path = dataset_lock_path(lake, dataset_id)
+    deadline = time.monotonic() + 2.0
+    body = None
+    while time.monotonic() < deadline:
+        body = read_dataset_lock(path)
+        if body is not None and body.get("exclusive_intent") is not None:
+            break
+        time.sleep(0.02)
+    else:
+        pytest.fail("timed out waiting for exclusive_intent to be persisted")
     assert body is not None
     assert body.get("exclusive_intent") is not None
     with pytest.raises(LeaseHeldError, match="pending"):
@@ -463,6 +471,15 @@ def test_exclusive_wait_deadline_exhausted(tmp_path: Path):
             wait_sec=0,
             poll_interval=0.01,
         )
+    body = read_dataset_lock(dataset_lock_path(lake, dataset_id))
+    assert body is not None
+    assert body.get("exclusive_intent") is None
+    store.acquire_shared(
+        dataset_id=dataset_id,
+        command="load",
+        ttl_sec=120,
+        owner="load2",
+    )
 
 
 def test_expired_exclusive_pruned_on_acquire(tmp_path: Path):

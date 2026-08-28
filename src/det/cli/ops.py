@@ -312,6 +312,7 @@ def lock_release(
     from det.runtime.approval import lock_release_write_argv
     from det.runtime.config import load_pipeline_config
     from det.runtime.lease import lock_path, open_lease_store, resolve_lease_options
+    from det.runtime.ids import validate_canonical_id
     from det.runtime.lease.dataset_lock import (
         dataset_lock_path,
         force_release_dataset_lock,
@@ -327,6 +328,10 @@ def lock_release(
                 "--dataset-id must not be empty",
                 param_hint="--dataset-id",
             )
+        try:
+            dataset_id = validate_canonical_id(dataset_id)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--dataset-id") from exc
     if dataset_id is None and interval_start is None:
         raise typer.BadParameter(
             "-s/--interval-start is required unless --dataset-id is set",

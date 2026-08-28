@@ -200,6 +200,22 @@ class PostgresDatasetLockStore:
             (dataset_id,),
         )
 
+    def _clear_exclusive_intent_if_owned(self, cur: Any, dataset_id: str, token: str) -> None:
+        self._exec(
+            cur,
+            f"""
+            UPDATE {self._locks_qual}
+               SET exclusive_intent_token = NULL,
+                   exclusive_intent_owner = NULL,
+                   exclusive_intent_command = NULL,
+                   exclusive_intent_expires_at = NULL,
+                   exclusive_intent_ttl_sec = NULL
+             WHERE dataset_id = %s
+               AND exclusive_intent_token = %s
+            """,
+            (dataset_id, token),
+        )
+
     def _load_body(self, cur: Any, dataset_id: str) -> dict[str, Any]:
         self._exec(
             cur,
@@ -431,6 +447,12 @@ class PostgresDatasetLockStore:
             if not wait:
                 with self._connect() as conn:
                     with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT pg_advisory_xact_lock(hashtext(%s))", (cid,)
+                        )
+                        self._clear_exclusive_intent_if_owned(cur, cid, token)
+                    conn.commit()
+                    with conn.cursor() as cur:
                         body = self._load_body(cur, cid)
                 raise LeaseHeldError(
                     _dataset_held_message(location, body),
@@ -438,6 +460,12 @@ class PostgresDatasetLockStore:
                 )
             if deadline is not None and time.monotonic() >= deadline:
                 with self._connect() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT pg_advisory_xact_lock(hashtext(%s))", (cid,)
+                        )
+                        self._clear_exclusive_intent_if_owned(cur, cid, token)
+                    conn.commit()
                     with conn.cursor() as cur:
                         body = self._load_body(cur, cid)
                 raise LeaseHeldError(

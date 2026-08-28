@@ -191,6 +191,31 @@ class LakeDatasetLockStore:
     def _path(self, dataset_id: str) -> LakeRef:
         return dataset_lock_path(self.lake, dataset_id)
 
+    def _clear_exclusive_intent_if_owned(
+        self, dataset_id: str, token: str
+    ) -> None:
+        path = self._path(dataset_id)
+        for _ in range(DEFAULT_CAS_RETRIES):
+            if not path.exists():
+                return
+            body = read_dataset_lock(path)
+            if body is None:
+                return
+            _prune_body(body)
+            intent = _live_exclusive_intent(body)
+            if intent is None or str(intent.get("token") or "") != token:
+                return
+            body["exclusive_intent"] = None
+            version = path.object_version()
+            if version is None:
+                return
+            raw = _serialize(body)
+            try:
+                path.replace_if_match(version, raw)
+            except ObjectVersionConflict:
+                continue
+            return
+
     def acquire_shared(
         self,
         *,
@@ -334,6 +359,7 @@ class LakeDatasetLockStore:
                     store=self,
                 )
             if not wait:
+                self._clear_exclusive_intent_if_owned(dataset_id, token)
                 path = self._path(dataset_id)
                 body = read_dataset_lock(path) or _empty_body(dataset_id)
                 raise LeaseHeldError(
@@ -341,6 +367,7 @@ class LakeDatasetLockStore:
                     payload=dict(body),
                 )
             if deadline is not None and time.monotonic() >= deadline:
+                self._clear_exclusive_intent_if_owned(dataset_id, token)
                 path = self._path(dataset_id)
                 body = read_dataset_lock(path) or _empty_body(dataset_id)
                 raise LeaseHeldError(
