@@ -165,6 +165,8 @@ def migrate_bronze(
                 all_raw=all_raw,
                 all_raw_runs=all_raw_runs,
             )
+            if not dry_run and not isinstance(result, MigratePlan):
+                _consume_approval(root, approval)
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -196,7 +198,6 @@ def migrate_bronze(
         if not result.ok:
             raise typer.Exit(code=1)
         return
-    _consume_approval(root, approval)
     typer.echo(
         f"OK migrate {result.from_raw} -> {result.to_bronze} "
         f"partitions={result.partitions} rows={result.rows}"

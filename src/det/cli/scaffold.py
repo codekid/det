@@ -218,8 +218,8 @@ def scaffold_dbt_cmd(
 
     with _claimed_approval_work(claimed, approval):
         result = scaffold_dbt(config, project_root=root, force=force, dry_run=dry_run, warn=False)
-    if not dry_run:
-        _consume_approval(root, approval)
+        if not dry_run:
+            _consume_approval(root, approval)
     mode = "DRY-RUN" if dry_run else "OK"
     typer.echo(f"{mode} scaffold-dbt dataset={result.dataset}")
     for action in result.actions:
