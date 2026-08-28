@@ -102,7 +102,7 @@ def test_unknown_source_error(tmp_path: Path):
 def test_plugin_load_error(tmp_path: Path, monkeypatch):
     _write_pipeline(tmp_path)
 
-    def boom(_name: str):
+    def boom(_name: str, *, project_root=None):  # noqa: ANN001
         raise PluginLoadError(
             "failed to import source 'example_api.events' from "
             "det.sources.example_api.events: boom",

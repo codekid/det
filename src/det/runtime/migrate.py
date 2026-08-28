@@ -348,8 +348,8 @@ class BronzeMigrator:
         )
         schema = load_json_schema(schema_resolved)
         schema_rel = _rel(schema_resolved, self.project_root)
-        mapper = get_mapper(mapper_name)
-        source = get_source(config.source.type)
+        mapper = get_mapper(mapper_name, project_root=self.project_root)
+        source = get_source(config.source.type, project_root=self.project_root)
         effective = merge_source_config(source.defaults(), config.source.overrides)
         if all_raw:
             window_start = window_end = None

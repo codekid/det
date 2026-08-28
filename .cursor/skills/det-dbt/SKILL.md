@@ -30,6 +30,7 @@ Install: `uv pip install -e ".[mcp,dbt]"`.
 - Nested **structs** flatten in `dbt.stg` (`a.b` → `a__b`); **arrays** only via explicit `relations:`.
 - **Docs:** JSON Schema `description` → bronze `sources.yml`; `dbt.docs.columns`
   (post-stg names) → silver `_silver__models.yml`. `dbt.stg` is transforms-only.
+- Contract triangle: [docs/contract-triangle.md](../../docs/contract-triangle.md).
 
 ## Workflow
 

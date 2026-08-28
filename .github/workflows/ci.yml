@@ -5,6 +5,9 @@ on:
     branches: [main, master]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -101,7 +104,7 @@ jobs:
       - name: Lint
         run: uv run ruff check .
       - name: Structure check
-        run: uv run det check
+        run: uv run det check --strict
       - name: No committed credentials
         # det check parses pipeline YAML; this also covers files it never loads
         # (dbt/profiles.yml). Matches scheme://user:pass@host. airflow/ is excluded:

@@ -130,7 +130,7 @@ def test_register_mapper_rejects_different_function():
             register_mapper("_test_dup", b)
         register_mapper("_test_dup", a)
     finally:
-        reg._MAPPER_REGISTRY.pop("_test_dup", None)
+        reg._MAPPER_REGISTRY.pop(("_test_dup", reg._GLOBAL_ROOT_KEY), None)
 
 
 def test_entry_point_source_collides_with_in_tree(monkeypatch: pytest.MonkeyPatch):

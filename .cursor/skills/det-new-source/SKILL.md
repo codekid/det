@@ -23,6 +23,9 @@ Implement a `SourcePlugin` under `src/det/sources/<provider>/<source>.py` (see
 6. Optional migrate mapper: `@mapper("…")` on a function in the **same module**
    (do not edit `plugins.py`)
 
+See [docs/contract-triangle.md](../../docs/contract-triangle.md) for how schema
+YAML, dbt `sources.yml`, and pipeline `dbt.stg` stay aligned.
+
 Provider-local helpers belong in `_`-prefixed sibling modules (e.g.
 `src/det/sources/noaa/_csv.py`); they are not discovered. Shared HTTP helpers stay
 at `src/det/sources/http.py` / `http_json.py`.

@@ -1,4 +1,8 @@
-"""Deterministic pipeline structure checks (CLI / CI / Cursor hooks)."""
+"""Deterministic pipeline structure checks (CLI / CI / Cursor hooks).
+
+See docs/contract-triangle.md for how schema YAML, dbt sources, and pipeline
+dbt.stg knobs stay aligned (``det check --strict`` catches scaffold drift).
+"""
 
 from __future__ import annotations
 
@@ -144,7 +148,7 @@ def check_pipeline_config(
         )
     else:
         try:
-            get_source(config.source.type)
+            get_source(config.source.type, project_root=root)
         except PluginLoadError as exc:
             findings.append(
                 Finding(
