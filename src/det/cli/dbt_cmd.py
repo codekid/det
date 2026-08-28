@@ -106,7 +106,7 @@ def dbt_cmd(
                 from det.runtime.config import load_pipeline_config
                 from det.scaffold.view_warn import emit_view_size_warnings
 
-                cfg = load_pipeline_config(pipe, overrides=set_ or None)
+                cfg = load_pipeline_config(resolved.path, overrides=set_ or None)
                 for w in emit_view_size_warnings(
                     cfg,
                     project_root=root,
