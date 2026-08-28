@@ -146,3 +146,25 @@ jobs:
           --extra bigquery
       - name: Narrow pyright on public modules
         run: uvx --from basedpyright basedpyright
+
+  packaging:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          activate-environment: true
+      - name: Build sdist and wheel
+        run: |
+          uv pip install build
+          uv run python -m build
+      - name: Wheel install smoke
+        run: |
+          uv venv /tmp/det-wheel-smoke
+          uv pip install --python /tmp/det-wheel-smoke/bin/python dist/*.whl
+          /tmp/det-wheel-smoke/bin/python scripts/minimal_install_smoke.py

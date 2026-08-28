@@ -22,6 +22,7 @@ from types import SimpleNamespace
 from typing import Any, Literal
 
 from det.logging import get_logger
+from det.optional_deps import pip_extra_hint
 
 logger = get_logger(__name__)
 
@@ -198,7 +199,7 @@ def relpath(path: Path | LakeRef, root: Path) -> str:
 
 
 def _import_fsspec(extra: Literal["s3", "gcs"]):
-    hint = f"pip install 'det[{extra}]'"
+    hint = pip_extra_hint(extra)
     try:
         import fsspec
     except ImportError as exc:

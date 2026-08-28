@@ -1,9 +1,21 @@
 [project]
-name = "det"
+name = "det-elt"
 version = "0.1.0"
 description = "DET — Data Extract Tool: config-driven extraction runtime with pluggable ingestion"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Kadeem", email = "kletts2000@gmail.com" }]
+keywords = ["etl", "data-extraction", "pipeline", "iceberg", "bronze"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
 dependencies = [
     "jsonschema>=4.23.0",
     "pendulum>=3.0.0",
@@ -55,6 +67,12 @@ mcp = [
     # FastMCP lives in mcp 1.x; mcp 2.0 replaced it with MCPServer.
     "mcp>=1.2,<2",
 ]
+
+[project.urls]
+Homepage = "https://github.com/codekid/det"
+Repository = "https://github.com/codekid/det"
+Issues = "https://github.com/codekid/det/issues"
+Documentation = "https://github.com/codekid/det/blob/main/docs/getting-started-library.md"
 
 [project.scripts]
 det = "det.cli:app"
