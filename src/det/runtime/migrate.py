@@ -13,6 +13,7 @@ from det.destinations.models import (
 )
 from det.logging import bound_run_context, get_logger, sanitize_lake_uri
 from det.plugins import load_plugins
+from det.runtime.bronze_land import BronzeLandParams, BronzeLandResult, land_bronze_partition
 from det.runtime.coerce import CoerceError, coerce_record
 from det.runtime.config import (
     DestinationConfig,
@@ -26,20 +27,16 @@ from det.runtime.config import (
 from det.runtime.ids import validate_canonical_id
 from det.runtime.lake import LakeRef
 from det.runtime.lake import relpath as lake_relpath
-from det.runtime.lease import assert_lease_held, pipeline_lease, resolve_lease_options
+from det.runtime.lease import pipeline_lease, refresh_bronze_locks, resolve_lease_options
 from det.runtime.lease.dataset_lock import (
     assert_dataset_lock_held,
     dataset_exclusive_lock,
     dataset_shared_lock,
-    refresh_dataset_lock,
 )
-from det.runtime.load_rows import CountingIter, iter_bronze_rows
 from det.runtime.manifest import (
     committed_extract_run_dirs,
     extract_run_datetime_from_raw,
     read_manifest,
-    sha256_file,
-    stamp_validation_success,
 )
 from det.runtime.meta import (
     format_extract_run_datetime,
@@ -213,6 +210,61 @@ class BronzeMigrator:
         self.settings = settings
         self.project_root = settings.project_root
         load_plugins()
+
+    def _land_migrate_partition(
+        self,
+        *,
+        raw_dir: Path | LakeRef,
+        manifest: dict[str, Any],
+        source: Any,
+        effective: dict[str, Any],
+        to_config: PipelineConfig,
+        schema: dict[str, Any],
+        schema_rel: str,
+        schema_resolved: Path,
+        to_bronze_id: str,
+        mapper: Any,
+        backend: Any,
+        lease: Any,
+        dataset_lock: Any,
+        start_iso: str,
+        end_iso: str,
+        extract_ts: str,
+    ) -> BronzeLandResult:
+        lease_store = None if lease is None else lease.store
+
+        def refresh_locks() -> None:
+            refresh_bronze_locks(
+                pipeline_lease=lease,
+                dataset_lock=dataset_lock,
+                lease_store=lease_store,
+            )
+
+        return land_bronze_partition(
+            source=source,
+            backend=backend,
+            project_root=self.project_root,
+            params=BronzeLandParams(
+                raw_dir=raw_dir,
+                manifest=manifest,
+                effective_config=effective,
+                bronze_config=to_config,
+                schema=schema,
+                schema_path=schema_rel,
+                schema_resolved=schema_resolved,
+                extract_ts=extract_ts,
+                start_iso=start_iso,
+                end_iso=end_iso,
+                bronze_dataset=to_bronze_id,
+                mapper=mapper,
+                command="migrate",
+            ),
+            pipeline_lease=lease,
+            dataset_lock=dataset_lock,
+            lease_store=lease_store,
+            on_progress=refresh_locks,
+            on_chunk=refresh_locks,
+        )
 
     def migrate(
         self,
@@ -492,59 +544,36 @@ class BronzeMigrator:
                             options=lease_opts,
                             resolve_secret=ctx_settings.resolve_secret,
                         ) as lease:
-                            bronze_loaded_at = format_extract_run_datetime()
-                            stream = iter_bronze_rows(
-                                source.records_from_raw(
-                                    config=effective, raw_dir=raw_dir, manifest=manifest
-                                ),
+                            landed = self._land_migrate_partition(
+                                raw_dir=raw_dir,
+                                manifest=manifest,
+                                source=source,
+                                effective=effective,
+                                to_config=to_config,
                                 schema=schema,
-                                naming=config.bronze.naming,
-                                extract_run_datetime=extract_ts,
-                                interval_start_datetime=start_iso,
-                                interval_end_datetime=end_iso,
-                                bronze_loaded_at=bronze_loaded_at,
+                                schema_rel=schema_rel,
+                                schema_resolved=schema_resolved,
+                                to_bronze_id=to_bronze_id,
                                 mapper=mapper,
-                                log_every=to_config.ingestion.chunk_rows,
+                                backend=backend,
+                                lease=lease,
+                                dataset_lock=dataset_lock,
+                                start_iso=start_iso,
+                                end_iso=end_iso,
+                                extract_ts=extract_ts,
                             )
-                            counted = CountingIter(stream)
-                            out_part = hive_partition_dir(
-                                bronze_dataset_dir(
-                                    to_config, self.project_root, dataset=to_bronze_id
-                                ),
-                                interval_start_datetime=start_iso,
-                                interval_end_datetime=end_iso,
-                                extract_run_datetime=extract_ts,
-                            )
-                            assert_lease_held(
-                                lease, store=None if lease is None else lease.store
-                            )
-                            assert_dataset_lock_held(dataset_lock)
-                            backend.write(
-                                counted,
-                                config=to_config,
-                                project_root=self.project_root,
-                                partition_dir=out_part,
-                                destination=to_config.destination,
-                                chunk_rows=to_config.ingestion.chunk_rows,
-                                run_identity=(start_iso, end_iso, extract_ts),
-                            )
-                            stamp_validation_success(
-                                raw_dir,
-                                schema_path=schema_rel,
-                                schema_sha256=sha256_file(schema_resolved),
-                                row_count=counted.n,
-                                wire_version=to_config.wire_version,
-                                validated_at=format_extract_run_datetime(),
-                            )
-                            total_rows += counted.n
+                            total_rows += landed.rows
                             written += 1
                             logger.info(
                                 "migrated raw partition",
                                 raw_dir=str(raw_dir),
-                                rows=counted.n,
+                                rows=landed.rows,
                                 extract_run_datetime=extract_ts,
                             )
-                        refresh_dataset_lock(dataset_lock)
+                        refresh_bronze_locks(
+                            pipeline_lease=lease,
+                            dataset_lock=dataset_lock,
+                        )
 
                 return MigrateResult(
                     from_raw=raw_name,
@@ -585,29 +614,6 @@ class BronzeMigrator:
                     options=lease_opts,
                     resolve_secret=ctx_settings.resolve_secret,
                 ) as lease:
-                    bronze_loaded_at = format_extract_run_datetime()
-                    stream = iter_bronze_rows(
-                        source.records_from_raw(
-                            config=effective, raw_dir=raw_dir, manifest=manifest
-                        ),
-                        schema=schema,
-                        naming=config.bronze.naming,
-                        extract_run_datetime=extract_ts,
-                        interval_start_datetime=start_iso,
-                        interval_end_datetime=end_iso,
-                        bronze_loaded_at=bronze_loaded_at,
-                        mapper=mapper,
-                        log_every=to_config.ingestion.chunk_rows,
-                    )
-                    counted = CountingIter(stream)
-                    out_part = hive_partition_dir(
-                        bronze_dataset_dir(
-                            to_config, self.project_root, dataset=to_bronze_id
-                        ),
-                        interval_start_datetime=start_iso,
-                        interval_end_datetime=end_iso,
-                        extract_run_datetime=extract_ts,
-                    )
                     with dataset_shared_lock(
                         migrate_lake,
                         to_bronze_id,
@@ -618,33 +624,34 @@ class BronzeMigrator:
                         options=lease_opts,
                         resolve_secret=ctx_settings.resolve_secret,
                     ) as dataset_lock:
-                        assert_lease_held(
-                            lease, store=None if lease is None else lease.store
+                        landed = self._land_migrate_partition(
+                            raw_dir=raw_dir,
+                            manifest=manifest,
+                            source=source,
+                            effective=effective,
+                            to_config=to_config,
+                            schema=schema,
+                            schema_rel=schema_rel,
+                            schema_resolved=schema_resolved,
+                            to_bronze_id=to_bronze_id,
+                            mapper=mapper,
+                            backend=backend,
+                            lease=lease,
+                            dataset_lock=dataset_lock,
+                            start_iso=start_iso,
+                            end_iso=end_iso,
+                            extract_ts=extract_ts,
                         )
-                        assert_dataset_lock_held(dataset_lock)
-                        backend.write(
-                            counted,
-                            config=to_config,
-                            project_root=self.project_root,
-                            partition_dir=out_part,
-                            destination=to_config.destination,
-                            chunk_rows=to_config.ingestion.chunk_rows,
-                            run_identity=(start_iso, end_iso, extract_ts),
+                        refresh_bronze_locks(
+                            pipeline_lease=lease,
+                            dataset_lock=dataset_lock,
                         )
-                    stamp_validation_success(
-                        raw_dir,
-                        schema_path=schema_rel,
-                        schema_sha256=sha256_file(schema_resolved),
-                        row_count=counted.n,
-                        wire_version=to_config.wire_version,
-                        validated_at=format_extract_run_datetime(),
-                    )
-                    total_rows += counted.n
+                    total_rows += landed.rows
                     written += 1
                     logger.info(
                         "migrated raw partition",
                         raw_dir=str(raw_dir),
-                        rows=counted.n,
+                        rows=landed.rows,
                         extract_run_datetime=extract_ts,
                     )
 
