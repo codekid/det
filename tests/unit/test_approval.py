@@ -757,6 +757,38 @@ def test_failed_write_prints_claimed_approval_hint(tmp_path: Path, monkeypatch):
     assert effective_status(loaded) == "claimed"
 
 
+def test_dbt_config_load_failure_prints_claimed_approval_hint(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
+    pipeline = _pipe_yaml(tmp_path)
+    argv = dbt_write_argv("noaa.storm_events")
+    rec = _create(tmp_path, command="dbt", argv=argv, now=None)
+    approval_id = rec["id"]
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("config load failed")
+
+    monkeypatch.setattr("det.runtime.config.load_pipeline_config", _boom)
+
+    result = _invoke(
+        [
+            "dbt",
+            "-p",
+            str(pipeline),
+            "--approval",
+            approval_id,
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    assert result.exit_code != 0, result.output
+    err = _strip_ansi(result.output)
+    assert "list-approvals --status claimed" in err
+    assert approval_id in err
+    assert f"det approval-release {approval_id} --force" in err
+    loaded = load_approval(tmp_path, approval_id)
+    assert effective_status(loaded) == "claimed"
+
+
 def test_bound_params_encoded_in_write_argv_builders():
     """Each _BOUND_PARAMS entry must appear in the matching write_argv builder output."""
     from det.cli.common import _BOUND_PARAMS

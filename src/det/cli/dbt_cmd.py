@@ -99,19 +99,21 @@ def dbt_cmd(
     pipe = None
     if resolved is not None:
         pipe = resolved.path
-        from det.runtime.config import load_pipeline_config
-        from det.scaffold.view_warn import emit_view_size_warnings
-
-        cfg = load_pipeline_config(pipe, overrides=set_ or None)
-        for w in emit_view_size_warnings(
-            cfg,
-            project_root=root,
-            lake_path=lake_path,
-        ):
-            typer.echo(f"WARNING: {w.message}", err=True)
 
     try:
         with _claimed_approval_work(claimed, approval):
+            if resolved is not None:
+                from det.runtime.config import load_pipeline_config
+                from det.scaffold.view_warn import emit_view_size_warnings
+
+                cfg = load_pipeline_config(pipe, overrides=set_ or None)
+                for w in emit_view_size_warnings(
+                    cfg,
+                    project_root=root,
+                    lake_path=lake_path,
+                ):
+                    typer.echo(f"WARNING: {w.message}", err=True)
+
             result = run_dbt(
                 project_root=root,
                 command=command,  # type: ignore[arg-type]
