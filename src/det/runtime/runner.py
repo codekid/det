@@ -136,7 +136,7 @@ class PipelineRunner:
     ) -> ExtractResult:
         extract_ts = extract_run_datetime or format_extract_run_datetime()
         config = self._load_config(pipeline, overrides)
-        source = get_source(config.source.type)
+        source = get_source(config.source.type, project_root=self.project_root)
         effective = merge_source_config(source.defaults(), config.source.overrides)
         start_iso, end_iso = resolve_interval(interval_start, interval_end)
         interval = Interval(start=start_iso, end=end_iso)
@@ -283,7 +283,7 @@ class PipelineRunner:
     ) -> RunResult:
         config = self._load_config(pipeline, overrides)
         schema = load_json_schema(resolve_path(self.project_root, config.schema_path))
-        source = get_source(config.source.type)
+        source = get_source(config.source.type, project_root=self.project_root)
         effective = merge_source_config(source.defaults(), config.source.overrides)
         start_iso, end_iso = resolve_interval(interval_start, interval_end)
         lake = self._lake(config.destination)

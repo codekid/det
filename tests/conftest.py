@@ -36,7 +36,7 @@ def _restore_plugin_snapshot(snapshot: dict[str, ModuleType]) -> None:
     reg._MAPPER_REGISTRY.clear()
     if identity is not None:
         reg._MAPPER_REGISTRY["identity"] = identity
-    reg._MAPPERS_SCANNED = False
+    reg._MAPPERS_SCANNED.clear()
 
 
 @pytest.fixture(scope="session")

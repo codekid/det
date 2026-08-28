@@ -177,10 +177,10 @@ def init_source(
         import sys
 
         from det.runtime.discovery import _project_module_name
-        from det.runtime.registry import _SOURCE_REGISTRY
+        from det.runtime.registry import _SOURCE_REGISTRY, _root_key
 
         sys.modules.pop(_project_module_name(name), None)
-        _SOURCE_REGISTRY.pop(name, None)
+        _SOURCE_REGISTRY.pop((name, _root_key(root)), None)
 
     pipeline_result = None
     if not skip_pipeline:

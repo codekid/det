@@ -17,7 +17,12 @@ from det.runtime.runner import PipelineRunner
 from det.scaffold.init_source import init_source
 
 
-def _write_project_plugin(root: Path, plugin_id: str = "acme.widgets") -> Path:
+def _write_project_plugin(
+    root: Path,
+    plugin_id: str = "acme.widgets",
+    *,
+    fixture_payload: str = "x",
+) -> Path:
     provider, source = plugin_id.split(".", 1)
     path = root / "sources" / provider / f"{source}.py"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -39,7 +44,7 @@ class {class_name}:
         return {{
             "record_path": "data.records",
             "auth_env": None,
-            "fixture_records": [{{"id": 1, "payload": "x"}}],
+            "fixture_records": [{{"id": 1, "payload": "{fixture_payload}"}}],
         }}
 
     def extract_to_raw(self, *, config, interval, data_dir):
@@ -78,6 +83,18 @@ def test_project_source_discovered(tmp_path: Path) -> None:
     assert project_source_map(tmp_path)["acme.widgets"].name == "widgets.py"
     plugin = get_source("acme.widgets", project_root=tmp_path)
     assert plugin.name == "acme.widgets"
+
+
+def test_get_source_cache_isolated_per_project_root(tmp_path: Path) -> None:
+    root_a = tmp_path / "a"
+    root_b = tmp_path / "b"
+    _write_project_plugin(root_a, fixture_payload="from-a")
+    _write_project_plugin(root_b, fixture_payload="from-b")
+    clear_registries()
+    plugin_a = get_source("acme.widgets", project_root=root_a)
+    plugin_b = get_source("acme.widgets", project_root=root_b)
+    assert plugin_a.defaults()["fixture_records"][0]["payload"] == "from-a"
+    assert plugin_b.defaults()["fixture_records"][0]["payload"] == "from-b"
 
 
 def test_project_source_collides_with_in_tree(tmp_path: Path) -> None:

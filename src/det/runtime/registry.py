@@ -11,32 +11,39 @@ from det.runtime.discovery import (
     discovered_source_ids,
     iter_discovered_mappers,
     load_source,
+    resolve_discovery_root,
 )
 from det.sources.base import SourcePlugin
 
-_SOURCE_REGISTRY: dict[str, Callable[[], SourcePlugin]] = {}
+# Test/process-wide injection via register_source() (not tied to a project root).
+_GLOBAL_ROOT_KEY = ""
+_SOURCE_REGISTRY: dict[tuple[str, str], Callable[[], SourcePlugin]] = {}
 _INGESTION_REGISTRY: dict[str, Callable[[], IngestionBackend]] = {}
 _MAPPER_REGISTRY: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
-_MAPPERS_SCANNED = False
+_MAPPERS_SCANNED: set[str] = set()
+
+
+def _root_key(project_root: Path | None) -> str:
+    return str(resolve_discovery_root(project_root))
 
 
 def clear_registries() -> None:
     """Empty plugin registries (MCP refresh / tests). Source list remains path-derived."""
-    global _MAPPERS_SCANNED
     _SOURCE_REGISTRY.clear()
     _INGESTION_REGISTRY.clear()
     _MAPPER_REGISTRY.clear()
-    _MAPPERS_SCANNED = False
+    _MAPPERS_SCANNED.clear()
     import det.plugins as plugs
 
     plugs._LOADED = False
 
 
 def register_source(name: str, factory: Callable[[], SourcePlugin]) -> None:
-    existing = _SOURCE_REGISTRY.get(name)
+    key = (name, _GLOBAL_ROOT_KEY)
+    existing = _SOURCE_REGISTRY.get(key)
     if existing is not None and existing is not factory:
         raise PluginLoadError(f"duplicate source {name!r}")
-    _SOURCE_REGISTRY[name] = factory
+    _SOURCE_REGISTRY[key] = factory
 
 
 def register_ingestion(name: str, factory: Callable[[], IngestionBackend]) -> None:
@@ -58,9 +65,14 @@ def _ensure_source_factory(
     *,
     project_root: Path | None = None,
 ) -> Callable[[], SourcePlugin]:
-    cached = _SOURCE_REGISTRY.get(name)
+    root_key = _root_key(project_root)
+    key = (name, root_key)
+    cached = _SOURCE_REGISTRY.get(key)
     if cached is not None:
         return cached
+    global_cached = _SOURCE_REGISTRY.get((name, _GLOBAL_ROOT_KEY))
+    if global_cached is not None:
+        return global_cached
     try:
         factory = load_source(name, project_root=project_root)
     except KeyError as exc:
@@ -74,7 +86,7 @@ def _ensure_source_factory(
         raise DetPluginError(
             f"failed to load source {name!r}: {exc}", plugin=name
         ) from exc
-    register_source(name, factory)
+    _SOURCE_REGISTRY[key] = factory
     return factory
 
 
@@ -92,8 +104,8 @@ def get_ingestion(name: str) -> IngestionBackend:
 
 
 def _ensure_mappers(*, project_root: Path | None = None) -> None:
-    global _MAPPERS_SCANNED
-    if _MAPPERS_SCANNED:
+    root_key = _root_key(project_root)
+    if root_key in _MAPPERS_SCANNED:
         return
     if "identity" not in _MAPPER_REGISTRY:
         from det.runtime.mappers import identity_mapper
@@ -101,7 +113,7 @@ def _ensure_mappers(*, project_root: Path | None = None) -> None:
         register_mapper("identity", identity_mapper)
     for mapper_name, fn in iter_discovered_mappers(project_root=project_root):
         register_mapper(mapper_name, fn)
-    _MAPPERS_SCANNED = True
+    _MAPPERS_SCANNED.add(root_key)
 
 
 def get_mapper(

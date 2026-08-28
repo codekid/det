@@ -102,11 +102,12 @@ def list_mappers_tool(*, root: Path | None = None) -> dict[str, Any]:
     from det.plugins import load_plugins
     from det.runtime.registry import describe_mappers, list_mappers
 
-    _ = _root(root)
+    base = _root(root)
     load_plugins()
+    mappers = describe_mappers(project_root=base)
     return {
-        "mappers": [{"name": name, "summary": summary} for name, summary in describe_mappers()],
-        "names": list_mappers(),
+        "mappers": [{"name": name, "summary": summary} for name, summary in mappers],
+        "names": list_mappers(project_root=base),
     }
 
 

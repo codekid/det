@@ -144,7 +144,7 @@ def check_pipeline_config(
         )
     else:
         try:
-            get_source(config.source.type)
+            get_source(config.source.type, project_root=root)
         except PluginLoadError as exc:
             findings.append(
                 Finding(
