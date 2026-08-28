@@ -13,11 +13,19 @@ is separate — see the [operator README](../README.md).
 
 ## 1. Install
 
-Python 3.12–3.13. Until PyPI (`det-elt`), install from git:
+Python 3.12–3.13. From PyPI (distribution name **`det-elt`**; import `det`):
 
 ```bash
-uv pip install "det[iceberg] @ git+https://github.com/codekid/det.git"
-# or editable checkout:
+uv pip install "det-elt[iceberg]"
+# or pip:
+pip install "det-elt[iceberg]"
+```
+
+From git (latest main):
+
+```bash
+uv pip install "det-elt[iceberg] @ git+https://github.com/codekid/det.git"
+# or editable checkout of this repo:
 uv pip install -e ".[iceberg]"
 ```
 
@@ -171,5 +179,5 @@ Concurrency (leases, processes vs threads): [api.md § Concurrency](api.md#concu
 | Approvals / `det approve` | CLI/agent only — not on embedder runners |
 | Cube metrics | Operator product |
 
-Epic checklist and publish notes (`det-elt`, MIT):
-[#24](https://github.com/codekid/det/issues/24).
+Library packaging epic: [#24](https://github.com/codekid/det/issues/24). PyPI
+distribution: **`det-elt`** (MIT).

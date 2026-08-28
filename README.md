@@ -11,7 +11,7 @@ Extract → **raw** (wire bytes) → **bronze** (typed Iceberg). **dbt** owns si
 | **Library** (embed extract→raw→bronze in your app) | **[docs/getting-started-library.md](docs/getting-started-library.md)** · [docs/api.md](docs/api.md) |
 
 This checkout is the operator product **and** the library source. Embedders install
-the package (git today; PyPI name later: `det-elt`) and keep pipelines under
+the PyPI package **`det-elt`** (import `det`) and keep pipelines under
 *their* `project_root` — they do not need this monorepo’s dbt/Airflow layout.
 
 ---
@@ -88,10 +88,13 @@ Base `det` is the runtime + CLI (no Iceberg / DuckDB / example HTTP deps).
 | `dev` | pytest, ruff |
 
 ```bash
-# App / embed (git until PyPI publish as det-elt):
+# App / embed (PyPI):
+uv pip install "det-elt[iceberg]"
+uv pip install "det-elt[iceberg,duckdb,dbt]"
+# This checkout (editable):
 uv pip install -e ".[iceberg]"              # recommended
 uv pip install -e ".[iceberg,duckdb,dbt]"   # typical app repo
-make install                                # this checkout (full extras)
+make install                                # full extras for operator dev
 make test
 uv run det check
 ```

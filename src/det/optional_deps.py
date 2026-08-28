@@ -5,6 +5,13 @@ from __future__ import annotations
 from types import ModuleType
 from typing import Any
 
+# PyPI distribution name (import package remains ``det``).
+DISTRIBUTION_NAME = "det-elt"
+
+
+def pip_extra_hint(extra: str) -> str:
+    return f"pip install '{DISTRIBUTION_NAME}[{extra}]'"
+
 
 def require_duckdb() -> ModuleType:
     try:
@@ -12,7 +19,7 @@ def require_duckdb() -> ModuleType:
     except ImportError as exc:
         raise ImportError(
             "duckdb is required for this operation; install with: "
-            "pip install 'det[duckdb]' (or uv sync --extra duckdb)"
+            f"{pip_extra_hint('duckdb')} (or uv sync --extra duckdb)"
         ) from exc
     return duckdb
 
@@ -23,7 +30,7 @@ def require_jinja2() -> ModuleType:
     except ImportError as exc:
         raise ImportError(
             "jinja2 is required for scaffolding; install with: "
-            "pip install 'det[scaffold]' (or uv sync --extra scaffold)"
+            f"{pip_extra_hint('scaffold')} (or uv sync --extra scaffold)"
         ) from exc
     return jinja2
 
@@ -37,7 +44,7 @@ def require_dlt_rest() -> tuple[Any, ModuleType, ModuleType]:
     except ImportError as exc:
         raise ImportError(
             "dlt is required for this HTTP source; install with: "
-            "pip install 'det[examples]' (or uv sync --extra examples)"
+            f"{pip_extra_hint('examples')} (or uv sync --extra examples)"
         ) from exc
     return RESTClient, rest_auth, rest_paginators
 
@@ -49,6 +56,6 @@ def require_beautifulsoup() -> Any:
     except ImportError as exc:
         raise ImportError(
             "beautifulsoup4 is required for NOAA HTML listing; install with: "
-            "pip install 'det[examples]' (or uv sync --extra examples)"
+            f"{pip_extra_hint('examples')} (or uv sync --extra examples)"
         ) from exc
     return BeautifulSoup

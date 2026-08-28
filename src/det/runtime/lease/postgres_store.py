@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from det.logging import get_logger
+from det.optional_deps import pip_extra_hint
 from det.runtime.ids import require_sql_ident
 from det.runtime.lease._common import (
     Lease,
@@ -33,7 +34,7 @@ def _import_psycopg():
         import psycopg
     except ImportError as exc:
         raise ImportError(
-            "postgres lease backend requires the optional extra: pip install 'det[postgres]'"
+            f"postgres lease backend requires the optional extra: {pip_extra_hint('postgres')}"
         ) from exc
     return psycopg
 

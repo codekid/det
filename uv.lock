@@ -600,7 +600,7 @@ wheels = [
 ]
 
 [[package]]
-name = "det"
+name = "det-elt"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

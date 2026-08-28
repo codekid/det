@@ -1,0 +1,31 @@
+# Publish det-elt to PyPI when a GitHub Release is published.
+#
+# One-time PyPI setup (https://pypi.org/manage/project/det-elt/settings/publishing/):
+#   - Add a trusted publisher: owner codekid, repo det, workflow publish.yml
+#   - Create the det-elt project on PyPI first (or let first upload create it)
+#
+# Release: tag v0.1.0, push tag, create GitHub Release from the tag.
+
+name: publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  id-token: write
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Build sdist and wheel
+        run: |
+          uv pip install build
+          uv run python -m build
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
