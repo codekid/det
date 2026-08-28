@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +34,7 @@ def write_duckdb_table(
     json_schema: dict[str, Any],
     chunk_rows: int = 10_000,
     run_identity: tuple[str, str, str] | None = None,
+    on_chunk: Callable[[], None] | None = None,
 ) -> Path:
     """
     Replace-by-extract-run DET bronze write into DuckDB.
@@ -105,10 +106,14 @@ def write_duckdb_table(
                 assert_chunk_matches_identity(first_chunk, identity)
                 _insert(first_chunk)
                 total = len(first_chunk)
+                if on_chunk is not None:
+                    on_chunk()
                 for chunk in chunks:
                     assert_chunk_matches_identity(chunk, identity)
                     _insert(chunk)
                     total += len(chunk)
+                    if on_chunk is not None:
+                        on_chunk()
             con.execute("COMMIT")
         except Exception:
             con.execute("ROLLBACK")

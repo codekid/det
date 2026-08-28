@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -39,11 +39,16 @@ class DetBackend:
         destination: DestinationConfig,
         chunk_rows: int | None = None,
         run_identity: tuple[str, str, str] | None = None,
+        on_chunk: Callable[[], None] | None = None,
     ) -> Path | LakeRef:
         size = config.ingestion.chunk_rows if chunk_rows is None else chunk_rows
         if destination.type == "filesystem":
             return self._write_filesystem(
-                records, config=config, partition_dir=partition_dir, chunk_rows=size
+                records,
+                config=config,
+                partition_dir=partition_dir,
+                chunk_rows=size,
+                on_chunk=on_chunk,
             )
         if destination.type == "duckdb":
             return self._write_duckdb(
@@ -53,6 +58,7 @@ class DetBackend:
                 destination=destination,
                 chunk_rows=size,
                 run_identity=run_identity,
+                on_chunk=on_chunk,
             )
         if destination.type == "postgres":
             return self._write_postgres(
@@ -62,6 +68,7 @@ class DetBackend:
                 destination=destination,
                 chunk_rows=size,
                 run_identity=run_identity,
+                on_chunk=on_chunk,
             )
         if destination.type == "iceberg":
             return self._write_iceberg(
@@ -70,6 +77,7 @@ class DetBackend:
                 project_root=project_root,
                 chunk_rows=size,
                 run_identity=run_identity,
+                on_chunk=on_chunk,
             )
         raise ValueError(f"Unsupported destination type: {destination.type}")
 
@@ -80,8 +88,11 @@ class DetBackend:
         config: PipelineConfig,
         partition_dir: Path | LakeRef,
         chunk_rows: int,
+        on_chunk: Callable[[], None] | None = None,
     ) -> Path | LakeRef:
-        write_jsonl_partition(records, partition_dir, chunk_rows=chunk_rows)
+        write_jsonl_partition(
+            records, partition_dir, chunk_rows=chunk_rows, on_chunk=on_chunk
+        )
         logger.info(
             "filesystem load finished",
             partition=str(partition_dir),
@@ -98,6 +109,7 @@ class DetBackend:
         destination: DestinationConfig,
         chunk_rows: int,
         run_identity: tuple[str, str, str] | None = None,
+        on_chunk: Callable[[], None] | None = None,
     ) -> Path:
         db_path = duckdb_connection_path(destination, project_root)
         schema, table = sql_names_for_config(config)
@@ -110,6 +122,7 @@ class DetBackend:
             json_schema=json_schema,
             chunk_rows=chunk_rows,
             run_identity=run_identity,
+            on_chunk=on_chunk,
         )
 
     def _write_postgres(
@@ -121,6 +134,7 @@ class DetBackend:
         destination: DestinationConfig,
         chunk_rows: int,
         run_identity: tuple[str, str, str] | None = None,
+        on_chunk: Callable[[], None] | None = None,
     ) -> Path:
         dsn = postgres_dsn(destination)
         schema, table = sql_names_for_config(config)
@@ -134,6 +148,7 @@ class DetBackend:
             chunk_rows=chunk_rows,
             pipeline=config.name,
             run_identity=run_identity,
+            on_chunk=on_chunk,
         )
         # Logical identity only — Path() would mangle DSN schemes (:// → :/).
         return Path("postgres") / schema / table
@@ -146,6 +161,7 @@ class DetBackend:
         project_root: Path,
         chunk_rows: int,
         run_identity: tuple[str, str, str] | None = None,
+        on_chunk: Callable[[], None] | None = None,
     ) -> LakeRef:
         from det.destinations.models import bronze_dataset_dir, lake_root
         from det.ingestion.iceberg_writer import write_iceberg_table
@@ -162,6 +178,7 @@ class DetBackend:
             chunk_rows=chunk_rows,
             partition=config.destination.iceberg_partition,
             run_identity=run_identity,
+            on_chunk=on_chunk,
         )
         logger.info(
             "iceberg load finished",

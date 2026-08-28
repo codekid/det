@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -33,13 +33,16 @@ class ThinBackend:
         destination: DestinationConfig,
         chunk_rows: int | None = None,
         run_identity: tuple[str, str, str] | None = None,
+        on_chunk: Callable[[], None] | None = None,
     ) -> Path | LakeRef:
         if destination.type != "filesystem":
             raise ValueError(
                 f"thin backend only supports filesystem destination, got {destination.type}"
             )
         size = config.ingestion.chunk_rows if chunk_rows is None else chunk_rows
-        write_jsonl_partition(records, partition_dir, chunk_rows=size)
+        write_jsonl_partition(
+            records, partition_dir, chunk_rows=size, on_chunk=on_chunk
+        )
         logger.info(
             "thin backend wrote partition",
             path=str(partition_dir),

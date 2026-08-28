@@ -181,7 +181,7 @@ det run -p noaa.storm_events -s 2026-08-06
 det extract -p noaa.storm_events -s 2026-08-06
 det load -p noaa.storm_events -s 2026-08-06
 det dbt -p noaa.storm_events
-det check
+det check          # CI runs det check --strict (warnings fail the build)
 det list-pipelines
 det list-sources
 ```
@@ -208,8 +208,9 @@ det dbt                         # full analytics project (excludes tag:ops)
 ```
 
 Scaffolded `stg_*` use `det_bronze_from`. Gold is hand-written. Nested flatten /
-relations: `dbt.stg` in pipeline YAML, then `det scaffold-dbt -p …`. More:
-[`.cursor/skills/det-dbt/SKILL.md`](.cursor/skills/det-dbt/SKILL.md).
+relations: `dbt.stg` in pipeline YAML, then `det scaffold-dbt -p …`. Contract
+triangle (schema → sources.yml → dbt.stg): [docs/contract-triangle.md](docs/contract-triangle.md).
+More: [`.cursor/skills/det-dbt/SKILL.md`](.cursor/skills/det-dbt/SKILL.md).
 
 ---
 

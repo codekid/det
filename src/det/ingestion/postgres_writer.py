@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 from det.ingestion.chunks import iter_chunks
@@ -44,6 +44,7 @@ def write_postgres_table(
     chunk_rows: int = 10_000,
     pipeline: str | None = None,
     run_identity: tuple[str, str, str] | None = None,
+    on_chunk: Callable[[], None] | None = None,
 ) -> str:
     """
     Replace-by-extract-run DET bronze write into Postgres.
@@ -114,10 +115,14 @@ def write_postgres_table(
                     assert_chunk_matches_identity(first_chunk, identity)
                     _insert(first_chunk)
                     total = len(first_chunk)
+                    if on_chunk is not None:
+                        on_chunk()
                     for chunk in chunks:
                         assert_chunk_matches_identity(chunk, identity)
                         _insert(chunk)
                         total += len(chunk)
+                        if on_chunk is not None:
+                            on_chunk()
             conn.commit()
         except Exception:
             conn.rollback()

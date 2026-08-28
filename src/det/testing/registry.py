@@ -43,7 +43,7 @@ def isolated_registries() -> Iterator[None]:
     src_snap = dict(reg._SOURCE_REGISTRY)
     ing_snap = dict(reg._INGESTION_REGISTRY)
     map_snap = dict(reg._MAPPER_REGISTRY)
-    scanned = reg._MAPPERS_SCANNED
+    scanned = set(reg._MAPPERS_SCANNED)
     loaded = plugs._LOADED
 
     clear_secret_cache()
@@ -57,7 +57,8 @@ def isolated_registries() -> Iterator[None]:
         reg._INGESTION_REGISTRY.update(ing_snap)
         reg._MAPPER_REGISTRY.clear()
         reg._MAPPER_REGISTRY.update(map_snap)
-        reg._MAPPERS_SCANNED = scanned
+        reg._MAPPERS_SCANNED.clear()
+        reg._MAPPERS_SCANNED.update(scanned)
         plugs._LOADED = loaded
         if not reg._INGESTION_REGISTRY:
             clear_registries()

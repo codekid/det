@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import cast
 
 from det.destinations.models import (
-    bronze_dataset_dir,
     hive_partition_dir,
     lake_root,
     raw_dataset_dir,
@@ -14,6 +13,7 @@ from det.destinations.models import (
 from det.errors import DetConflictError, DetNotFoundError, reraise_as_plugin
 from det.logging import bound_run_context, get_logger, sanitize_lake_uri, update_run_context
 from det.plugins import load_plugins
+from det.runtime.bronze_land import BronzeLandParams, land_bronze_partition
 from det.runtime.config import PipelineConfig, load_pipeline, resolve_path
 from det.runtime.dlt_hygiene import check_raw_hygiene
 from det.runtime.lake import LakeRef
@@ -22,20 +22,15 @@ from det.runtime.lease import (
     LeaseFencedError,
     assert_lease_held,
     pipeline_lease,
+    refresh_bronze_locks,
     refresh_lease,
     resolve_lease_options,
 )
-from det.runtime.lease.dataset_lock import (
-    assert_dataset_lock_held,
-    dataset_shared_lock,
-)
-from det.runtime.load_rows import CountingIter, iter_bronze_rows
+from det.runtime.lease.dataset_lock import dataset_shared_lock
 from det.runtime.manifest import (
     LakePath,
     is_committed_raw_dir,
     read_manifest,
-    sha256_file,
-    stamp_validation_success,
     write_manifest,
 )
 from det.runtime.manifest_types import ManifestPayload
@@ -141,7 +136,7 @@ class PipelineRunner:
     ) -> ExtractResult:
         extract_ts = extract_run_datetime or format_extract_run_datetime()
         config = self._load_config(pipeline, overrides)
-        source = get_source(config.source.type)
+        source = get_source(config.source.type, project_root=self.project_root)
         effective = merge_source_config(source.defaults(), config.source.overrides)
         start_iso, end_iso = resolve_interval(interval_start, interval_end)
         interval = Interval(start=start_iso, end=end_iso)
@@ -288,7 +283,7 @@ class PipelineRunner:
     ) -> RunResult:
         config = self._load_config(pipeline, overrides)
         schema = load_json_schema(resolve_path(self.project_root, config.schema_path))
-        source = get_source(config.source.type)
+        source = get_source(config.source.type, project_root=self.project_root)
         effective = merge_source_config(source.defaults(), config.source.overrides)
         start_iso, end_iso = resolve_interval(interval_start, interval_end)
         lake = self._lake(config.destination)
@@ -337,81 +332,58 @@ class PipelineRunner:
                     update_run_context(extract_run_datetime=extract_ts)
                     refresh_lease(lease, store=None if lease is None else lease.store)
 
-                    bronze_loaded_at = format_extract_run_datetime()
-                    try:
-                        counted = CountingIter(
-                            iter_bronze_rows(
-                                source.records_from_raw(
-                                    config=effective,
-                                    raw_dir=raw_dir,
-                                    manifest=manifest,
-                                ),
-                                schema=schema,
-                                naming=config.bronze.naming,
-                                extract_run_datetime=extract_ts,
-                                interval_start_datetime=start_iso,
-                                interval_end_datetime=end_iso,
-                                bronze_loaded_at=bronze_loaded_at,
-                                log_every=config.ingestion.chunk_rows,
-                            )
-                        )
+                    schema_resolved = resolve_path(self.project_root, config.schema_path)
+                    backend = get_ingestion(config.ingestion.library)
+                    with dataset_shared_lock(
+                        lake,
+                        config.canonical_id,
+                        command="load",
+                        **self._lease_kwargs(lock_ttl_sec, config),
+                    ) as dataset_lock:
+                        lease_store = None if lease is None else lease.store
 
-                        partition = hive_partition_dir(
-                            bronze_dataset_dir(config, self.project_root),
-                            interval_start_datetime=start_iso,
-                            interval_end_datetime=end_iso,
-                            extract_run_datetime=extract_ts,
-                        )
-                        backend = get_ingestion(config.ingestion.library)
-                        logger.info(
-                            "writing bronze partition",
-                            backend=config.ingestion.library,
-                            chunk_rows=config.ingestion.chunk_rows,
-                            partition=str(partition),
-                        )
-                        with dataset_shared_lock(
-                            lake,
-                            config.canonical_id,
-                            command="load",
-                            **self._lease_kwargs(lock_ttl_sec, config),
-                        ) as dataset_lock:
-                            assert_lease_held(
-                                lease, store=None if lease is None else lease.store
+                        def refresh_locks() -> None:
+                            refresh_bronze_locks(
+                                pipeline_lease=lease,
+                                dataset_lock=dataset_lock,
+                                lease_store=lease_store,
                             )
-                            assert_dataset_lock_held(dataset_lock)
-                            written = backend.write(
-                                counted,
-                                config=config,
-                                project_root=self.project_root,
-                                partition_dir=partition,
-                                destination=config.destination,
-                                chunk_rows=config.ingestion.chunk_rows,
-                                run_identity=(start_iso, end_iso, extract_ts),
-                            )
-                    except Exception as exc:
-                        reraise_as_plugin(exc, plugin=source.name, action="load")
-                    schema_sha256 = sha256_file(
-                        resolve_path(self.project_root, config.schema_path)
-                    )
-                    stamp_validation_success(
-                        raw_dir,
-                        schema_path=config.schema_path,
-                        schema_sha256=schema_sha256,
-                        row_count=counted.n,
-                        wire_version=config.wire_version,
-                        validated_at=format_extract_run_datetime(),
-                    )
-                    receipt.rows = counted.n
-                    receipt.schema_sha256 = schema_sha256
+
+                        landed = land_bronze_partition(
+                            source=source,
+                            backend=backend,
+                            project_root=self.project_root,
+                            params=BronzeLandParams(
+                                raw_dir=raw_dir,
+                                manifest=manifest,
+                                effective_config=effective,
+                                bronze_config=config,
+                                schema=schema,
+                                schema_path=config.schema_path,
+                                schema_resolved=schema_resolved,
+                                extract_ts=extract_ts,
+                                start_iso=start_iso,
+                                end_iso=end_iso,
+                                plugin_name=source.name,
+                                command="load",
+                            ),
+                            pipeline_lease=lease,
+                            dataset_lock=dataset_lock,
+                            lease_store=lease_store,
+                            on_progress=refresh_locks,
+                            on_chunk=refresh_locks,
+                        )
+                    receipt.rows = landed.rows
+                    receipt.schema_sha256 = landed.schema_sha256
                     logger.info(
                         "load complete",
-                        rows=counted.n,
-                        partition=str(written),
+                        rows=landed.rows,
+                        partition=str(landed.partition_dir),
                     )
         return RunResult(
             pipeline=config.name,
-            partition_dir=written,
-            rows=counted.n,
+            partition_dir=landed.partition_dir,
+            rows=landed.rows,
             data_interval_date=data_interval_date(start_iso),
             raw_dir=raw_dir,
             extract_run_datetime=extract_ts,

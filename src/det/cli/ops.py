@@ -10,6 +10,7 @@ from det.cli.common import (
     _PIPELINE_HELP,
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
+    _claimed_approval_work,
     _consume_approval,
     _gate_approval,
     _project_root,
@@ -218,9 +219,10 @@ def biglake_register_cmd(
         typer.echo(format_dry_run(plan, argv))
         return
 
-    _gate_approval(root, "biglake-register", argv, approval, require_approval, ctx=ctx)
+    claimed = _gate_approval(root, "biglake-register", argv, approval, require_approval, ctx=ctx)
     try:
-        result = apply_biglake_register(plan)
+        with _claimed_approval_work(claimed, approval):
+            result = apply_biglake_register(plan)
     except RuntimeError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -351,7 +353,13 @@ def lock_release(
     start_iso = end_iso = None
     if interval_start is not None:
         start_iso, end_iso = _resolve_interval(interval_start, interval_end)
-    _gate_approval(
+    config = load_pipeline_config(resolved.path)
+    settings = DetSettings.from_env(project_root=root)
+    if lake_path is not None:
+        settings = settings.with_overrides(lake_override=lake_path)
+    options = resolve_lease_options(settings=settings, pipeline=config)
+    lake = lake_root(config.destination, root, cli_lake_path=lake_path, settings=settings)
+    claimed = _gate_approval(
         root,
         "lock-release",
         lock_release_write_argv(
@@ -365,66 +373,61 @@ def lock_release(
         require_approval,
         ctx=ctx,
     )
-    config = load_pipeline_config(resolved.path)
-    settings = DetSettings.from_env(project_root=root)
-    if lake_path is not None:
-        settings = settings.with_overrides(lake_override=lake_path)
-    options = resolve_lease_options(settings=settings, pipeline=config)
-    lake = lake_root(config.destination, root, cli_lake_path=lake_path, settings=settings)
-    if dataset_id is not None:
-        held = force_release_dataset_lock(
-            lake,
-            dataset_id,
-            options=options,
-            resolve_secret=settings.resolve_secret,
+    with _claimed_approval_work(claimed, approval):
+        if dataset_id is not None:
+            held = force_release_dataset_lock(
+                lake,
+                dataset_id,
+                options=options,
+                resolve_secret=settings.resolve_secret,
+            )
+            location = (
+                str(dataset_lock_path(lake, dataset_id))
+                if options.backend == "lake"
+                else f"postgres:{options.pg_schema}.dataset_locks/{dataset_id}"
+            )
+            if held is None:
+                _consume_approval(root, approval)
+                typer.echo(f"no dataset lock location={location}")
+                return
+            ex = held.get("exclusive") or {}
+            typer.echo(
+                f"releasing dataset lock owner={ex.get('owner')} "
+                f"shared_holders={len(held.get('shared') or [])} location={location}",
+                err=True,
+            )
+            _consume_approval(root, approval)
+            typer.echo(f"OK lock-release location={location}")
+            return
+
+        store = open_lease_store(lake, options, resolve_secret=settings.resolve_secret)
+        if start_iso is None:
+            raise typer.BadParameter(
+                "-s/--interval-start is required unless --dataset-id is set",
+                param_hint="-s",
+            )
+        held = store.inspect(
+            pipeline=config.name, interval_start=start_iso, interval_end=end_iso or start_iso
         )
         location = (
-            str(dataset_lock_path(lake, dataset_id))
+            str(lock_path(lake, config.name, start_iso, end_iso or start_iso))
             if options.backend == "lake"
-            else f"postgres:{options.pg_schema}.dataset_locks/{dataset_id}"
+            else f"postgres:{options.pg_schema}.{options.pg_table}"
         )
         if held is None:
             _consume_approval(root, approval)
-            typer.echo(f"no dataset lock location={location}")
+            typer.echo(f"no lock location={location}")
             return
-        ex = held.get("exclusive") or {}
         typer.echo(
-            f"releasing dataset lock owner={ex.get('owner')} "
-            f"shared_holders={len(held.get('shared') or [])} location={location}",
+            f"releasing owner={held.get('owner')} expires_at={held.get('expires_at')} "
+            f"location={location}",
             err=True,
+        )
+        store.force_release(
+            pipeline=config.name, interval_start=start_iso, interval_end=end_iso or start_iso
         )
         _consume_approval(root, approval)
         typer.echo(f"OK lock-release location={location}")
-        return
-
-    store = open_lease_store(lake, options, resolve_secret=settings.resolve_secret)
-    if start_iso is None:
-        raise typer.BadParameter(
-            "-s/--interval-start is required unless --dataset-id is set",
-            param_hint="-s",
-        )
-    held = store.inspect(
-        pipeline=config.name, interval_start=start_iso, interval_end=end_iso or start_iso
-    )
-    location = (
-        str(lock_path(lake, config.name, start_iso, end_iso or start_iso))
-        if options.backend == "lake"
-        else f"postgres:{options.pg_schema}.{options.pg_table}"
-    )
-    if held is None:
-        _consume_approval(root, approval)
-        typer.echo(f"no lock location={location}")
-        return
-    typer.echo(
-        f"releasing owner={held.get('owner')} expires_at={held.get('expires_at')} "
-        f"location={location}",
-        err=True,
-    )
-    store.force_release(
-        pipeline=config.name, interval_start=start_iso, interval_end=end_iso or start_iso
-    )
-    _consume_approval(root, approval)
-    typer.echo(f"OK lock-release location={location}")
 
 
 @app.command("lock-init")

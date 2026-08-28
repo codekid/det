@@ -23,6 +23,9 @@ Implement a `SourcePlugin` under `src/det/sources/<provider>/<source>.py` (see
 6. Optional migrate mapper: `@mapper("…")` on a function in the **same module**
    (do not edit `plugins.py`)
 
+See [docs/contract-triangle.md](../../docs/contract-triangle.md) for how schema
+YAML, dbt `sources.yml`, and pipeline `dbt.stg` stay aligned.
+
 Provider-local helpers belong in `_`-prefixed sibling modules (e.g.
 `src/det/sources/noaa/_csv.py`); they are not discovered. Shared HTTP helpers stay
 at `src/det/sources/http.py` / `http_json.py`.
@@ -90,4 +93,5 @@ State interval mode on the plugin docstring: `year_files` | `query_params` |
 - MCP is dry-run / inspect only — no extract/load through MCP.
 - Pipeline `name` / `-p` stay `provider.source`; lake / SQL ids are
   `{name}_v{wire_version}` (including `_v1`). Top-level `dataset:` is rejected.
-- Do not suggest `dlt.pipeline` for landing. Ingestion library is `det` (alias `dlt`).
+- Do not suggest `dlt.pipeline` for landing. Prefer `ingestion.library: det`
+  (`dlt` is a deprecated alias, not removed yet).

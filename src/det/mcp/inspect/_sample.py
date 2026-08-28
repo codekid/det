@@ -56,7 +56,7 @@ def _iter_load_rows(
     load_plugins()
     run_dir = _raw_run_dir(run, root)
     manifest = read_raw_manifest(run_dir)
-    source = get_source(config.source.type)
+    source = get_source(config.source.type, project_root=root)
     effective = merge_source_config(source.defaults(), config.source.overrides)
     schema = load_json_schema(resolve_path(root, config.schema_path))
 
@@ -248,7 +248,7 @@ def validate_sample(
     load_plugins()
     run_dir = _raw_run_dir(run, base)
     manifest = read_raw_manifest(run_dir)
-    source = get_source(config.source.type)
+    source = get_source(config.source.type, project_root=base)
     effective = merge_source_config(source.defaults(), config.source.overrides)
     schema = load_json_schema(resolve_path(base, config.schema_path))
 

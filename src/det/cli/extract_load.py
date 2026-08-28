@@ -11,6 +11,7 @@ from det.cli.common import (
     _PIPELINE_HELP,
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
+    _claimed_approval_work,
     _consume_approval,
     _gate_approval,
     _project_root,
@@ -47,7 +48,7 @@ def extract_raw(
     # and ISO interval, not the raw ref form the caller happened to type.
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
-    _gate_approval(
+    claimed = _gate_approval(
         root,
         "extract",
         extract_write_argv(
@@ -62,14 +63,15 @@ def extract_raw(
         ctx=ctx,
     )
     try:
-        result = PipelineRunner(
-            settings=_settings(root, lake_path=lake_path, lock_ttl_sec=lock_ttl_sec)
-        ).extract(
-            resolved.path,
-            interval_start=start_iso,
-            interval_end=end_iso,
-            overrides=set_,
-        )
+        with _claimed_approval_work(claimed, approval):
+            result = PipelineRunner(
+                settings=_settings(root, lake_path=lake_path, lock_ttl_sec=lock_ttl_sec)
+            ).extract(
+                resolved.path,
+                interval_start=start_iso,
+                interval_end=end_iso,
+                overrides=set_,
+            )
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -109,7 +111,7 @@ def load_bronze(
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
-    _gate_approval(
+    claimed = _gate_approval(
         root,
         "load",
         load_write_argv(
@@ -125,15 +127,16 @@ def load_bronze(
         ctx=ctx,
     )
     try:
-        result = PipelineRunner(
-            settings=_settings(root, lake_path=lake_path, lock_ttl_sec=lock_ttl_sec)
-        ).load(
-            resolved.path,
-            interval_start=start_iso,
-            interval_end=end_iso,
-            overrides=set_,
-            extract_run_datetime=extract_run_datetime,
-        )
+        with _claimed_approval_work(claimed, approval):
+            result = PipelineRunner(
+                settings=_settings(root, lake_path=lake_path, lock_ttl_sec=lock_ttl_sec)
+            ).load(
+                resolved.path,
+                interval_start=start_iso,
+                interval_end=end_iso,
+                overrides=set_,
+                extract_run_datetime=extract_run_datetime,
+            )
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -168,7 +171,7 @@ def run_pipeline(
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
-    _gate_approval(
+    claimed = _gate_approval(
         root,
         "run",
         run_write_argv(
@@ -184,14 +187,15 @@ def run_pipeline(
     )
     print("det: run starting…", file=sys.stderr, flush=True)
     try:
-        result = PipelineRunner(
-            settings=_settings(root, lake_path=lake_path, lock_ttl_sec=lock_ttl_sec)
-        ).run(
-            resolved.path,
-            interval_start=start_iso,
-            interval_end=end_iso,
-            overrides=set_,
-        )
+        with _claimed_approval_work(claimed, approval):
+            result = PipelineRunner(
+                settings=_settings(root, lake_path=lake_path, lock_ttl_sec=lock_ttl_sec)
+            ).run(
+                resolved.path,
+                interval_start=start_iso,
+                interval_end=end_iso,
+                overrides=set_,
+            )
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc

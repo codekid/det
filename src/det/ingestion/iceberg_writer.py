@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import warnings
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import date, datetime
 from typing import Any
 
@@ -390,6 +390,7 @@ def write_iceberg_table(
     chunk_rows: int = 10_000,
     partition: IcebergPartition = "extract_run",
     run_identity: tuple[str, str, str] | None = None,
+    on_chunk: Callable[[], None] | None = None,
 ) -> LakeRef:
     """
     Replace-by-extract-run DET bronze write into an Iceberg table.
@@ -439,9 +440,13 @@ def write_iceberg_table(
     if first_chunk is not None:
         txn.append(_arrow(first_chunk))
         total = len(first_chunk)
+        if on_chunk is not None:
+            on_chunk()
         for chunk in chunks:
             txn.append(_arrow(chunk))
             total += len(chunk)
+            if on_chunk is not None:
+                on_chunk()
     txn.commit_transaction()
     logger.info(
         "iceberg load finished",

@@ -135,6 +135,18 @@ class LakeLeaseStore:
         try:
             lease.version = lease.path.replace_if_match(lease.version, raw)
         except ObjectVersionConflict:
+            logger.warning(
+                "lake lease refresh CAS conflict",
+                path=str(lease.path),
+                token=lease.token[:8] if lease.token else "",
+            )
+            current = read_lock(lease.path)
+            if current is None or str(current.get("token") or "") != lease.token:
+                logger.error(
+                    "lake lease refresh lost ownership after CAS conflict",
+                    path=str(lease.path),
+                    token=lease.token[:8] if lease.token else "",
+                )
             return
 
     def ensure_held(self, lease: Lease) -> None:
