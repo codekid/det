@@ -16,6 +16,7 @@ from det.runtime.config import PipelineConfig, load_pipeline
 from det.runtime.ids import sql_names_for_config
 from det.runtime.lake import LakeRef
 from det.runtime.lease import assert_lease_held, pipeline_lease, resolve_lease_options
+from det.runtime.lease.dataset_lock import assert_dataset_lock_held, dataset_shared_lock
 from det.runtime.meta import from_partition_value, identity_iso, resolve_interval
 from det.runtime.settings import DetSettings, use_settings
 
@@ -158,31 +159,50 @@ class BronzePruner:
         if not plan.to_remove:
             return 0
         dest = config.destination
+        lake = self._lake(dest)
+        lease_opts = resolve_lease_options(
+            settings=self.settings,
+            pipeline=config,
+            ttl_sec=self.settings.effective_lock_ttl(lock_ttl_sec),
+            owner=self.settings.lock_owner,
+            enabled=self.settings.locks_enabled,
+        )
+        lease_kwargs = {
+            "ttl_sec": self.settings.effective_lock_ttl(lock_ttl_sec),
+            "owner": self.settings.lock_owner,
+            "enabled": self.settings.locks_enabled,
+            "options": lease_opts,
+            "resolve_secret": self.settings.resolve_secret,
+        }
         if interval_start is not None:
             start_iso, end_iso = resolve_interval(interval_start, interval_end)
             with pipeline_lease(
-                self._lake(dest),
+                lake,
                 pipeline=config.name,
                 interval_start=start_iso,
                 interval_end=end_iso,
                 command="prune",
-                ttl_sec=self.settings.effective_lock_ttl(lock_ttl_sec),
-                owner=self.settings.lock_owner,
-                enabled=self.settings.locks_enabled,
-                options=resolve_lease_options(
-                    settings=self.settings,
-                    pipeline=config,
-                    ttl_sec=self.settings.effective_lock_ttl(lock_ttl_sec),
-                    owner=self.settings.lock_owner,
-                    enabled=self.settings.locks_enabled,
-                ),
-                resolve_secret=self.settings.resolve_secret,
+                **lease_kwargs,
             ) as lease:
-                assert_lease_held(
-                    lease, store=None if lease is None else lease.store
-                )
-                return self._apply_body(config, plan)
-        return self._apply_body(config, plan)
+                with dataset_shared_lock(
+                    lake,
+                    config.canonical_id,
+                    command="prune",
+                    **lease_kwargs,
+                ) as dataset_lock:
+                    assert_lease_held(
+                        lease, store=None if lease is None else lease.store
+                    )
+                    assert_dataset_lock_held(dataset_lock)
+                    return self._apply_body(config, plan)
+        with dataset_shared_lock(
+            lake,
+            config.canonical_id,
+            command="prune",
+            **lease_kwargs,
+        ) as dataset_lock:
+            assert_dataset_lock_held(dataset_lock)
+            return self._apply_body(config, plan)
 
     def _apply_body(self, config: PipelineConfig, plan: PrunePlan) -> int:
         dest = config.destination

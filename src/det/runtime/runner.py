@@ -25,6 +25,10 @@ from det.runtime.lease import (
     refresh_lease,
     resolve_lease_options,
 )
+from det.runtime.lease.dataset_lock import (
+    assert_dataset_lock_held,
+    dataset_shared_lock,
+)
 from det.runtime.load_rows import CountingIter, iter_bronze_rows
 from det.runtime.manifest import (
     LakePath,
@@ -365,18 +369,25 @@ class PipelineRunner:
                             chunk_rows=config.ingestion.chunk_rows,
                             partition=str(partition),
                         )
-                        assert_lease_held(
-                            lease, store=None if lease is None else lease.store
-                        )
-                        written = backend.write(
-                            counted,
-                            config=config,
-                            project_root=self.project_root,
-                            partition_dir=partition,
-                            destination=config.destination,
-                            chunk_rows=config.ingestion.chunk_rows,
-                            run_identity=(start_iso, end_iso, extract_ts),
-                        )
+                        with dataset_shared_lock(
+                            lake,
+                            config.canonical_id,
+                            command="load",
+                            **self._lease_kwargs(lock_ttl_sec, config),
+                        ) as dataset_lock:
+                            assert_lease_held(
+                                lease, store=None if lease is None else lease.store
+                            )
+                            assert_dataset_lock_held(dataset_lock)
+                            written = backend.write(
+                                counted,
+                                config=config,
+                                project_root=self.project_root,
+                                partition_dir=partition,
+                                destination=config.destination,
+                                chunk_rows=config.ingestion.chunk_rows,
+                                run_identity=(start_iso, end_iso, extract_ts),
+                            )
                     except Exception as exc:
                         reraise_as_plugin(exc, plugin=source.name, action="load")
                     schema_sha256 = sha256_file(

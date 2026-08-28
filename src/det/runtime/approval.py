@@ -733,22 +733,24 @@ def dbt_write_argv(
 
 def lock_release_write_argv(
     pipeline: str,
-    interval_start: str,
+    interval_start: str | None = None,
     interval_end: str | None = None,
     *,
     lake_path: str | None = None,
+    dataset_id: str | None = None,
 ) -> list[str]:
     argv = [
         "lock-release",
         "-p",
         _norm_pipeline(pipeline),
-        "-s",
-        _require_interval(interval_start),
         "--force",
     ]
-    end = _norm_interval(interval_end)
-    if end:
-        argv.extend(["-e", end])
-    # --lake-path selects which lake's lease gets deleted.
+    if dataset_id:
+        argv.extend(["--dataset-id", str(dataset_id).strip()])
+    else:
+        argv.extend(["-s", _require_interval(interval_start or "")])
+        end = _norm_interval(interval_end)
+        if end:
+            argv.extend(["-e", end])
     argv.extend(_lake_argv(lake_path))
     return argv

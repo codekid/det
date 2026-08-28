@@ -145,7 +145,7 @@ _BOUND_PARAMS: dict[str, frozenset[str]] = {
         {"lake_path", "pipeline", "project", "location", "connection", "skip_ops", "apply"}
     ),
     "lock-release": frozenset(
-        {"pipeline", "interval_start", "interval_end", "force", "lake_path"}
+        {"pipeline", "interval_start", "interval_end", "dataset_id", "force", "lake_path"}
     ),
 }
 
