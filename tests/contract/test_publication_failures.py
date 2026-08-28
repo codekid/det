@@ -156,7 +156,7 @@ def test_crash_after_bronze_before_validation_stamp(
 
     with (
         patch(
-            "det.runtime.runner.stamp_validation_success",
+            "det.runtime.bronze_land.stamp_validation_success",
             side_effect=RuntimeError("validation stamp crashed"),
         ),
         pytest.raises(RuntimeError, match="validation stamp crashed"),
