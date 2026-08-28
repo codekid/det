@@ -299,4 +299,9 @@ def test_ingestion_library_dlt_deprecated_warning(tmp_path: Path):
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
     findings = check_pipeline_config(path, project_root=tmp_path)
     assert not has_errors(findings)
-    assert any(f.code == "ingestion_library_dlt_deprecated" for f in findings)
+    deprecated = [f for f in findings if f.code == "ingestion_library_dlt_deprecated"]
+    assert len(deprecated) == 1
+    assert deprecated[0].detail == (
+        "ingestion.library: dlt is deprecated; use ingestion.library: det instead "
+        "(the dlt alias will be removed in a future release)"
+    )

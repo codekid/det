@@ -175,7 +175,7 @@ def check_pipeline_config(
                 pipeline=pipeline_id,
                 path=_rel(config_path, root),
                 detail=(
-                    "ingestion.library: dlt is deprecated; use library: det instead "
+                    "ingestion.library: dlt is deprecated; use ingestion.library: det instead "
                     "(the dlt alias will be removed in a future release)"
                 ),
             )
