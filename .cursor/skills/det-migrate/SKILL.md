@@ -35,6 +35,7 @@ CLI after the user confirms. Install: `uv pip install -e ".[mcp]"`.
   `lake_layout` (current hive/SQL contract; missing ⇒ `1`). See
   `docs/lake-layout.md` for the layout 1 changelog and what bumps each field.
   Bump `wire_version` for payload breaks only — do not use it to rename hive keys.
+- Contract triangle (schema vs dbt catalog vs analytics): [docs/contract-triangle.md](../../docs/contract-triangle.md).
 - Optional filter: `det migrate … --wire-version N` / MCP
   `migrate_dry_run(..., wire_version=N)` — edge case for mixed trees only.
 

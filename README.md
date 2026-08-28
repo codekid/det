@@ -205,8 +205,9 @@ det dbt                         # full analytics project (excludes tag:ops)
 ```
 
 Scaffolded `stg_*` use `det_bronze_from`. Gold is hand-written. Nested flatten /
-relations: `dbt.stg` in pipeline YAML, then `det scaffold-dbt -p …`. More:
-[`.cursor/skills/det-dbt/SKILL.md`](.cursor/skills/det-dbt/SKILL.md).
+relations: `dbt.stg` in pipeline YAML, then `det scaffold-dbt -p …`. Contract
+triangle (schema → sources.yml → dbt.stg): [docs/contract-triangle.md](docs/contract-triangle.md).
+More: [`.cursor/skills/det-dbt/SKILL.md`](.cursor/skills/det-dbt/SKILL.md).
 
 ---
 
