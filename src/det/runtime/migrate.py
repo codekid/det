@@ -27,6 +27,12 @@ from det.runtime.ids import validate_canonical_id
 from det.runtime.lake import LakeRef
 from det.runtime.lake import relpath as lake_relpath
 from det.runtime.lease import assert_lease_held, pipeline_lease, resolve_lease_options
+from det.runtime.lease.dataset_lock import (
+    assert_dataset_lock_held,
+    dataset_exclusive_lock,
+    dataset_shared_lock,
+    refresh_dataset_lock,
+)
 from det.runtime.load_rows import CountingIter, iter_bronze_rows
 from det.runtime.manifest import (
     committed_extract_run_dirs,
@@ -94,6 +100,7 @@ class MigratePlan:
     wire_version_filter: int | None = None
     recreate_iceberg: bool = False
     will_drop_table: bool = False
+    will_take_dataset_exclusive: bool = False
     table_location: str | None = None
     yaml_partition: str | None = None
     recreate_warning: str | None = None
@@ -119,6 +126,7 @@ class MigratePlan:
             "partitions": [p.to_dict() for p in self.partitions],
             "recreate_iceberg": self.recreate_iceberg,
             "will_drop_table": self.will_drop_table,
+            "will_take_dataset_exclusive": self.will_take_dataset_exclusive,
             "table_location": self.table_location,
             "yaml_partition": self.yaml_partition,
             "recreate_warning": self.recreate_warning,
@@ -388,7 +396,8 @@ class BronzeMigrator:
                     else " latest raw extract per interval (load parity)"
                 )
                 recreate_warning = (
-                    "Will DROP the entire Iceberg bronze table at "
+                    "Will take an exclusive bronze-dataset lock, DROP the entire "
+                    "Iceberg bronze table at "
                     f"{bronze_loc}, then rewrite {scope} ({runs_note}). "
                     "Bronze data outside the rewrite set is destroyed."
                 )
@@ -412,6 +421,7 @@ class BronzeMigrator:
                     wire_version_filter=wire_version,
                     recreate_iceberg=recreate_iceberg,
                     will_drop_table=recreate_iceberg,
+                    will_take_dataset_exclusive=recreate_iceberg,
                     table_location=_rel(bronze_loc, self.project_root),
                     yaml_partition=yaml_partition,
                     recreate_warning=recreate_warning,
@@ -424,27 +434,138 @@ class BronzeMigrator:
                 from det.runtime.ids import sql_names_for_config
 
                 sql_schema, sql_table = sql_names_for_config(to_config)
-                logger.warning(
-                    "recreate_iceberg purging bronze table before migrate",
-                    table=f"{sql_schema}.{sql_table}",
-                    location=str(bronze_loc),
-                    interval_start=window_start,
-                    interval_end=window_end,
-                    all_raw=all_raw,
-                    all_raw_runs=all_raw_runs,
+                migrate_lake = lake_root(
+                    to_config.destination, self.project_root, settings=ctx_settings
                 )
-                purge_iceberg_table(
-                    lake=lake_root(
-                        to_config.destination, self.project_root, settings=ctx_settings
-                    ),
-                    table_location=bronze_loc,
-                    namespace=sql_schema,
-                    table=sql_table,
+                lease_opts = resolve_lease_options(
+                    settings=ctx_settings,
+                    pipeline=config,
+                    ttl_sec=ctx_settings.effective_lock_ttl(lock_ttl_sec),
+                    owner=ctx_settings.lock_owner,
+                    enabled=ctx_settings.locks_enabled,
+                )
+                backend = get_ingestion(ingestion_library)
+                total_rows = 0
+                written = 0
+
+                with dataset_exclusive_lock(
+                    migrate_lake,
+                    to_bronze_id,
+                    command="migrate",
+                    ttl_sec=ctx_settings.effective_lock_ttl(lock_ttl_sec),
+                    owner=ctx_settings.lock_owner,
+                    enabled=ctx_settings.locks_enabled,
+                    options=lease_opts,
+                    resolve_secret=ctx_settings.resolve_secret,
+                ) as dataset_lock:
+                    assert_dataset_lock_held(dataset_lock)
+                    logger.warning(
+                        "recreate_iceberg purging bronze table before migrate",
+                        table=f"{sql_schema}.{sql_table}",
+                        location=str(bronze_loc),
+                        interval_start=window_start,
+                        interval_end=window_end,
+                        all_raw=all_raw,
+                        all_raw_runs=all_raw_runs,
+                    )
+                    purge_iceberg_table(
+                        lake=migrate_lake,
+                        table_location=bronze_loc,
+                        namespace=sql_schema,
+                        table=sql_table,
+                    )
+                    for raw_dir in source_parts:
+                        manifest = read_manifest(raw_dir)
+                        extract_ts = extract_run_datetime_from_raw(manifest, raw_dir)
+                        start_iso = str(manifest.get("interval_start") or window_start)
+                        end_iso = str(manifest.get("interval_end") or window_end)
+                        start_iso, end_iso = resolve_interval(start_iso, end_iso)
+                        with pipeline_lease(
+                            migrate_lake,
+                            pipeline=config.name,
+                            interval_start=start_iso,
+                            interval_end=end_iso,
+                            command="migrate",
+                            ttl_sec=ctx_settings.effective_lock_ttl(lock_ttl_sec),
+                            owner=ctx_settings.lock_owner,
+                            enabled=ctx_settings.locks_enabled,
+                            options=lease_opts,
+                            resolve_secret=ctx_settings.resolve_secret,
+                        ) as lease:
+                            bronze_loaded_at = format_extract_run_datetime()
+                            stream = iter_bronze_rows(
+                                source.records_from_raw(
+                                    config=effective, raw_dir=raw_dir, manifest=manifest
+                                ),
+                                schema=schema,
+                                naming=config.bronze.naming,
+                                extract_run_datetime=extract_ts,
+                                interval_start_datetime=start_iso,
+                                interval_end_datetime=end_iso,
+                                bronze_loaded_at=bronze_loaded_at,
+                                mapper=mapper,
+                                log_every=to_config.ingestion.chunk_rows,
+                            )
+                            counted = CountingIter(stream)
+                            out_part = hive_partition_dir(
+                                bronze_dataset_dir(
+                                    to_config, self.project_root, dataset=to_bronze_id
+                                ),
+                                interval_start_datetime=start_iso,
+                                interval_end_datetime=end_iso,
+                                extract_run_datetime=extract_ts,
+                            )
+                            assert_lease_held(
+                                lease, store=None if lease is None else lease.store
+                            )
+                            assert_dataset_lock_held(dataset_lock)
+                            backend.write(
+                                counted,
+                                config=to_config,
+                                project_root=self.project_root,
+                                partition_dir=out_part,
+                                destination=to_config.destination,
+                                chunk_rows=to_config.ingestion.chunk_rows,
+                                run_identity=(start_iso, end_iso, extract_ts),
+                            )
+                            stamp_validation_success(
+                                raw_dir,
+                                schema_path=schema_rel,
+                                schema_sha256=sha256_file(schema_resolved),
+                                row_count=counted.n,
+                                wire_version=to_config.wire_version,
+                                validated_at=format_extract_run_datetime(),
+                            )
+                            total_rows += counted.n
+                            written += 1
+                            logger.info(
+                                "migrated raw partition",
+                                raw_dir=str(raw_dir),
+                                rows=counted.n,
+                                extract_run_datetime=extract_ts,
+                            )
+                        refresh_dataset_lock(dataset_lock)
+
+                return MigrateResult(
+                    from_raw=raw_name,
+                    to_bronze=to_bronze_id,
+                    partitions=written,
+                    rows=total_rows,
                 )
 
             backend = get_ingestion(ingestion_library)
             total_rows = 0
             written = 0
+            migrate_lake = lake_root(
+                config.destination, self.project_root, settings=ctx_settings
+            )
+            lease_opts = resolve_lease_options(
+                settings=ctx_settings,
+                pipeline=config,
+                ttl_sec=ctx_settings.effective_lock_ttl(lock_ttl_sec),
+                owner=ctx_settings.lock_owner,
+                enabled=ctx_settings.locks_enabled,
+            )
 
             for raw_dir in source_parts:
                 manifest = read_manifest(raw_dir)
@@ -453,9 +574,7 @@ class BronzeMigrator:
                 end_iso = str(manifest.get("interval_end") or window_end)
                 start_iso, end_iso = resolve_interval(start_iso, end_iso)
                 with pipeline_lease(
-                    lake_root(
-                        config.destination, self.project_root, settings=ctx_settings
-                    ),
+                    migrate_lake,
                     pipeline=config.name,
                     interval_start=start_iso,
                     interval_end=end_iso,
@@ -463,13 +582,7 @@ class BronzeMigrator:
                     ttl_sec=ctx_settings.effective_lock_ttl(lock_ttl_sec),
                     owner=ctx_settings.lock_owner,
                     enabled=ctx_settings.locks_enabled,
-                    options=resolve_lease_options(
-                        settings=ctx_settings,
-                        pipeline=config,
-                        ttl_sec=ctx_settings.effective_lock_ttl(lock_ttl_sec),
-                        owner=ctx_settings.lock_owner,
-                        enabled=ctx_settings.locks_enabled,
-                    ),
+                    options=lease_opts,
                     resolve_secret=ctx_settings.resolve_secret,
                 ) as lease:
                     bronze_loaded_at = format_extract_run_datetime()
@@ -495,18 +608,29 @@ class BronzeMigrator:
                         interval_end_datetime=end_iso,
                         extract_run_datetime=extract_ts,
                     )
-                    assert_lease_held(
-                        lease, store=None if lease is None else lease.store
-                    )
-                    backend.write(
-                        counted,
-                        config=to_config,
-                        project_root=self.project_root,
-                        partition_dir=out_part,
-                        destination=to_config.destination,
-                        chunk_rows=to_config.ingestion.chunk_rows,
-                        run_identity=(start_iso, end_iso, extract_ts),
-                    )
+                    with dataset_shared_lock(
+                        migrate_lake,
+                        to_bronze_id,
+                        command="migrate",
+                        ttl_sec=ctx_settings.effective_lock_ttl(lock_ttl_sec),
+                        owner=ctx_settings.lock_owner,
+                        enabled=ctx_settings.locks_enabled,
+                        options=lease_opts,
+                        resolve_secret=ctx_settings.resolve_secret,
+                    ) as dataset_lock:
+                        assert_lease_held(
+                            lease, store=None if lease is None else lease.store
+                        )
+                        assert_dataset_lock_held(dataset_lock)
+                        backend.write(
+                            counted,
+                            config=to_config,
+                            project_root=self.project_root,
+                            partition_dir=out_part,
+                            destination=to_config.destination,
+                            chunk_rows=to_config.ingestion.chunk_rows,
+                            run_identity=(start_iso, end_iso, extract_ts),
+                        )
                     stamp_validation_success(
                         raw_dir,
                         schema_path=schema_rel,
@@ -551,6 +675,7 @@ class BronzeMigrator:
         wire_version_filter: int | None = None,
         recreate_iceberg: bool = False,
         will_drop_table: bool = False,
+        will_take_dataset_exclusive: bool = False,
         table_location: str | None = None,
         yaml_partition: str | None = None,
         recreate_warning: str | None = None,
@@ -679,6 +804,7 @@ class BronzeMigrator:
             wire_version_filter=wire_version_filter,
             recreate_iceberg=recreate_iceberg,
             will_drop_table=will_drop_table,
+            will_take_dataset_exclusive=will_take_dataset_exclusive,
             table_location=table_location,
             yaml_partition=yaml_partition,
             recreate_warning=recreate_warning,

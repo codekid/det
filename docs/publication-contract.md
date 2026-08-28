@@ -98,6 +98,27 @@ under a schema hash.
   transaction itself, so a residual assert→commit race remains.
 - `DET_LOCK=0` disables leases (tests / explicit local break-glass only).
 
+### Bronze-dataset reader/writer lock
+
+- Lock identity: bronze **dataset id** (`example_api.events_v1`) at
+  `{lake}/locks/datasets/…/_lock.json` (lake CAS) or Postgres
+  `det_lease.dataset_locks` (+ shared holder rows).
+- **Shared** (many holders): brief hold around bronze publish (`load`,
+  non-recreate `migrate`, leased `prune --apply`). Parallel loads on different
+  intervals remain concurrent.
+- **Exclusive** (one holder): `migrate --recreate-iceberg` from before
+  `purge_iceberg_table` through full rebuild. Blocks new shared acquires;
+  waits for active shared holders to drain.
+- Lock ordering: acquire interval `pipeline_lease` first, then dataset shared;
+  release reverse. Recreate wraps the job in exclusive; interval leases nest
+  inside.
+- Fence: `assert_dataset_lock_held` before purge and bronze write (same
+  `LeaseFencedError` / `lease_fenced` receipt as interval leases).
+- Ops: pause pipeline during recreate; force-clear stuck exclusive with
+  `det lock-release --pipeline {pipeline} --dataset-id … --force` after confirming the worker is
+  dead. `DET_DATASET_LOCK_WAIT_SEC` caps exclusive wait for shared drain
+  (default 3600; `0` = fail fast).
+
 **Production note:** lake leases on s3/gs are strong when the store honors
 preconditions (fail closed otherwise). Prefer one writer per pipeline+interval
 (e.g. Airflow pool for capacity) and treat the lease as the identity mutex

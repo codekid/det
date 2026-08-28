@@ -291,32 +291,75 @@ def lock_show(
 def lock_release(
     ctx: typer.Context,
     pipeline: str = typer.Option(..., "--pipeline", "-p", help=_PIPELINE_HELP),
-    interval_start: str = typer.Option(..., "--interval-start", "-s"),
+    interval_start: str | None = typer.Option(
+        None, "--interval-start", "-s", help="Required unless --dataset-id"
+    ),
     interval_end: str | None = typer.Option(None, "--interval-end", "-e"),
+    dataset_id: str | None = typer.Option(
+        None,
+        "--dataset-id",
+        "--bronze-dataset",
+        help="Bronze dataset id (e.g. example_api.events_v1) for dataset RW lock",
+    ),
     force: bool = typer.Option(False, "--force", help="Required to delete a live lease"),
     lake_path: str | None = typer.Option(None, "--lake-path"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
-    """Force-delete a lease. Kill the worker first or you can dual-insert."""
+    """Force-delete an interval lease or bronze-dataset RW lock."""
     from det.destinations.models import lake_root
     from det.runtime.approval import lock_release_write_argv
     from det.runtime.config import load_pipeline_config
+    from det.runtime.ids import validate_canonical_id
     from det.runtime.lease import lock_path, open_lease_store, resolve_lease_options
+    from det.runtime.lease.dataset_lock import (
+        dataset_lock_path,
+        force_release_dataset_lock,
+    )
     from det.runtime.settings import DetSettings
 
     if not force:
         raise typer.BadParameter("--force is required to delete a lock", param_hint="--force")
+    if dataset_id is not None:
+        dataset_id = dataset_id.strip()
+        if not dataset_id:
+            raise typer.BadParameter(
+                "--dataset-id must not be empty",
+                param_hint="--dataset-id",
+            )
+        try:
+            dataset_id = validate_canonical_id(dataset_id)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--dataset-id") from exc
+    if dataset_id is None and interval_start is None:
+        raise typer.BadParameter(
+            "-s/--interval-start is required unless --dataset-id is set",
+            param_hint="-s",
+        )
+    if dataset_id is not None and (
+        interval_start is not None or interval_end is not None
+    ):
+        raise typer.BadParameter(
+            "--dataset-id cannot be combined with -s/--interval-start or "
+            "-e/--interval-end",
+            param_hint="--dataset-id",
+        )
 
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
-    start_iso, end_iso = _resolve_interval(interval_start, interval_end)
+    start_iso = end_iso = None
+    if interval_start is not None:
+        start_iso, end_iso = _resolve_interval(interval_start, interval_end)
     _gate_approval(
         root,
         "lock-release",
         lock_release_write_argv(
-            resolved.canonical_id, start_iso, end_iso, lake_path=lake_path
+            resolved.canonical_id,
+            start_iso,
+            end_iso,
+            lake_path=lake_path,
+            dataset_id=dataset_id,
         ),
         approval,
         require_approval,
@@ -328,12 +371,43 @@ def lock_release(
         settings = settings.with_overrides(lake_override=lake_path)
     options = resolve_lease_options(settings=settings, pipeline=config)
     lake = lake_root(config.destination, root, cli_lake_path=lake_path, settings=settings)
+    if dataset_id is not None:
+        held = force_release_dataset_lock(
+            lake,
+            dataset_id,
+            options=options,
+            resolve_secret=settings.resolve_secret,
+        )
+        location = (
+            str(dataset_lock_path(lake, dataset_id))
+            if options.backend == "lake"
+            else f"postgres:{options.pg_schema}.dataset_locks/{dataset_id}"
+        )
+        if held is None:
+            _consume_approval(root, approval)
+            typer.echo(f"no dataset lock location={location}")
+            return
+        ex = held.get("exclusive") or {}
+        typer.echo(
+            f"releasing dataset lock owner={ex.get('owner')} "
+            f"shared_holders={len(held.get('shared') or [])} location={location}",
+            err=True,
+        )
+        _consume_approval(root, approval)
+        typer.echo(f"OK lock-release location={location}")
+        return
+
     store = open_lease_store(lake, options, resolve_secret=settings.resolve_secret)
+    if start_iso is None:
+        raise typer.BadParameter(
+            "-s/--interval-start is required unless --dataset-id is set",
+            param_hint="-s",
+        )
     held = store.inspect(
-        pipeline=config.name, interval_start=start_iso, interval_end=end_iso
+        pipeline=config.name, interval_start=start_iso, interval_end=end_iso or start_iso
     )
     location = (
-        str(lock_path(lake, config.name, start_iso, end_iso))
+        str(lock_path(lake, config.name, start_iso, end_iso or start_iso))
         if options.backend == "lake"
         else f"postgres:{options.pg_schema}.{options.pg_table}"
     )
@@ -347,7 +421,7 @@ def lock_release(
         err=True,
     )
     store.force_release(
-        pipeline=config.name, interval_start=start_iso, interval_end=end_iso
+        pipeline=config.name, interval_start=start_iso, interval_end=end_iso or start_iso
     )
     _consume_approval(root, approval)
     typer.echo(f"OK lock-release location={location}")
@@ -366,6 +440,7 @@ def lock_init(
     from det.runtime.config import load_pipeline_config
     from det.runtime.lake import open_lake
     from det.runtime.lease import open_lease_store, resolve_lease_options
+    from det.runtime.lease.dataset_lock_postgres import PostgresDatasetLockStore
     from det.runtime.lease.postgres_store import PostgresLeaseStore
     from det.runtime.settings import DetSettings
 
@@ -385,7 +460,14 @@ def lock_init(
     if not isinstance(store, PostgresLeaseStore):
         raise typer.Exit(code=1)
     store.ensure()
+    ds_store = PostgresDatasetLockStore(
+        resolve_secret=settings.resolve_secret,
+        dsn_env=options.pg_dsn_env,
+        schema=options.pg_schema,
+    )
+    ds_store.ensure()
     typer.echo(
         f"OK lock-init backend=postgres schema={options.pg_schema} "
-        f"table={options.pg_table} mode={options.mode}"
+        f"table={options.pg_table} mode={options.mode} "
+        f"dataset_locks={ds_store.locks_table}"
     )

@@ -105,7 +105,7 @@ Every landed row includes (names stable in layout 1):
 | --- | --- |
 | `raw/` | Wire bytes + manifests |
 | `bronze/` | Typed bronze (Iceberg or JSONL) |
-| `locks/` | `(pipeline, interval)` lease files |
+| `locks/` | Interval leases `{pipeline}/{start}_{end}.json`; bronze-dataset RW `{lake}/locks/datasets/…/_lock.json` |
 | `runs/dt=YYYY-MM-DD/{pipeline}/` | Extract/load attempt receipts (JSON) |
 | `ops/` | Materialized receipt Iceberg table (`run_receipts`) for ops dbt |
 

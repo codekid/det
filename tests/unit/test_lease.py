@@ -557,7 +557,62 @@ def test_cli_lock_release_requires_force():
             pipeline="noaa.storm_events",
             interval_start="2026-08-15",
             interval_end=None,
+            dataset_id=None,
             force=False,
+            lake_path=None,
+            project_root=None,
+        )
+
+
+def test_cli_lock_release_rejects_blank_dataset_id():
+    import typer
+
+    from det.cli import lock_release
+
+    with pytest.raises(typer.BadParameter, match="must not be empty"):
+        lock_release(
+            ctx=None,
+            pipeline="example_api.events",
+            interval_start=None,
+            interval_end=None,
+            dataset_id="   ",
+            force=True,
+            lake_path=None,
+            project_root=None,
+        )
+
+
+def test_cli_lock_release_rejects_invalid_dataset_id():
+    import typer
+
+    from det.cli import lock_release
+
+    with pytest.raises(typer.BadParameter, match="canonical id"):
+        lock_release(
+            ctx=None,
+            pipeline="example_api.events",
+            interval_start=None,
+            interval_end=None,
+            dataset_id="not-valid",
+            force=True,
+            lake_path=None,
+            project_root=None,
+        )
+
+
+def test_cli_lock_release_rejects_mixed_dataset_and_interval():
+    import typer
+
+    from det.cli import lock_release
+
+    with pytest.raises(typer.BadParameter, match="cannot be combined"):
+        lock_release(
+            ctx=None,
+            pipeline="example_api.events",
+            interval_start="2026-08-15",
+            interval_end=None,
+            dataset_id="example_api.events_v1",
+            force=True,
             lake_path=None,
             project_root=None,
         )

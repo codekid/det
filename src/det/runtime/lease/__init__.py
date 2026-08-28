@@ -26,6 +26,15 @@ from det.runtime.lease._common import (
     locks_enabled,
     resolve_lock_ttl_sec,
 )
+from det.runtime.lease.dataset_lock import (
+    DatasetLockHandle,
+    assert_dataset_lock_held,
+    dataset_exclusive_lock,
+    dataset_lock_path,
+    dataset_shared_lock,
+    force_release_dataset_lock,
+    refresh_dataset_lock,
+)
 from det.runtime.lease.lake_store import LakeLeaseStore, force_release_lock, read_lock
 from det.runtime.lease.resolve import resolve_lease_options
 from det.runtime.lease.store import (
@@ -223,6 +232,13 @@ def pipeline_lease(
 
 
 __all__ = [
+    "DatasetLockHandle",
+    "assert_dataset_lock_held",
+    "dataset_exclusive_lock",
+    "dataset_lock_path",
+    "dataset_shared_lock",
+    "force_release_dataset_lock",
+    "refresh_dataset_lock",
     "DEFAULT_LOCK_BACKEND",
     "DEFAULT_LOCK_MODE",
     "DEFAULT_LOCK_PG_DSN_ENV",
