@@ -121,43 +121,55 @@ def test_shared_blocked_by_exclusive_intent_while_waiting(tmp_path: Path):
         owner="load",
     )
     waiter_started = threading.Event()
+    acquired: dict[str, object] = {}
+    waiter_err: list[BaseException] = []
 
     def take_exclusive() -> None:
         waiter_started.set()
-        store.acquire_exclusive(
-            dataset_id=dataset_id,
-            command="migrate",
-            ttl_sec=120,
-            owner="migrate",
-            wait=True,
-            wait_sec=5,
-            poll_interval=0.05,
-        )
+        try:
+            acquired["handle"] = store.acquire_exclusive(
+                dataset_id=dataset_id,
+                command="migrate",
+                ttl_sec=120,
+                owner="migrate",
+                wait=True,
+                wait_sec=5,
+                poll_interval=0.05,
+            )
+        except BaseException as exc:
+            waiter_err.append(exc)
 
     t = threading.Thread(target=take_exclusive)
     t.start()
-    assert waiter_started.wait(timeout=2)
-    path = dataset_lock_path(lake, dataset_id)
-    deadline = time.monotonic() + 2.0
-    body = None
-    while time.monotonic() < deadline:
-        body = read_dataset_lock(path)
-        if body is not None and body.get("exclusive_intent") is not None:
-            break
-        time.sleep(0.02)
-    else:
-        pytest.fail("timed out waiting for exclusive_intent to be persisted")
-    assert body is not None
-    assert body.get("exclusive_intent") is not None
-    with pytest.raises(LeaseHeldError, match="pending"):
-        store.acquire_shared(
-            dataset_id=dataset_id,
-            command="load",
-            ttl_sec=120,
-            owner="new-load",
-        )
-    store.release(shared)
-    t.join(timeout=2)
+    try:
+        assert waiter_started.wait(timeout=2)
+        path = dataset_lock_path(lake, dataset_id)
+        deadline = time.monotonic() + 2.0
+        body = None
+        while time.monotonic() < deadline:
+            body = read_dataset_lock(path)
+            if body is not None and body.get("exclusive_intent") is not None:
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail("timed out waiting for exclusive_intent to be persisted")
+        assert body is not None
+        assert body.get("exclusive_intent") is not None
+        with pytest.raises(LeaseHeldError, match="pending"):
+            store.acquire_shared(
+                dataset_id=dataset_id,
+                command="load",
+                ttl_sec=120,
+                owner="new-load",
+            )
+        store.release(shared)
+        t.join(timeout=2)
+        assert not t.is_alive(), "exclusive waiter did not finish"
+        assert not waiter_err, waiter_err
+        assert "handle" in acquired
+    finally:
+        if "handle" in acquired:
+            store.release(acquired["handle"])  # type: ignore[arg-type]
 
 
 def test_exclusive_waits_for_other_exclusive_release(tmp_path: Path):
