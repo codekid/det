@@ -129,6 +129,7 @@ def land_bronze_partition(
         raise
 
     schema_sha256 = sha256_file(params.schema_resolved)
+    assert_lease_held(pipeline_lease, store=lease_store)
     stamp_validation_success(
         params.raw_dir,
         schema_path=params.schema_path,
