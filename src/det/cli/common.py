@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 import typer
 
@@ -204,6 +206,33 @@ def _unbound_params(ctx: typer.Context | None, command: str) -> list[str]:
     return sorted(unbound)
 
 
+def _approval_failure_hint(approval_id: str) -> None:
+    """Tell operators how to find and recover a claimed approval after a failed write."""
+    typer.echo(
+        f"approval {approval_id} remains claimed; list with: "
+        "det list-approvals --status claimed",
+        err=True,
+    )
+    typer.echo(
+        f"release after worker is dead: det approval-release {approval_id} --force",
+        err=True,
+    )
+
+
+@contextmanager
+def _claimed_approval_work(
+    claimed: bool,
+    approval: str | None,
+) -> Iterator[None]:
+    """On failure after a successful claim, print recovery hints then re-raise."""
+    try:
+        yield
+    except BaseException:
+        if claimed and approval:
+            _approval_failure_hint(approval)
+        raise
+
+
 def _gate_approval(
     root: Path,
     command: str,
@@ -212,7 +241,7 @@ def _gate_approval(
     require_approval: bool,
     *,
     ctx: typer.Context | None,
-) -> None:
+) -> bool:
     """Validate and atomically claim the approval before any write happens.
 
     Claiming (rather than only checking) closes the window where two concurrent
@@ -220,6 +249,8 @@ def _gate_approval(
 
     ``ctx`` drives the unbound-flag backstop, so writing commands must declare a
     ``typer.Context`` parameter and forward it.
+
+    Returns ``True`` when an approval id was successfully claimed, else ``False``.
     """
     from det.runtime.approval import ApprovalError, claim_approval, require_approvals_enabled
 
@@ -235,7 +266,7 @@ def _gate_approval(
             )
             raise typer.Exit(code=1)
     try:
-        claim_approval(
+        rec = claim_approval(
             root,
             command,
             argv,
@@ -245,6 +276,7 @@ def _gate_approval(
     except ApprovalError as exc:
         typer.echo(f"{exc.code}: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+    return rec is not None
 
 
 def _consume_approval(root: Path, approval: str | None) -> None:

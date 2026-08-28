@@ -11,6 +11,7 @@ from det.cli.common import (
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
     _analytics_exclude,
+    _claimed_approval_work,
     _consume_approval,
     _gate_approval,
     _project_root,
@@ -77,8 +78,9 @@ def dbt_cmd(
 
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root) if pipeline is not None else None
+    claimed = False
     if not dry_run:
-        _gate_approval(
+        claimed = _gate_approval(
             root,
             "dbt",
             dbt_write_argv(
@@ -109,19 +111,20 @@ def dbt_cmd(
             typer.echo(f"WARNING: {w.message}", err=True)
 
     try:
-        result = run_dbt(
-            project_root=root,
-            command=command,  # type: ignore[arg-type]
-            project_dir=project_dir,
-            select=select or None,
-            exclude=_analytics_exclude(select or None),
-            target=target,
-            full_refresh=full_refresh,
-            lake_path=lake_path,
-            pipeline=pipe,
-            pipeline_overrides=set_ or None,
-            dry_run=dry_run,
-        )
+        with _claimed_approval_work(claimed, approval):
+            result = run_dbt(
+                project_root=root,
+                command=command,  # type: ignore[arg-type]
+                project_dir=project_dir,
+                select=select or None,
+                exclude=_analytics_exclude(select or None),
+                target=target,
+                full_refresh=full_refresh,
+                lake_path=lake_path,
+                pipeline=pipe,
+                pipeline_overrides=set_ or None,
+                dry_run=dry_run,
+            )
     except DbtNotInstalledError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc

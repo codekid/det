@@ -10,6 +10,7 @@ from det.cli.common import (
     _PIPELINE_HELP,
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
+    _claimed_approval_work,
     _consume_approval,
     _gate_approval,
     _project_root,
@@ -128,8 +129,9 @@ def init_pipeline_cmd(
             param_hint="--destination-type",
         )
     root = _project_root(project_root)
+    claimed = False
     if not dry_run:
-        _gate_approval(
+        claimed = _gate_approval(
             root,
             "init-pipeline",
             init_pipeline_write_argv(
@@ -146,17 +148,18 @@ def init_pipeline_cmd(
             ctx=ctx,
         )
     try:
-        result = init_pipeline(
-            name=name,
-            source_type=source_type,
-            project_root=root,
-            force=force,
-            dry_run=dry_run,
-            skip_dbt=skip_dbt,
-            destination_type=destination_type,
-            lake_path=lake_path,
-            connection=connection,
-        )
+        with _claimed_approval_work(claimed, approval):
+            result = init_pipeline(
+                name=name,
+                source_type=source_type,
+                project_root=root,
+                force=force,
+                dry_run=dry_run,
+                skip_dbt=skip_dbt,
+                destination_type=destination_type,
+                lake_path=lake_path,
+                connection=connection,
+            )
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -200,8 +203,9 @@ def scaffold_dbt_cmd(
 
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
+    claimed = False
     if not dry_run:
-        _gate_approval(
+        claimed = _gate_approval(
             root,
             "scaffold-dbt",
             scaffold_dbt_write_argv(resolved.canonical_id, force=force, set_=set_),
@@ -212,7 +216,8 @@ def scaffold_dbt_cmd(
     config = load_pipeline_config(resolved.path, overrides=set_)
     from det.scaffold.view_warn import collect_view_size_warnings
 
-    result = scaffold_dbt(config, project_root=root, force=force, dry_run=dry_run, warn=False)
+    with _claimed_approval_work(claimed, approval):
+        result = scaffold_dbt(config, project_root=root, force=force, dry_run=dry_run, warn=False)
     if not dry_run:
         _consume_approval(root, approval)
     mode = "DRY-RUN" if dry_run else "OK"

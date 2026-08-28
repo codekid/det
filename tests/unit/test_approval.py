@@ -712,3 +712,108 @@ def test_migrate_write_argv_all_raw_and_all_raw_runs():
     assert make_plan("migrate", argv).plan_digest != make_plan(
         "migrate", with_window
     ).plan_digest
+
+
+def test_failed_write_prints_claimed_approval_hint(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
+    pipeline = _pipe_yaml(tmp_path)
+    argv = extract_write_argv(
+        "noaa.storm_events", "2026-08-06", interval_end="2026-08-07"
+    )
+    rec = _create(tmp_path, command="extract", argv=argv, now=None)
+    approval_id = rec["id"]
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("extract failed")
+
+    monkeypatch.setattr("det.runtime.runner.PipelineRunner.extract", _boom)
+
+    result = _invoke(
+        [
+            "extract",
+            "-p",
+            str(pipeline),
+            "-s",
+            "2026-08-06",
+            "-e",
+            "2026-08-07",
+            "--approval",
+            approval_id,
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    assert result.exit_code != 0, result.output
+    err = _strip_ansi(result.output)
+    assert "list-approvals --status claimed" in err
+    assert approval_id in err
+    assert f"det approval-release {approval_id} --force" in err
+    loaded = load_approval(tmp_path, approval_id)
+    assert effective_status(loaded) == "claimed"
+
+
+def test_migrate_dry_run_failure_skips_claimed_hint(
+    tmp_path: Path, project_root: Path, monkeypatch
+):
+    import yaml
+
+    from det.runtime.runner import PipelineRunner
+
+    monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
+    pipeline = {
+        "name": "example_api.events",
+        "source": {
+            "type": "example_api.events",
+            "overrides": {
+                "fixture_records": [
+                    {
+                        "id": "e1",
+                        "occurred_at": "2026-08-06T12:00:00Z",
+                        "severity": "high",
+                        "state": "TX",
+                    }
+                ]
+            },
+        },
+        "schema": str(project_root / "schemas/example_api/events/events.schema.yaml"),
+        "ingestion": {"library": "thin"},
+        "destination": {"type": "filesystem", "path": str(tmp_path / "lake")},
+        "medallion": {"bronze_prefix": "bronze", "raw_prefix": "raw"},
+    }
+    pipe_path = tmp_path / "api.yaml"
+    pipe_path.write_text(yaml.safe_dump(pipeline), encoding="utf-8")
+    PipelineRunner(tmp_path).run(pipe_path, interval_start="2026-08-06")
+
+    argv = migrate_write_argv(
+        "example_api.events",
+        "example_api.events_level",
+        "tests/fixtures/example_api/events_level.schema.yaml",
+        "identity",
+        "2026-08-06",
+    )
+    rec = _create(tmp_path, command="migrate", argv=argv, now=None)
+    approval_id = rec["id"]
+
+    result = _invoke(
+        [
+            "migrate",
+            "-p",
+            str(pipe_path),
+            "--to-bronze",
+            "example_api.events_level",
+            "--schema",
+            str(project_root / "tests/fixtures/example_api/events_level.schema.yaml"),
+            "--mapper",
+            "identity",
+            "-s",
+            "2026-08-06",
+            "--dry-run",
+            "--approval",
+            approval_id,
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    assert result.exit_code != 0, result.output
+    err = _strip_ansi(result.output)
+    assert "list-approvals --status claimed" not in err
