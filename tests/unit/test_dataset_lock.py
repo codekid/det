@@ -12,11 +12,17 @@ from det.runtime.lease import LeaseFencedError, LeaseHeldError
 from det.runtime.lease.dataset_lock import (
     LakeDatasetLockStore,
     assert_dataset_lock_held,
+    dataset_exclusive_lock,
     dataset_lock_path,
     dataset_shared_lock,
     force_release_dataset_lock,
+    open_dataset_lock_store,
     read_dataset_lock,
+    refresh_dataset_lock,
+    release_dataset_lock,
+    resolve_dataset_lock_wait_sec,
 )
+from det.runtime.lease.dataset_lock_postgres import PostgresDatasetLockStore
 from det.runtime.lease.store import ResolvedLeaseOptions
 
 
@@ -377,3 +383,141 @@ def test_force_release_dataset_lock(tmp_path: Path):
     )
     assert payload is not None
     assert read_dataset_lock(dataset_lock_path(lake, dataset_id)) is None
+
+
+def test_refresh_and_release_shared_lock(tmp_path: Path):
+    lake = _lake(tmp_path)
+    dataset_id = "example_api.events_v1"
+    store = LakeDatasetLockStore(lake)
+    handle = store.acquire_shared(
+        dataset_id=dataset_id,
+        command="load",
+        ttl_sec=120,
+        owner="load",
+    )
+    refresh_dataset_lock(handle, store=store)
+    assert_dataset_lock_held(handle, store=store)
+    release_dataset_lock(handle, store=store)
+    assert read_dataset_lock(dataset_lock_path(lake, dataset_id)) is None
+
+
+def test_exclusive_wait_deadline_exhausted(tmp_path: Path):
+    lake = _lake(tmp_path)
+    dataset_id = "example_api.events_v1"
+    store = LakeDatasetLockStore(lake)
+    store.acquire_shared(
+        dataset_id=dataset_id,
+        command="load",
+        ttl_sec=120,
+        owner="load",
+    )
+    with pytest.raises(LeaseHeldError):
+        store.acquire_exclusive(
+            dataset_id=dataset_id,
+            command="migrate",
+            ttl_sec=120,
+            owner="migrate",
+            wait=True,
+            wait_sec=0,
+            poll_interval=0.01,
+        )
+
+
+def test_expired_exclusive_pruned_on_acquire(tmp_path: Path):
+    lake = _lake(tmp_path)
+    dataset_id = "example_api.events_v1"
+    path = dataset_lock_path(lake, dataset_id)
+    store = LakeDatasetLockStore(lake)
+    handle = store.acquire_exclusive(
+        dataset_id=dataset_id,
+        command="migrate",
+        ttl_sec=120,
+        owner="migrate",
+        wait=False,
+    )
+    past = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+    body = read_dataset_lock(path) or {}
+    ex = body.get("exclusive") or {}
+    ex["expires_at"] = past
+    body["exclusive"] = ex
+    handle.version = path.replace_if_match(
+        handle.version or path.object_version() or "",
+        __import__("json").dumps(body, indent=2, sort_keys=True).encode("utf-8"),
+    )
+    second = store.acquire_exclusive(
+        dataset_id=dataset_id,
+        command="migrate",
+        ttl_sec=120,
+        owner="migrate2",
+        wait=False,
+    )
+    store.release(second)
+
+
+def test_resolve_dataset_lock_wait_sec() -> None:
+    assert resolve_dataset_lock_wait_sec({"DET_DATASET_LOCK_WAIT_SEC": "120"}) == 120
+    assert resolve_dataset_lock_wait_sec({"DET_DATASET_LOCK_WAIT_SEC": "0"}) is None
+    with pytest.raises(ValueError, match=">= 0"):
+        resolve_dataset_lock_wait_sec({"DET_DATASET_LOCK_WAIT_SEC": "-1"})
+
+
+def test_open_dataset_lock_store_lake_and_errors(tmp_path: Path):
+    from dataclasses import replace
+
+    lake = _lake(tmp_path)
+    lake_store = open_dataset_lock_store(lake, _opts())
+    assert isinstance(lake_store, LakeDatasetLockStore)
+    pg_store = open_dataset_lock_store(
+        lake,
+        ResolvedLeaseOptions(backend="postgres"),
+        resolve_secret=lambda _n: "postgresql://example",
+    )
+    assert isinstance(pg_store, PostgresDatasetLockStore)
+    with pytest.raises(ValueError, match="resolve_secret"):
+        open_dataset_lock_store(
+            lake,
+            ResolvedLeaseOptions(backend="postgres"),
+            resolve_secret=None,
+        )
+    with pytest.raises(ValueError, match="unknown lease backend"):
+        open_dataset_lock_store(
+            lake,
+            replace(_opts(), backend="invalid"),  # type: ignore[arg-type]
+        )
+
+
+def test_postgres_dataset_lock_store_rejects_unsafe_idents() -> None:
+    from det.runtime.lease.dataset_lock_postgres import PostgresDatasetLockStore
+
+    with pytest.raises(ValueError, match="postgres dataset lock schema"):
+        PostgresDatasetLockStore(
+            resolve_secret=lambda _k: "postgres://x",
+            dsn_env="DET_LOCK_PG_DSN",
+            schema="bad-name",
+        )
+
+
+def test_nested_dataset_shared_lock_reentrant(tmp_path: Path):
+    lake = _lake(tmp_path)
+    dataset_id = "example_api.events_v1"
+    with dataset_shared_lock(
+        lake, dataset_id, command="load", options=_opts()
+    ) as outer:
+        with dataset_shared_lock(
+            lake, dataset_id, command="load", options=_opts()
+        ) as inner:
+            assert inner is outer
+
+
+def test_dataset_exclusive_lock_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setenv("DET_LOCK", "0")
+    lake = _lake(tmp_path)
+    with dataset_exclusive_lock(
+        lake,
+        "example_api.events_v1",
+        command="migrate",
+        options=_opts(enabled=False),
+    ) as handle:
+        assert handle is None
