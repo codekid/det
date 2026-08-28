@@ -20,14 +20,19 @@ from det.runtime.approval import (
     dbt_write_argv,
     effective_status,
     extract_write_argv,
+    init_pipeline_write_argv,
     list_approval_records,
     list_unused_approvals,
     load_approval,
+    load_write_argv,
+    lock_release_write_argv,
     make_plan,
     migrate_write_argv,
     plan_from_mapping,
     prune_write_argv,
     release_approval,
+    run_write_argv,
+    scaffold_dbt_write_argv,
 )
 
 NOW = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
@@ -750,6 +755,468 @@ def test_failed_write_prints_claimed_approval_hint(tmp_path: Path, monkeypatch):
     assert f"det approval-release {approval_id} --force" in err
     loaded = load_approval(tmp_path, approval_id)
     assert effective_status(loaded) == "claimed"
+
+
+def test_bound_params_encoded_in_write_argv_builders():
+    """Each _BOUND_PARAMS entry must appear in the matching write_argv builder output."""
+    from det.cli.common import _BOUND_PARAMS
+    from det.runtime.biglake_register import biglake_register_write_argv
+
+    def _diff(
+        base: list[str],
+        variant: list[str],
+        *tokens: str,
+        command: str,
+        param: str,
+    ) -> None:
+        for token in tokens:
+            assert token in variant, f"expected {token!r} in argv for {command}/{param}"
+        assert variant != base, f"{command}.{param} must change argv vs baseline"
+
+    for command, bound in _BOUND_PARAMS.items():
+        if command == "extract":
+            base = extract_write_argv("noaa.storm_events", "2026-08-06")
+            checks = {
+                "pipeline": (
+                    extract_write_argv("example_api.events", "2026-08-06"),
+                    ("example_api.events",),
+                ),
+                "interval_start": (
+                    extract_write_argv("noaa.storm_events", "2026-09-01"),
+                    ("2026-09-01T00:00:00+00:00",),
+                ),
+                "interval_end": (
+                    extract_write_argv(
+                        "noaa.storm_events", "2026-08-06", interval_end="2026-08-07"
+                    ),
+                    ("-e", "2026-08-07T00:00:00+00:00"),
+                ),
+                "lake_path": (
+                    extract_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_path="/tmp/lake"
+                    ),
+                    ("--lake-path", "/tmp/lake"),
+                ),
+                "set_": (
+                    extract_write_argv(
+                        "noaa.storm_events", "2026-08-06", set_=["destination.path=/x"]
+                    ),
+                    ("--set", "destination.path=/x"),
+                ),
+            }
+        elif command == "load":
+            base = load_write_argv("noaa.storm_events", "2026-08-06")
+            checks = {
+                "pipeline": (
+                    load_write_argv("example_api.events", "2026-08-06"),
+                    ("example_api.events",),
+                ),
+                "interval_start": (
+                    load_write_argv("noaa.storm_events", "2026-09-01"),
+                    ("2026-09-01T00:00:00+00:00",),
+                ),
+                "interval_end": (
+                    load_write_argv(
+                        "noaa.storm_events", "2026-08-06", interval_end="2026-08-07"
+                    ),
+                    ("-e",),
+                ),
+                "extract_run_datetime": (
+                    load_write_argv(
+                        "noaa.storm_events",
+                        "2026-08-06",
+                        extract_run_datetime="2026-08-06T12:00:00Z",
+                    ),
+                    ("--extract-run-datetime", "2026-08-06T12:00:00Z"),
+                ),
+                "lake_path": (
+                    load_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_path="/tmp/lake"
+                    ),
+                    ("--lake-path",),
+                ),
+                "set_": (
+                    load_write_argv(
+                        "noaa.storm_events", "2026-08-06", set_=["x=y"]
+                    ),
+                    ("--set",),
+                ),
+            }
+        elif command == "run":
+            base = run_write_argv("noaa.storm_events", "2026-08-06")
+            checks = {
+                "pipeline": (
+                    run_write_argv("example_api.events", "2026-08-06"),
+                    ("example_api.events",),
+                ),
+                "interval_start": (
+                    run_write_argv("noaa.storm_events", "2026-09-01"),
+                    ("2026-09-01T00:00:00+00:00",),
+                ),
+                "interval_end": (
+                    run_write_argv(
+                        "noaa.storm_events", "2026-08-06", interval_end="2026-08-07"
+                    ),
+                    ("-e",),
+                ),
+                "lake_path": (
+                    run_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_path="/tmp/lake"
+                    ),
+                    ("--lake-path",),
+                ),
+                "set_": (
+                    run_write_argv(
+                        "noaa.storm_events", "2026-08-06", set_=["x=y"]
+                    ),
+                    ("--set",),
+                ),
+            }
+        elif command == "migrate":
+            base = migrate_write_argv(
+                "example_api.events",
+                "example_api.events_v1",
+                "schemas/example_api/events/events.schema.yaml",
+                "identity",
+                "2026-08-06",
+            )
+            checks = {
+                "pipeline": (
+                    migrate_write_argv(
+                        "noaa.storm_events",
+                        "example_api.events_v1",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "identity",
+                        "2026-08-06",
+                    ),
+                    ("noaa.storm_events",),
+                ),
+                "to_bronze": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v2",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "identity",
+                        "2026-08-06",
+                    ),
+                    ("example_api.events_v2",),
+                ),
+                "schema": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v1",
+                        "schemas/other/schema.yaml",
+                        "identity",
+                        "2026-08-06",
+                    ),
+                    ("schemas/other/schema.yaml",),
+                ),
+                "mapper": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v1",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "example_api_v1_to_v2",
+                        "2026-08-06",
+                    ),
+                    ("example_api_v1_to_v2",),
+                ),
+                "interval_start": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v1",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "identity",
+                        "2026-09-01",
+                    ),
+                    ("2026-09-01T00:00:00+00:00",),
+                ),
+                "interval_end": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v1",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "identity",
+                        "2026-08-06",
+                        interval_end="2026-08-07",
+                    ),
+                    ("-e",),
+                ),
+                "from_raw": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v1",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "identity",
+                        "2026-08-06",
+                        from_raw="example_api.events_v0",
+                    ),
+                    ("--from-raw", "example_api.events_v0"),
+                ),
+                "wire_version": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v1",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "identity",
+                        "2026-08-06",
+                        wire_version=2,
+                    ),
+                    ("--wire-version", "2"),
+                ),
+                "recreate_iceberg": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v1",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "identity",
+                        "2026-08-06",
+                        recreate_iceberg=True,
+                    ),
+                    ("--recreate-iceberg",),
+                ),
+                "all_raw": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v1",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "identity",
+                        None,
+                        recreate_iceberg=True,
+                        all_raw=True,
+                    ),
+                    ("--all-raw",),
+                ),
+                "all_raw_runs": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v1",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "identity",
+                        "2026-08-06",
+                        all_raw_runs=True,
+                    ),
+                    ("--all-raw-runs",),
+                ),
+                "ingestion": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v1",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "identity",
+                        "2026-08-06",
+                        ingestion="thin",
+                    ),
+                    ("--ingestion", "thin"),
+                ),
+                "lake_path": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v1",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "identity",
+                        "2026-08-06",
+                        lake_path="/tmp/lake",
+                    ),
+                    ("--lake-path",),
+                ),
+                "set_": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v1",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "identity",
+                        "2026-08-06",
+                        set_=["x=y"],
+                    ),
+                    ("--set",),
+                ),
+            }
+        elif command == "prune":
+            base = prune_write_argv("noaa.storm_events", "2026-08-06")
+            checks = {
+                "pipeline": (
+                    prune_write_argv("example_api.events", "2026-08-06"),
+                    ("example_api.events",),
+                ),
+                "interval_start": (
+                    prune_write_argv("noaa.storm_events", "2026-09-01"),
+                    ("2026-09-01T00:00:00+00:00",),
+                ),
+                "interval_end": (
+                    prune_write_argv(
+                        "noaa.storm_events", "2026-08-06", interval_end="2026-08-07"
+                    ),
+                    ("-e",),
+                ),
+                "keep": (prune_write_argv("noaa.storm_events", "2026-08-06", keep=3), ("3",)),
+                "apply": (base, ("--apply",)),  # implicit: always present
+                "set_": (
+                    prune_write_argv(
+                        "noaa.storm_events", "2026-08-06", set_=["x=y"]
+                    ),
+                    ("--set",),
+                ),
+            }
+        elif command == "dbt":
+            base = dbt_write_argv("noaa.storm_events")
+            checks = {
+                "pipeline": (
+                    dbt_write_argv("example_api.events"),
+                    ("example_api.events",),
+                ),
+                "select": (
+                    dbt_write_argv("noaa.storm_events", select=["tag:ops"]),
+                    ("--select", "tag:ops"),
+                ),
+                "command": (
+                    dbt_write_argv("noaa.storm_events", command="test"),
+                    ("--command", "test"),
+                ),
+                "full_refresh": (
+                    dbt_write_argv("noaa.storm_events", full_refresh=True),
+                    ("--full-refresh",),
+                ),
+                "target": (
+                    dbt_write_argv("noaa.storm_events", target="prod"),
+                    ("--target", "prod"),
+                ),
+                "lake_path": (
+                    dbt_write_argv("noaa.storm_events", lake_path="/tmp/lake"),
+                    ("--lake-path",),
+                ),
+                "set_": (
+                    dbt_write_argv("noaa.storm_events", set_=["x=y"]),
+                    ("--set",),
+                ),
+            }
+        elif command == "scaffold-dbt":
+            base = scaffold_dbt_write_argv("noaa.storm_events")
+            checks = {
+                "pipeline": (
+                    scaffold_dbt_write_argv("example_api.events"),
+                    ("example_api.events",),
+                ),
+                "force": (
+                    scaffold_dbt_write_argv("noaa.storm_events", force=True),
+                    ("--force",),
+                ),
+                "set_": (
+                    scaffold_dbt_write_argv("noaa.storm_events", set_=["x=y"]),
+                    ("--set",),
+                ),
+            }
+        elif command == "init-pipeline":
+            base = init_pipeline_write_argv("acme.widgets", "acme.widgets")
+            checks = {
+                "name": (
+                    init_pipeline_write_argv("other.source", "acme.widgets"),
+                    ("other.source",),
+                ),
+                "source_type": (
+                    init_pipeline_write_argv("acme.widgets", "noaa.storm_events"),
+                    ("noaa.storm_events",),
+                ),
+                "destination_type": (
+                    init_pipeline_write_argv(
+                        "acme.widgets", "acme.widgets", destination_type="filesystem"
+                    ),
+                    ("--destination-type", "filesystem"),
+                ),
+                "connection": (
+                    init_pipeline_write_argv(
+                        "acme.widgets", "acme.widgets", connection="DET_POSTGRES_DSN"
+                    ),
+                    ("--connection", "DET_POSTGRES_DSN"),
+                ),
+                "lake_path": (
+                    init_pipeline_write_argv(
+                        "acme.widgets", "acme.widgets", lake_path="/tmp/lake"
+                    ),
+                    ("--lake-path",),
+                ),
+                "skip_dbt": (
+                    init_pipeline_write_argv(
+                        "acme.widgets", "acme.widgets", skip_dbt=True
+                    ),
+                    ("--skip-dbt",),
+                ),
+                "force": (
+                    init_pipeline_write_argv("acme.widgets", "acme.widgets", force=True),
+                    ("--force",),
+                ),
+            }
+        elif command == "biglake-register":
+            base = biglake_register_write_argv()
+            checks = {
+                "lake_path": (
+                    biglake_register_write_argv(lake_path="gs://bucket/lake"),
+                    ("--lake-path", "gs://bucket/lake"),
+                ),
+                "pipeline": (
+                    biglake_register_write_argv(pipeline="noaa.storm_events"),
+                    ("--pipeline", "noaa.storm_events"),
+                ),
+                "project": (
+                    biglake_register_write_argv(project="my-gcp-project"),
+                    ("--project", "my-gcp-project"),
+                ),
+                "location": (
+                    biglake_register_write_argv(location="US"),
+                    ("--location", "US"),
+                ),
+                "connection": (
+                    biglake_register_write_argv(connection="us.my-connection"),
+                    ("--connection", "us.my-connection"),
+                ),
+                "skip_ops": (
+                    biglake_register_write_argv(skip_ops=True),
+                    ("--skip-ops",),
+                ),
+                "apply": (base, ("--apply",)),  # implicit: always present
+            }
+        elif command == "lock-release":
+            base = lock_release_write_argv("noaa.storm_events", "2026-08-06")
+            checks = {
+                "pipeline": (
+                    lock_release_write_argv("example_api.events", "2026-08-06"),
+                    ("example_api.events",),
+                ),
+                "interval_start": (
+                    lock_release_write_argv("noaa.storm_events", "2026-09-01"),
+                    ("2026-09-01T00:00:00+00:00",),
+                ),
+                "interval_end": (
+                    lock_release_write_argv(
+                        "noaa.storm_events", "2026-08-06", interval_end="2026-08-07"
+                    ),
+                    ("-e",),
+                ),
+                "dataset_id": (
+                    lock_release_write_argv(
+                        "noaa.storm_events",
+                        dataset_id="example_api.events_v1",
+                    ),
+                    ("--dataset-id", "example_api.events_v1"),
+                ),
+                "force": (base, ("--force",)),  # implicit: always present
+                "lake_path": (
+                    lock_release_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_path="/tmp/lake"
+                    ),
+                    ("--lake-path",),
+                ),
+            }
+        else:
+            raise AssertionError(f"unhandled gated command {command!r}")
+
+        assert set(checks) == bound, f"{command}: update checks for {bound - set(checks)}"
+        for param, (variant, tokens) in checks.items():
+            if param in {"apply", "force"} and variant == base:
+                for token in tokens:
+                    assert token in base
+                continue
+            _diff(base, variant, *tokens, command=command, param=param)
 
 
 def test_migrate_dry_run_failure_skips_claimed_hint(
