@@ -38,6 +38,7 @@ from det.runtime.manifest import (
     extract_run_datetime_from_raw,
     read_manifest,
 )
+from det.runtime.manifest_types import ManifestPayload
 from det.runtime.meta import (
     format_extract_run_datetime,
     resolve_interval,
@@ -215,7 +216,7 @@ class BronzeMigrator:
         self,
         *,
         raw_dir: Path | LakeRef,
-        manifest: dict[str, Any],
+        manifest: ManifestPayload,
         source: Any,
         effective: dict[str, Any],
         to_config: PipelineConfig,

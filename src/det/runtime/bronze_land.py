@@ -17,6 +17,7 @@ from det.runtime.lease import Lease, LeaseStore, assert_lease_held
 from det.runtime.lease.dataset_lock import DatasetLockHandle, assert_dataset_lock_held
 from det.runtime.load_rows import CountingIter, iter_bronze_rows
 from det.runtime.manifest import LakePath, sha256_file, stamp_validation_success
+from det.runtime.manifest_types import ManifestPayload
 from det.runtime.meta import format_extract_run_datetime
 from det.sources.base import SourcePlugin
 
@@ -26,7 +27,7 @@ logger = get_logger(__name__)
 @dataclass(frozen=True)
 class BronzeLandParams:
     raw_dir: LakePath
-    manifest: dict[str, Any]
+    manifest: ManifestPayload
     effective_config: Any
     bronze_config: PipelineConfig
     schema: dict[str, Any]

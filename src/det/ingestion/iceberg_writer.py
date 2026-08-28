@@ -18,7 +18,6 @@ from det.ingestion.sql_replace import (
     resolve_run_identity,
 )
 from det.logging import get_logger
-from det.optional_deps import pip_extra_hint
 from det.runtime.config import IcebergPartition
 from det.runtime.lake import LakeRef
 from det.runtime.meta import identity_iso
@@ -34,7 +33,7 @@ logger = get_logger(__name__)
 _START = "__interval_start_datetime"
 _END = "__interval_end_datetime"
 _RUN = "__extract_run_datetime"
-_ICEBERG_HINT = pip_extra_hint("iceberg")
+_ICEBERG_HINT = "pip install 'det[iceberg]'"
 
 
 def _require_iceberg() -> None:
