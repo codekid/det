@@ -9,7 +9,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from det.logging import get_logger
 from det.runtime.ids import fs_dataset_parts, validate_canonical_id
@@ -479,8 +479,8 @@ class LakeDatasetLockStore:
         return payload
 
 
-class DatasetLockStore:
-    """Protocol-shaped store for bronze dataset RW locks."""
+class DatasetLockStore(Protocol):
+    """Store protocol for bronze dataset RW locks."""
 
     def acquire_shared(
         self,

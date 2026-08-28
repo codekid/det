@@ -94,9 +94,12 @@ class PostgresDatasetLockStore:
         with psycopg.connect(dsn) as conn:
             with conn.cursor() as cur:
                 k1, k2 = _ensure_ddl_lock_keys(self.schema, self.locks_table)
-                cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (k1, k2))
-                cur.execute(f"CREATE SCHEMA IF NOT EXISTS {quote_ident(self.schema)}")
-                cur.execute(
+                self._exec(cur, "SELECT pg_advisory_xact_lock(%s, %s)", (k1, k2))
+                self._exec(
+                    cur, f"CREATE SCHEMA IF NOT EXISTS {quote_ident(self.schema)}"
+                )
+                self._exec(
+                    cur,
                     f"""
                     CREATE TABLE IF NOT EXISTS {self._locks_qual} (
                         dataset_id TEXT PRIMARY KEY,
@@ -106,9 +109,10 @@ class PostgresDatasetLockStore:
                         exclusive_expires_at TIMESTAMPTZ,
                         exclusive_ttl_sec INTEGER
                     )
-                    """
+                    """,
                 )
-                cur.execute(
+                self._exec(
+                    cur,
                     f"""
                     CREATE TABLE IF NOT EXISTS {self._shared_qual} (
                         dataset_id TEXT NOT NULL,
@@ -122,7 +126,7 @@ class PostgresDatasetLockStore:
                           REFERENCES {self._locks_qual}(dataset_id)
                           ON DELETE CASCADE
                     )
-                    """
+                    """,
                 )
             conn.commit()
         self._ensured = True
