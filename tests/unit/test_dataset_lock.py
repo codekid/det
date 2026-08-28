@@ -110,6 +110,48 @@ def test_exclusive_blocks_shared_and_waits_for_drain(tmp_path: Path):
     store.release(acquired["handle"])  # type: ignore[arg-type]
 
 
+def test_shared_blocked_by_exclusive_intent_while_waiting(tmp_path: Path):
+    lake = _lake(tmp_path)
+    dataset_id = "example_api.events_v1"
+    store = LakeDatasetLockStore(lake)
+    shared = store.acquire_shared(
+        dataset_id=dataset_id,
+        command="load",
+        ttl_sec=120,
+        owner="load",
+    )
+    waiter_started = threading.Event()
+
+    def take_exclusive() -> None:
+        waiter_started.set()
+        store.acquire_exclusive(
+            dataset_id=dataset_id,
+            command="migrate",
+            ttl_sec=120,
+            owner="migrate",
+            wait=True,
+            wait_sec=5,
+            poll_interval=0.05,
+        )
+
+    t = threading.Thread(target=take_exclusive)
+    t.start()
+    assert waiter_started.wait(timeout=2)
+    time.sleep(0.15)
+    body = read_dataset_lock(dataset_lock_path(lake, dataset_id))
+    assert body is not None
+    assert body.get("exclusive_intent") is not None
+    with pytest.raises(LeaseHeldError, match="pending"):
+        store.acquire_shared(
+            dataset_id=dataset_id,
+            command="load",
+            ttl_sec=120,
+            owner="new-load",
+        )
+    store.release(shared)
+    t.join(timeout=2)
+
+
 def test_exclusive_waits_for_other_exclusive_release(tmp_path: Path):
     lake = _lake(tmp_path)
     dataset_id = "example_api.events_v1"
@@ -507,6 +549,36 @@ def test_nested_dataset_shared_lock_reentrant(tmp_path: Path):
             lake, dataset_id, command="load", options=_opts()
         ) as inner:
             assert inner is outer
+
+
+def test_exclusive_raises_when_same_dataset_already_held(tmp_path: Path):
+    lake = _lake(tmp_path)
+    dataset_id = "example_api.events_v1"
+    with dataset_shared_lock(lake, dataset_id, command="load", options=_opts()):
+        with pytest.raises(LeaseHeldError, match="already held in-process"):
+            with dataset_exclusive_lock(
+                lake,
+                dataset_id,
+                command="migrate",
+                options=_opts(),
+                wait=False,
+            ):
+                pass
+
+
+def test_exclusive_allowed_for_different_dataset_while_one_held(tmp_path: Path):
+    lake = _lake(tmp_path)
+    with dataset_shared_lock(
+        lake, "example_api.events_v1", command="load", options=_opts()
+    ):
+        with dataset_exclusive_lock(
+            lake,
+            "example_api.orders_v1",
+            command="migrate",
+            options=_opts(),
+            wait=False,
+        ) as handle:
+            assert handle is not None
 
 
 def test_dataset_exclusive_lock_disabled(

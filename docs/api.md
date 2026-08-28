@@ -190,7 +190,6 @@ Default backend is lake files with strong CAS on s3/gs; set
 Long extracts: raise TTL via `--lock-ttl-sec` / `DET_LOCK_TTL_SEC` / DagRun
 `lock_ttl_sec`. Exclusive recreate waits for shared bronze publishers to finish
 (`DET_DATASET_LOCK_WAIT_SEC`, default 3600).
-`lock_ttl_sec`.
 
 ### Unsupported (v1)
 

@@ -107,10 +107,27 @@ class PostgresDatasetLockStore:
                         exclusive_owner TEXT,
                         exclusive_command TEXT,
                         exclusive_expires_at TIMESTAMPTZ,
-                        exclusive_ttl_sec INTEGER
+                        exclusive_ttl_sec INTEGER,
+                        exclusive_intent_token TEXT,
+                        exclusive_intent_owner TEXT,
+                        exclusive_intent_command TEXT,
+                        exclusive_intent_expires_at TIMESTAMPTZ,
+                        exclusive_intent_ttl_sec INTEGER
                     )
                     """,
                 )
+                for col, col_type in (
+                    ("exclusive_intent_token", "TEXT"),
+                    ("exclusive_intent_owner", "TEXT"),
+                    ("exclusive_intent_command", "TEXT"),
+                    ("exclusive_intent_expires_at", "TIMESTAMPTZ"),
+                    ("exclusive_intent_ttl_sec", "INTEGER"),
+                ):
+                    self._exec(
+                        cur,
+                        f"ALTER TABLE {self._locks_qual} "
+                        f"ADD COLUMN IF NOT EXISTS {col} {col_type}",
+                    )
                 self._exec(
                     cur,
                     f"""
@@ -167,22 +184,56 @@ class PostgresDatasetLockStore:
             """,
             (dataset_id,),
         )
+        self._exec(
+            cur,
+            f"""
+            UPDATE {self._locks_qual}
+               SET exclusive_intent_token = NULL,
+                   exclusive_intent_owner = NULL,
+                   exclusive_intent_command = NULL,
+                   exclusive_intent_expires_at = NULL,
+                   exclusive_intent_ttl_sec = NULL
+             WHERE dataset_id = %s
+               AND exclusive_intent_expires_at IS NOT NULL
+               AND exclusive_intent_expires_at <= NOW()
+            """,
+            (dataset_id,),
+        )
 
     def _load_body(self, cur: Any, dataset_id: str) -> dict[str, Any]:
         self._exec(
             cur,
             f"""
             SELECT exclusive_token, exclusive_owner, exclusive_command,
-                   exclusive_expires_at, exclusive_ttl_sec
+                   exclusive_expires_at, exclusive_ttl_sec,
+                   exclusive_intent_token, exclusive_intent_owner,
+                   exclusive_intent_command, exclusive_intent_expires_at,
+                   exclusive_intent_ttl_sec
               FROM {self._locks_qual}
              WHERE dataset_id = %s
             """,
             (dataset_id,),
         )
         row = cur.fetchone()
-        body: dict[str, Any] = {"dataset_id": dataset_id, "exclusive": None, "shared": []}
+        body: dict[str, Any] = {
+            "dataset_id": dataset_id,
+            "exclusive": None,
+            "exclusive_intent": None,
+            "shared": [],
+        }
         if row is not None:
-            token, owner, command, expires_at, ttl_sec = row
+            (
+                token,
+                owner,
+                command,
+                expires_at,
+                ttl_sec,
+                intent_token,
+                intent_owner,
+                intent_command,
+                intent_expires_at,
+                intent_ttl_sec,
+            ) = row
             if token and expires_at and expires_at > datetime.now(UTC):
                 body["exclusive"] = {
                     "token": token,
@@ -190,6 +241,18 @@ class PostgresDatasetLockStore:
                     "command": command,
                     "expires_at": expires_at.isoformat(),
                     "ttl_sec": ttl_sec,
+                }
+            if (
+                intent_token
+                and intent_expires_at
+                and intent_expires_at > datetime.now(UTC)
+            ):
+                body["exclusive_intent"] = {
+                    "token": intent_token,
+                    "owner": intent_owner,
+                    "command": intent_command,
+                    "expires_at": intent_expires_at.isoformat(),
+                    "ttl_sec": intent_ttl_sec,
                 }
         self._exec(
             cur,
@@ -242,7 +305,7 @@ class PostgresDatasetLockStore:
                 self._ensure_row(cur, cid)
                 self._prune_expired(cur, cid)
                 body = self._load_body(cur, cid)
-                if body.get("exclusive"):
+                if body.get("exclusive") or body.get("exclusive_intent"):
                     raise LeaseHeldError(
                         _dataset_held_message(location, body),
                         payload=dict(body),
@@ -302,7 +365,29 @@ class PostgresDatasetLockStore:
                     self._prune_expired(cur, cid)
                     body = self._load_body(cur, cid)
                     if body.get("shared"):
-                        conn.rollback()
+                        if wait:
+                            intent_expires = _as_dt(expires_at_iso(ttl_sec))
+                            self._exec(
+                                cur,
+                                f"""
+                                UPDATE {self._locks_qual}
+                                   SET exclusive_intent_token = %s,
+                                       exclusive_intent_owner = %s,
+                                       exclusive_intent_command = %s,
+                                       exclusive_intent_expires_at = %s,
+                                       exclusive_intent_ttl_sec = %s
+                                 WHERE dataset_id = %s
+                                """,
+                                (
+                                    token,
+                                    owner,
+                                    command,
+                                    intent_expires,
+                                    ttl_sec,
+                                    cid,
+                                ),
+                            )
+                            conn.commit()
                     elif body.get("exclusive"):
                         raise LeaseHeldError(
                             _dataset_held_message(location, body),
@@ -317,7 +402,12 @@ class PostgresDatasetLockStore:
                                    exclusive_owner = %s,
                                    exclusive_command = %s,
                                    exclusive_expires_at = %s,
-                                   exclusive_ttl_sec = %s
+                                   exclusive_ttl_sec = %s,
+                                   exclusive_intent_token = NULL,
+                                   exclusive_intent_owner = NULL,
+                                   exclusive_intent_command = NULL,
+                                   exclusive_intent_expires_at = NULL,
+                                   exclusive_intent_ttl_sec = NULL
                              WHERE dataset_id = %s
                             """,
                             (token, owner, command, expires, ttl_sec, cid),
@@ -491,7 +581,11 @@ class PostgresDatasetLockStore:
             with conn.cursor() as cur:
                 self._prune_expired(cur, cid)
                 body = self._load_body(cur, cid)
-        if not body.get("exclusive") and not body.get("shared"):
+        if (
+            not body.get("exclusive")
+            and not body.get("exclusive_intent")
+            and not body.get("shared")
+        ):
             return None
         return body
 
@@ -500,7 +594,11 @@ class PostgresDatasetLockStore:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 body = self._load_body(cur, cid)
-                if body.get("exclusive") is None and not body.get("shared"):
+                if (
+                    body.get("exclusive") is None
+                    and not body.get("shared")
+                    and body.get("exclusive_intent") is None
+                ):
                     return None
                 self._exec(
                     cur,

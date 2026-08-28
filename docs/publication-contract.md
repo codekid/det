@@ -115,7 +115,7 @@ under a schema hash.
 - Fence: `assert_dataset_lock_held` before purge and bronze write (same
   `LeaseFencedError` / `lease_fenced` receipt as interval leases).
 - Ops: pause pipeline during recreate; force-clear stuck exclusive with
-  `det lock-release --dataset-id … --force` after confirming the worker is
+  `det lock-release --pipeline {pipeline} --dataset-id … --force` after confirming the worker is
   dead. `DET_DATASET_LOCK_WAIT_SEC` caps exclusive wait for shared drain
   (default 3600; `0` = fail fast).
 

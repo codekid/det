@@ -79,7 +79,12 @@ def resolve_dataset_lock_wait_sec(
 
 
 def _empty_body(dataset_id: str) -> dict[str, Any]:
-    return {"dataset_id": dataset_id, "exclusive": None, "shared": []}
+    return {
+        "dataset_id": dataset_id,
+        "exclusive": None,
+        "exclusive_intent": None,
+        "shared": [],
+    }
 
 
 def _holder(*, token: str, owner: str, command: str, ttl_sec: int) -> dict[str, Any]:
@@ -96,6 +101,9 @@ def _prune_body(body: dict[str, Any]) -> None:
     ex = body.get("exclusive")
     if isinstance(ex, dict) and is_expired(ex):
         body["exclusive"] = None
+    intent = body.get("exclusive_intent")
+    if isinstance(intent, dict) and is_expired(intent):
+        body["exclusive_intent"] = None
     shared = body.get("shared")
     if not isinstance(shared, list):
         body["shared"] = []
@@ -121,6 +129,13 @@ def _live_exclusive(body: Mapping[str, Any]) -> dict[str, Any] | None:
     return ex
 
 
+def _live_exclusive_intent(body: Mapping[str, Any]) -> dict[str, Any] | None:
+    intent = body.get("exclusive_intent")
+    if not isinstance(intent, dict) or is_expired(intent):
+        return None
+    return intent
+
+
 def _serialize(body: dict[str, Any]) -> bytes:
     return json.dumps(body, indent=2, sort_keys=True).encode("utf-8")
 
@@ -133,6 +148,13 @@ def _dataset_held_message(location: str, body: Mapping[str, Any]) -> str:
         return (
             f"dataset exclusive lock held by {owner} until {expires} at {location}; "
             f"after the worker is dead: det lock-release --dataset-id … --force"
+        )
+    intent = _live_exclusive_intent(body)
+    if intent is not None:
+        owner = intent.get("owner") or "unknown"
+        expires = intent.get("expires_at") or "unknown"
+        return (
+            f"dataset exclusive lock pending by {owner} until {expires} at {location}"
         )
     count = len(_live_shared(body))
     return f"dataset lock busy ({count} shared holder(s)) at {location}"
@@ -184,7 +206,7 @@ class LakeDatasetLockStore:
             exists = path.exists()
             body = _load_body_for_acquire(path, dataset_id, exists=exists)
             _prune_body(body)
-            if _live_exclusive(body) is not None:
+            if _live_exclusive(body) is not None or _live_exclusive_intent(body) is not None:
                 raise LeaseHeldError(
                     _dataset_held_message(str(path), body),
                     payload=dict(body),
@@ -252,12 +274,33 @@ class LakeDatasetLockStore:
                 exists = path.exists()
                 body = _load_body_for_acquire(path, dataset_id, exists=exists)
                 _prune_body(body)
-                if _live_shared(body) or _live_exclusive(body) is not None:
+                if _live_exclusive(body) is not None:
+                    break
+                if _live_shared(body):
+                    if wait:
+                        body["exclusive_intent"] = _holder(
+                            token=token,
+                            owner=owner,
+                            command=command,
+                            ttl_sec=ttl_sec,
+                        )
+                        raw = _serialize(body)
+                        version = path.object_version() if exists else None
+                        try:
+                            if not exists:
+                                path.create_exclusive(raw)
+                            elif version is not None:
+                                path.replace_if_match(version, raw)
+                            else:
+                                continue
+                        except (FileExistsError, ObjectVersionConflict):
+                            continue
                     break
                 body["exclusive"] = _holder(
                     token=token, owner=owner, command=command, ttl_sec=ttl_sec
                 )
                 body["shared"] = []
+                body["exclusive_intent"] = None
                 raw = _serialize(body)
                 version = path.object_version() if exists else None
                 try:
@@ -339,6 +382,7 @@ class LakeDatasetLockStore:
             try:
                 handle.version = path.replace_if_match(handle.version, raw)
             except ObjectVersionConflict:
+                handle.version = path.object_version()
                 continue
             return
 
@@ -431,7 +475,11 @@ class LakeDatasetLockStore:
             if not changed:
                 return
             version = handle.version or path.object_version()
-            if not body.get("exclusive") and not _live_shared(body):
+            if (
+                not _live_exclusive(body)
+                and not _live_shared(body)
+                and not _live_exclusive_intent(body)
+            ):
                 if version is None:
                     return
                 if path.delete_if_match(version):
@@ -461,7 +509,11 @@ class LakeDatasetLockStore:
         if body is None:
             return None
         _prune_body(body)
-        if not _live_exclusive(body) and not _live_shared(body):
+        if (
+            not _live_exclusive(body)
+            and not _live_shared(body)
+            and not _live_exclusive_intent(body)
+        ):
             return None
         return body
 
@@ -558,9 +610,8 @@ def _resolve_opts(
         opts = replace(opts, ttl_sec=ttl_sec)
     if owner is not None:
         opts = replace(opts, owner=owner)
-    if env is not None and not opts.enabled:
-        if locks_enabled(env):
-            opts = replace(opts, enabled=True)
+    if enabled is None and env is not None:
+        opts = replace(opts, enabled=locks_enabled(env))
     return opts
 
 
@@ -733,6 +784,11 @@ def dataset_exclusive_lock(
     )
     who = owner or opts.owner or default_lock_owner(env)
     cid = validate_canonical_id(dataset_id)
+    if _DATASET_HELD.get() == cid:
+        raise LeaseHeldError(
+            f"dataset lock already held in-process for {cid}",
+            payload={"dataset_id": cid},
+        )
     store = open_dataset_lock_store(lake, opts, resolve_secret=resolve_secret)
     if wait_sec is None:
         wait_sec = resolve_dataset_lock_wait_sec(env)

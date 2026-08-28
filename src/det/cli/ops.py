@@ -320,6 +320,13 @@ def lock_release(
 
     if not force:
         raise typer.BadParameter("--force is required to delete a lock", param_hint="--force")
+    if dataset_id is not None:
+        dataset_id = dataset_id.strip()
+        if not dataset_id:
+            raise typer.BadParameter(
+                "--dataset-id must not be empty",
+                param_hint="--dataset-id",
+            )
     if dataset_id is None and interval_start is None:
         raise typer.BadParameter(
             "-s/--interval-start is required unless --dataset-id is set",
