@@ -311,8 +311,8 @@ def lock_release(
     from det.destinations.models import lake_root
     from det.runtime.approval import lock_release_write_argv
     from det.runtime.config import load_pipeline_config
-    from det.runtime.lease import lock_path, open_lease_store, resolve_lease_options
     from det.runtime.ids import validate_canonical_id
+    from det.runtime.lease import lock_path, open_lease_store, resolve_lease_options
     from det.runtime.lease.dataset_lock import (
         dataset_lock_path,
         force_release_dataset_lock,
