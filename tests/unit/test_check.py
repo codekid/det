@@ -290,3 +290,13 @@ def test_lake_cloud_experimental_warning(tmp_path: Path, monkeypatch):
     assert not has_errors(findings)
     assert has_warnings(findings)
     assert any(f.code == "lake_cloud_experimental" for f in findings)
+
+
+def test_ingestion_library_dlt_deprecated_warning(tmp_path: Path):
+    path = _write_pipeline(tmp_path)
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["ingestion"] = {"library": "dlt"}
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    findings = check_pipeline_config(path, project_root=tmp_path)
+    assert not has_errors(findings)
+    assert any(f.code == "ingestion_library_dlt_deprecated" for f in findings)
