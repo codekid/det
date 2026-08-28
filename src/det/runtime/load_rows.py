@@ -38,6 +38,7 @@ def iter_bronze_rows(
     bronze_loaded_at: str,
     mapper: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     log_every: int = 10_000,
+    on_progress: Callable[[int], None] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """
     One-pass coerce → validate → attach_meta. Fail-closed on the first bad row.
@@ -57,6 +58,8 @@ def iter_bronze_rows(
         n += 1
         if n == 1 or (log_every >= 1 and n % log_every == 0):
             logger.info("bronze row progress", rows=n)
+            if on_progress is not None:
+                on_progress(n)
         row = attach_meta(
             typed,
             filename=source_row.filename,

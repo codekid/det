@@ -436,7 +436,11 @@ def test_runner_fence_blocks_write_after_steal(
                 "name": "example_api.events",
                 "source": {
                     "type": "example_api.events",
-                    "overrides": {"fixture_records": [{"id": "e1"}]},
+                    "overrides": {
+                        "fixture_records": [
+                            {"id": "e1", "occurred_at": "2026-08-06T12:00:00+00:00"}
+                        ],
+                    },
                 },
                 "schema": "schemas/example_api/events/events.schema.yaml",
                 "destination": {"type": "filesystem", "path": str(tmp_path / "lake")},
@@ -467,7 +471,7 @@ def test_runner_fence_blocks_write_after_steal(
     def boom(lease, *, store=None):  # noqa: ANN001
         raise LeaseFencedError("injected fence")
 
-    monkeypatch.setattr("det.runtime.runner.assert_lease_held", boom)
+    monkeypatch.setattr("det.runtime.bronze_land.assert_lease_held", boom)
     with pytest.raises(LeaseFencedError, match="injected fence"):
         runner.load(
             pipe,

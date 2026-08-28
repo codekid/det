@@ -136,6 +136,17 @@ def refresh_lease(lease: Lease | None, *, store: LeaseStore | None = None) -> No
         LakeLeaseStore(lease.path).refresh(lease)
 
 
+def refresh_bronze_locks(
+    *,
+    pipeline_lease: Lease | None,
+    dataset_lock: DatasetLockHandle | None,
+    lease_store: LeaseStore | None = None,
+) -> None:
+    """Extend pipeline interval lease and bronze dataset lock TTL during long writes."""
+    refresh_lease(pipeline_lease, store=lease_store)
+    refresh_dataset_lock(dataset_lock)
+
+
 def assert_lease_held(lease: Lease | None, *, store: LeaseStore | None = None) -> None:
     """Fail closed if this handle no longer owns the live lease (pre-publish fence)."""
     if lease is None or not lease.token:
@@ -238,6 +249,7 @@ __all__ = [
     "dataset_lock_path",
     "dataset_shared_lock",
     "force_release_dataset_lock",
+    "refresh_bronze_locks",
     "refresh_dataset_lock",
     "DEFAULT_LOCK_BACKEND",
     "DEFAULT_LOCK_MODE",

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -23,6 +23,7 @@ class IngestionBackend(Protocol):
         destination: DestinationConfig,
         chunk_rows: int = 10_000,
         run_identity: tuple[str, str, str] | None = None,
+        on_chunk: Callable[[], None] | None = None,
     ) -> LakePath:
         """
         Persist records into the bronze hive partition (replace semantics).
