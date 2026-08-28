@@ -353,6 +353,12 @@ def lock_release(
     start_iso = end_iso = None
     if interval_start is not None:
         start_iso, end_iso = _resolve_interval(interval_start, interval_end)
+    config = load_pipeline_config(resolved.path)
+    settings = DetSettings.from_env(project_root=root)
+    if lake_path is not None:
+        settings = settings.with_overrides(lake_override=lake_path)
+    options = resolve_lease_options(settings=settings, pipeline=config)
+    lake = lake_root(config.destination, root, cli_lake_path=lake_path, settings=settings)
     claimed = _gate_approval(
         root,
         "lock-release",
@@ -367,12 +373,6 @@ def lock_release(
         require_approval,
         ctx=ctx,
     )
-    config = load_pipeline_config(resolved.path)
-    settings = DetSettings.from_env(project_root=root)
-    if lake_path is not None:
-        settings = settings.with_overrides(lake_override=lake_path)
-    options = resolve_lease_options(settings=settings, pipeline=config)
-    lake = lake_root(config.destination, root, cli_lake_path=lake_path, settings=settings)
     with _claimed_approval_work(claimed, approval):
         if dataset_id is not None:
             held = force_release_dataset_lock(

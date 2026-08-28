@@ -125,6 +125,8 @@ def dbt_cmd(
                 pipeline_overrides=set_ or None,
                 dry_run=dry_run,
             )
+            if not dry_run and result.returncode != 0:
+                raise typer.Exit(code=result.returncode)
     except DbtNotInstalledError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -141,8 +143,6 @@ def dbt_cmd(
         typer.echo(f"  DET_BRONZE_SOURCE={result.bronze_source}")
     if dry_run:
         return
-    if result.returncode != 0:
-        raise typer.Exit(code=result.returncode)
     _consume_approval(root, approval)
     typer.echo(f"OK dbt finished exit={result.returncode}")
 

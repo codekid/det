@@ -203,6 +203,7 @@ def scaffold_dbt_cmd(
 
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
+    config = load_pipeline_config(resolved.path, overrides=set_)
     claimed = False
     if not dry_run:
         claimed = _gate_approval(
@@ -213,7 +214,6 @@ def scaffold_dbt_cmd(
             require_approval,
             ctx=ctx,
         )
-    config = load_pipeline_config(resolved.path, overrides=set_)
     from det.scaffold.view_warn import collect_view_size_warnings
 
     with _claimed_approval_work(claimed, approval):

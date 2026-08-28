@@ -113,6 +113,11 @@ def migrate_bronze(
         start, end = _resolve_interval(interval_start, interval_end)
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
+    if validate_limit is not None and not dry_run:
+        raise typer.BadParameter(
+            "--validate-limit requires --dry-run",
+            param_hint="--validate-limit",
+        )
     claimed = False
     if not dry_run:
         claimed = _gate_approval(
@@ -137,11 +142,6 @@ def migrate_bronze(
             approval,
             require_approval,
             ctx=ctx,
-        )
-    if validate_limit is not None and not dry_run:
-        raise typer.BadParameter(
-            "--validate-limit requires --dry-run",
-            param_hint="--validate-limit",
         )
     try:
         with _claimed_approval_work(claimed, approval):
