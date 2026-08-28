@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import gzip
 from pathlib import Path
 
@@ -8,7 +9,6 @@ import requests
 import yaml
 
 from det.errors import DetPluginError
-from det.optional_deps import pip_extra_hint
 from det.runtime.lake import (
     DEFAULT_LAKE_REL,
     ENV_LAKE_MODE,
@@ -79,27 +79,47 @@ def test_open_lake_local_does_not_use_uri_path(tmp_path: Path):
 
 def test_open_s3_without_extra_hints_install(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv(ENV_LAKE_MODE, "cloud")
+    real_import = builtins.__import__
 
-    def fail(extra: str):
-        raise ImportError(
-            f"Object lake {extra} requires the optional extra: {pip_extra_hint(extra)}"
-        )
+    def fake_import(
+        name: str,
+        globals=None,
+        locals=None,
+        fromlist=(),
+        level: int = 0,
+    ):
+        if name.split(".", 1)[0] == "s3fs":
+            raise ImportError("No module named 's3fs'")
+        return real_import(name, globals, locals, fromlist, level)
 
-    monkeypatch.setattr("det.runtime.lake._import_fsspec", fail)
-    with pytest.raises(ImportError, match=r"det-elt\[s3\]"):
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(
+        ImportError,
+        match=r"Object lake s3 requires the optional extra: pip install 'det-elt\[s3\]'",
+    ):
         open_lake("s3://bucket/prefix", Path("/tmp"))
 
 
 def test_open_gcs_without_extra_hints_install(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv(ENV_LAKE_MODE, "cloud")
+    real_import = builtins.__import__
 
-    def fail(extra: str):
-        raise ImportError(
-            f"Object lake {extra} requires the optional extra: {pip_extra_hint(extra)}"
-        )
+    def fake_import(
+        name: str,
+        globals=None,
+        locals=None,
+        fromlist=(),
+        level: int = 0,
+    ):
+        if name.split(".", 1)[0] == "gcsfs":
+            raise ImportError("No module named 'gcsfs'")
+        return real_import(name, globals, locals, fromlist, level)
 
-    monkeypatch.setattr("det.runtime.lake._import_fsspec", fail)
-    with pytest.raises(ImportError, match=r"det-elt\[gcs\]"):
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(
+        ImportError,
+        match=r"Object lake gcs requires the optional extra: pip install 'det-elt\[gcs\]'",
+    ):
         open_lake("gs://bucket/prefix", Path("/tmp"))
 
 

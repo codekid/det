@@ -13,6 +13,7 @@ on:
     types: [published]
 
 permissions:
+  contents: read
   id-token: write
 
 jobs:
@@ -20,9 +21,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
+          activate-environment: true
       - name: Build sdist and wheel
         run: |
           uv pip install build
