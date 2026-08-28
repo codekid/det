@@ -40,20 +40,20 @@ def hide_modules(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 def test_require_duckdb_hint(hide_modules: None) -> None:
-    with pytest.raises(ImportError, match=r"det\[duckdb\]"):
+    with pytest.raises(ImportError, match=r"pip install 'det-elt\[duckdb\]'"):
         optional_deps.require_duckdb()
 
 
 def test_require_jinja2_hint(hide_modules: None) -> None:
-    with pytest.raises(ImportError, match=r"det\[scaffold\]"):
+    with pytest.raises(ImportError, match=r"pip install 'det-elt\[scaffold\]'"):
         optional_deps.require_jinja2()
 
 
 def test_require_dlt_rest_hint(hide_modules: None) -> None:
-    with pytest.raises(ImportError, match=r"det\[examples\]"):
+    with pytest.raises(ImportError, match=r"pip install 'det-elt\[examples\]'"):
         optional_deps.require_dlt_rest()
 
 
 def test_require_beautifulsoup_hint(hide_modules: None) -> None:
-    with pytest.raises(ImportError, match=r"det\[examples\]"):
+    with pytest.raises(ImportError, match=r"pip install 'det-elt\[examples\]'"):
         optional_deps.require_beautifulsoup()
