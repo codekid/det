@@ -15,16 +15,38 @@ from det.runtime.discovery import (
 )
 from det.sources.base import SourcePlugin
 
-# Test/process-wide injection via register_source() (not tied to a project root).
+# Test/process-wide injection via register_source/register_mapper (not project-local).
 _GLOBAL_ROOT_KEY = ""
 _SOURCE_REGISTRY: dict[tuple[str, str], Callable[[], SourcePlugin]] = {}
 _INGESTION_REGISTRY: dict[str, Callable[[], IngestionBackend]] = {}
-_MAPPER_REGISTRY: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
+_MAPPER_REGISTRY: dict[tuple[str, str], Callable[[dict[str, Any]], dict[str, Any]]] = {}
 _MAPPERS_SCANNED: set[str] = set()
 
 
 def _root_key(project_root: Path | None) -> str:
     return str(resolve_discovery_root(project_root))
+
+
+def _mapper_key(name: str, root_key: str) -> tuple[str, str]:
+    return (name, root_key)
+
+
+def _resolve_mapper(
+    name: str,
+    root_key: str,
+) -> Callable[[dict[str, Any]], dict[str, Any]] | None:
+    fn = _MAPPER_REGISTRY.get(_mapper_key(name, root_key))
+    if fn is not None:
+        return fn
+    return _MAPPER_REGISTRY.get(_mapper_key(name, _GLOBAL_ROOT_KEY))
+
+
+def _mapper_names_for_root(root_key: str) -> list[str]:
+    names: set[str] = set()
+    for mapper_name, mapper_root in _MAPPER_REGISTRY:
+        if mapper_root == root_key or mapper_root == _GLOBAL_ROOT_KEY:
+            names.add(mapper_name)
+    return sorted(names)
 
 
 def clear_registries() -> None:
@@ -53,11 +75,19 @@ def register_ingestion(name: str, factory: Callable[[], IngestionBackend]) -> No
     _INGESTION_REGISTRY[name] = factory
 
 
-def register_mapper(name: str, fn: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
-    existing = _MAPPER_REGISTRY.get(name)
+def register_mapper(
+    name: str,
+    fn: Callable[[dict[str, Any]], dict[str, Any]],
+    *,
+    project_root: Path | None = None,
+) -> None:
+    """Register a mapper globally (``project_root`` omitted) or for one project root."""
+    root_key = _root_key(project_root) if project_root is not None else _GLOBAL_ROOT_KEY
+    key = _mapper_key(name, root_key)
+    existing = _MAPPER_REGISTRY.get(key)
     if existing is not None and existing is not fn:
         raise PluginLoadError(f"duplicate mapper {name!r}")
-    _MAPPER_REGISTRY[name] = fn
+    _MAPPER_REGISTRY[key] = fn
 
 
 def _ensure_source_factory(
@@ -107,12 +137,12 @@ def _ensure_mappers(*, project_root: Path | None = None) -> None:
     root_key = _root_key(project_root)
     if root_key in _MAPPERS_SCANNED:
         return
-    if "identity" not in _MAPPER_REGISTRY:
+    if _resolve_mapper("identity", root_key) is None:
         from det.runtime.mappers import identity_mapper
 
         register_mapper("identity", identity_mapper)
     for mapper_name, fn in iter_discovered_mappers(project_root=project_root):
-        register_mapper(mapper_name, fn)
+        register_mapper(mapper_name, fn, project_root=project_root)
     _MAPPERS_SCANNED.add(root_key)
 
 
@@ -122,12 +152,13 @@ def get_mapper(
     project_root: Path | None = None,
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
     _ensure_mappers(project_root=project_root)
-    try:
-        return _MAPPER_REGISTRY[name]
-    except KeyError as exc:
+    root_key = _root_key(project_root)
+    fn = _resolve_mapper(name, root_key)
+    if fn is None:
         raise DetNotFoundError(
-            f"Unknown mapper '{name}'. Available: {sorted(_MAPPER_REGISTRY)}"
-        ) from exc
+            f"Unknown mapper '{name}'. Available: {_mapper_names_for_root(root_key)}"
+        )
+    return fn
 
 
 def list_sources(*, project_root: Path | None = None) -> list[str]:
@@ -136,14 +167,18 @@ def list_sources(*, project_root: Path | None = None) -> list[str]:
 
 def list_mappers(*, project_root: Path | None = None) -> list[str]:
     _ensure_mappers(project_root=project_root)
-    return sorted(_MAPPER_REGISTRY)
+    return _mapper_names_for_root(_root_key(project_root))
 
 
 def describe_mappers(*, project_root: Path | None = None) -> list[tuple[str, str]]:
     """Registered mappers paired with the first line of their docstring."""
     _ensure_mappers(project_root=project_root)
+    root_key = _root_key(project_root)
     described: list[tuple[str, str]] = []
-    for name in sorted(_MAPPER_REGISTRY):
-        doc = (_MAPPER_REGISTRY[name].__doc__ or "").strip()
+    for name in _mapper_names_for_root(root_key):
+        fn = _resolve_mapper(name, root_key)
+        if fn is None:
+            continue
+        doc = (fn.__doc__ or "").strip()
         described.append((name, doc.splitlines()[0].strip() if doc else ""))
     return described

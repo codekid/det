@@ -12,7 +12,7 @@ from det.runtime.discovery import (
     discovered_source_ids,
     project_source_map,
 )
-from det.runtime.registry import clear_registries, get_source, list_sources
+from det.runtime.registry import clear_registries, get_mapper, get_source, list_sources
 from det.runtime.runner import PipelineRunner
 from det.scaffold.init_source import init_source
 
@@ -22,11 +22,24 @@ def _write_project_plugin(
     plugin_id: str = "acme.widgets",
     *,
     fixture_payload: str = "x",
+    mapper_marker: str | None = None,
 ) -> Path:
     provider, source = plugin_id.split(".", 1)
     path = root / "sources" / provider / f"{source}.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     class_name = "AcmeWidgetsSource"
+    mapper_block = ""
+    if mapper_marker is not None:
+        mapper_block = f'''
+
+from det.sources.base import mapper
+
+@mapper("acme.shared_mapper")
+def acme_shared_mapper(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    out["_marker"] = "{mapper_marker}"
+    return out
+'''
     path.write_text(
         f'''\
 from pathlib import Path
@@ -36,7 +49,7 @@ from det.runtime.lake import LakeRef
 from det.sources.base import Interval, SourceRow
 from det.sources.http_json import dig, nest_under_path, write_json_page
 import json
-
+{mapper_block}
 class {class_name}:
     name = "{plugin_id}"
 
@@ -95,6 +108,18 @@ def test_get_source_cache_isolated_per_project_root(tmp_path: Path) -> None:
     plugin_b = get_source("acme.widgets", project_root=root_b)
     assert plugin_a.defaults()["fixture_records"][0]["payload"] == "from-a"
     assert plugin_b.defaults()["fixture_records"][0]["payload"] == "from-b"
+
+
+def test_get_mapper_cache_isolated_per_project_root(tmp_path: Path) -> None:
+    root_a = tmp_path / "a"
+    root_b = tmp_path / "b"
+    _write_project_plugin(root_a, mapper_marker="from-a")
+    _write_project_plugin(root_b, mapper_marker="from-b")
+    clear_registries()
+    mapper_a = get_mapper("acme.shared_mapper", project_root=root_a)
+    mapper_b = get_mapper("acme.shared_mapper", project_root=root_b)
+    assert mapper_a({"id": 1})["_marker"] == "from-a"
+    assert mapper_b({"id": 1})["_marker"] == "from-b"
 
 
 def test_project_source_collides_with_in_tree(tmp_path: Path) -> None:

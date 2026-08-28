@@ -32,10 +32,10 @@ def _restore_plugin_snapshot(snapshot: dict[str, ModuleType]) -> None:
     evict_in_tree_plugin_modules()
     bind_in_tree_plugin_modules(snapshot)
     reg._SOURCE_REGISTRY.clear()
-    identity = reg._MAPPER_REGISTRY.get("identity")
+    identity = reg._MAPPER_REGISTRY.get(("identity", reg._GLOBAL_ROOT_KEY))
     reg._MAPPER_REGISTRY.clear()
     if identity is not None:
-        reg._MAPPER_REGISTRY["identity"] = identity
+        reg._MAPPER_REGISTRY[("identity", reg._GLOBAL_ROOT_KEY)] = identity
     reg._MAPPERS_SCANNED.clear()
 
 
