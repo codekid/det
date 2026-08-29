@@ -1,0 +1,86 @@
+version: 2
+
+models:
+  - name: stg_det__run_receipts
+    description: >
+      Attempt-level extract/load receipts from Iceberg ops.run_receipts
+      (det runs-materialize). JSON under {lake}/runs/ remains the attempt log;
+      this model is the warehouse projection. Grain is one row per attempt_id.
+    config:
+      meta:
+        grain: [attempt_id]
+        warehouse: ops
+    columns:
+      - name: receipt_version
+        description: Receipt schema version from the JSON body
+      - name: attempt_id
+        description: Unique attempt id (hex)
+      - name: attempt_date
+        description: UTC date of started_at (partition key)
+      - name: pipeline
+        description: Canonical pipeline id
+      - name: command
+        description: extract or load
+      - name: interval_start
+        description: Data interval start (ISO)
+      - name: interval_end
+        description: Data interval end exclusive (ISO)
+      - name: extract_run_datetime
+        description: Extract run clock when applicable
+      - name: wire_version
+        description: Wire / bronze era
+      - name: status
+        description: ok or error
+      - name: started_at
+        description: Attempt start (UTC)
+      - name: finished_at
+        description: Attempt end (UTC)
+      - name: duration_ms
+        description: Wall duration in milliseconds
+      - name: owner
+        description: DET_LOCK_OWNER / Airflow DagRun owner
+      - name: destination
+        description: Destination type only (never a DSN)
+      - name: artifacts
+        description: Artifact count when recorded
+      - name: raw_bytes
+        description: Sum of artifact bytes when recorded
+      - name: rows
+        description: Rows written when recorded
+      - name: schema_sha256
+        description: Schema fingerprint when recorded
+      - name: error_code
+        description: Stable error code on failure
+      - name: error_class
+        description: Exception class name on failure
+      - name: error_message
+        description: Truncated, secret-scrubbed message on failure
+  - name: det__ops_run_daily
+    description: >
+      Fleet daily rollup of extract/load attempts (attempts, ok, error, p50/p95
+      duration, rows) by attempt_date, pipeline, and command. Use Cube cube_load
+      on run_daily for metrics. p50_ms / p95_ms are already daily quantiles —
+      do not re-sum them across days.
+    config:
+      meta:
+        grain: [attempt_date, pipeline, command]
+        warehouse: ops
+    columns:
+      - name: attempt_date
+        description: UTC date of the attempt (grain).
+      - name: pipeline
+        description: Canonical pipeline id.
+      - name: command
+        description: extract or load.
+      - name: attempts
+        description: Attempt count that day.
+      - name: ok
+        description: Successful attempts that day.
+      - name: error
+        description: Failed attempts that day.
+      - name: p50_ms
+        description: Median duration_ms that day (already a quantile; use avg in Cube).
+      - name: p95_ms
+        description: p95 duration_ms that day (already a quantile; use avg in Cube).
+      - name: rows
+        description: Sum of receipt row counts that day.

@@ -232,3 +232,51 @@ def scaffold_dbt_cmd(
     for w in collect_view_size_warnings(config, project_root=root):
         typer.echo(f"WARNING: {w.message}", err=True)
 
+
+@app.command("scaffold-ops")
+def scaffold_ops_cmd(
+    ctx: typer.Context,
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite existing ops models, tests, and macros",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print actions without writing files",
+    ),
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+    approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
+) -> None:
+    """Emit ops dbt models/tests/macros + SLO seed (after det runs-materialize)."""
+    from det.runtime.approval import scaffold_ops_write_argv
+    from det.scaffold.ops import scaffold_ops
+
+    root = _project_root(project_root)
+    claimed = False
+    if not dry_run:
+        claimed = _gate_approval(
+            root,
+            "scaffold-ops",
+            scaffold_ops_write_argv(force=force),
+            approval,
+            require_approval,
+            ctx=ctx,
+        )
+
+    with _claimed_approval_work(claimed, approval):
+        result = scaffold_ops(project_root=root, force=force, dry_run=dry_run)
+        if not dry_run:
+            _consume_approval(root, approval)
+    mode = "DRY-RUN" if dry_run else "OK"
+    typer.echo(f"{mode} scaffold-ops dataset={result.dataset}")
+    for action in result.actions:
+        rel = action.path
+        try:
+            rel = action.path.relative_to(root)
+        except ValueError:
+            pass
+        typer.echo(f"  {action.action}: {rel}" + (f" ({action.detail})" if action.detail else ""))
+

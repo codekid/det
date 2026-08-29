@@ -24,6 +24,7 @@ ALLOWED_MCP_TOOLS: frozenset[str] = frozenset(
         "prune_dry_run",
         "dbt_dry_run",
         "scaffold_dbt_dry_run",
+        "scaffold_ops_dry_run",
         "init_pipeline_dry_run",
         "diff_partitions",
         "sample_raw",
@@ -62,6 +63,7 @@ WRITING_CLI_COMMANDS: frozenset[str] = frozenset(
         "prune",
         "init-pipeline",
         "scaffold-dbt",
+        "scaffold-ops",
         "dbt",
         "biglake-register",
         "lock-release",
@@ -73,6 +75,7 @@ SCENARIO_REQUIRED_MCP: dict[str, tuple[str, ...]] = {
     "ops_run": ("list_runs", "summarize_runs"),
     "migrate": ("migrate_dry_run", "mapper_from_diff_dry_run"),
     "prune": ("prune_dry_run",),
+    "scaffold_ops": ("scaffold_ops_dry_run",),
     "biglake": ("biglake_register_dry_run",),
     "fleet_metrics": ("cube_load", "cube_meta"),
     "gold_metrics": ("cube_load", "cube_meta"),
@@ -172,7 +175,7 @@ def is_writing_cli(argv: Sequence[str]) -> bool:
         return "--dry-run" not in cmd
     if name == "prune":
         return "--apply" in cmd
-    if name in {"init-pipeline", "scaffold-dbt"}:
+    if name in {"init-pipeline", "scaffold-dbt", "scaffold-ops"}:
         return "--dry-run" not in cmd
     return True
 

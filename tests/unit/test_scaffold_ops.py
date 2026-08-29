@@ -1,0 +1,109 @@
+"""Tests for det scaffold-ops (embedder ops dbt slice)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import yaml
+from typer.testing import CliRunner
+
+from det.cli import app
+from det.mcp.tools import scaffold_ops_dry_run
+from det.scaffold.ops import iter_ops_template_pairs, scaffold_ops
+
+
+def test_ops_templates_match_monorepo_canonical():
+    for label, canonical, template in iter_ops_template_pairs():
+        assert canonical.is_file(), f"missing canonical {label}"
+        assert template.is_file(), f"missing template for {label}"
+        assert canonical.read_text(encoding="utf-8") == template.read_text(
+            encoding="utf-8"
+        ), f"drift between {label} and packaged template"
+
+
+def test_scaffold_ops_dry_run_and_write(tmp_path: Path):
+    preview = scaffold_ops(project_root=tmp_path, dry_run=True)
+    assert preview.dataset == "ops"
+    assert any(a.action == "would_write" for a in preview.actions)
+    assert not (tmp_path / "dbt" / "models" / "ops" / "sources.yml").exists()
+
+    result = scaffold_ops(project_root=tmp_path, dry_run=False)
+    assert result.dataset == "ops"
+    assert (tmp_path / "dbt" / "models" / "ops" / "stg_det__run_receipts.sql").is_file()
+    assert (tmp_path / "dbt" / "models" / "ops" / "det__ops_run_daily.sql").is_file()
+    assert (tmp_path / "dbt" / "tests" / "ops" / "assert_ops_slo_recency.sql").is_file()
+    assert (tmp_path / "dbt" / "macros" / "generate_schema_name.sql").is_file()
+    assert (tmp_path / "dbt" / "macros" / "det_sql_compat.sql").is_file()
+    assert (tmp_path / "dbt" / "seeds" / "ops_slo_expected.csv").is_file()
+
+    project = yaml.safe_load((tmp_path / "dbt" / "dbt_project.yml").read_text(encoding="utf-8"))
+    assert project["models"]["analytics"]["ops"]["+schema"] == "ops"
+    assert "ops_slo_expected" in project["seeds"]["analytics"]
+
+    profiles = yaml.safe_load((tmp_path / "dbt" / "profiles.yml").read_text(encoding="utf-8"))
+    assert profiles["analytics"]["outputs"]["ops"]["type"] == "duckdb"
+
+
+def test_scaffold_ops_skips_existing_without_force(tmp_path: Path):
+    scaffold_ops(project_root=tmp_path, dry_run=False)
+    stg = tmp_path / "dbt" / "models" / "ops" / "stg_det__run_receipts.sql"
+    stg.write_text("-- custom\n", encoding="utf-8")
+
+    again = scaffold_ops(project_root=tmp_path, force=False, dry_run=False)
+    assert stg.read_text(encoding="utf-8") == "-- custom\n"
+    assert any(
+        a.action == "skip" and a.path == stg.resolve() for a in again.actions
+    )
+
+    forced = scaffold_ops(project_root=tmp_path, force=True, dry_run=False)
+    text = stg.read_text(encoding="utf-8")
+    assert "config(tags=['ops'])" in text
+    assert "source('det_ops', 'run_receipts')" in text
+    assert any(a.action == "write" and a.path == stg.resolve() for a in forced.actions)
+
+
+def test_scaffold_ops_merges_existing_profiles(tmp_path: Path):
+    dbt = tmp_path / "dbt"
+    dbt.mkdir(parents=True)
+    (dbt / "profiles.yml").write_text(
+        yaml.safe_dump(
+            {
+                "analytics": {
+                    "target": "duckdb",
+                    "outputs": {
+                        "duckdb": {
+                            "type": "duckdb",
+                            "path": "/custom/analytics.duckdb",
+                            "schema": "main",
+                        }
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    scaffold_ops(project_root=tmp_path, dry_run=False)
+    profiles = yaml.safe_load((dbt / "profiles.yml").read_text(encoding="utf-8"))
+    assert profiles["analytics"]["outputs"]["duckdb"]["path"] == "/custom/analytics.duckdb"
+    assert "ops" in profiles["analytics"]["outputs"]
+
+
+def test_scaffold_ops_cli_dry_run(tmp_path: Path):
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["scaffold-ops", "--dry-run", "--project-root", str(tmp_path)],
+    )
+    assert result.exit_code == 0, result.output
+    assert "DRY-RUN scaffold-ops" in result.output
+    assert not (tmp_path / "dbt" / "models" / "ops").exists()
+
+
+def test_scaffold_ops_mcp_dry_run(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("DET_PROJECT_ROOT", str(tmp_path))
+    out = scaffold_ops_dry_run(root=tmp_path)
+    assert out["dry_run"] is True
+    assert out["dataset"] == "ops"
+    assert out["approval_plan"]["command"] == "scaffold-ops"
+    assert out["approval_plan"]["argv"][0] == "scaffold-ops"
+    assert any(a["action"] == "would_write" for a in out["actions"])

@@ -33,6 +33,7 @@ from det.runtime.approval import (
     release_approval,
     run_write_argv,
     scaffold_dbt_write_argv,
+    scaffold_ops_write_argv,
 )
 
 NOW = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
@@ -1136,6 +1137,14 @@ def test_bound_params_encoded_in_write_argv_builders():
                 "set_": (
                     scaffold_dbt_write_argv("noaa.storm_events", set_=["x=y"]),
                     ("--set",),
+                ),
+            }
+        elif command == "scaffold-ops":
+            base = scaffold_ops_write_argv()
+            checks = {
+                "force": (
+                    scaffold_ops_write_argv(force=True),
+                    ("--force",),
                 ),
             }
         elif command == "init-pipeline":

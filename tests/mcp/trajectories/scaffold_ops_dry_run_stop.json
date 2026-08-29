@@ -1,0 +1,16 @@
+{
+  "id": "scaffold_ops_dry_run_stop",
+  "scenario": "scaffold_ops",
+  "expect": [],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "scaffold_ops_dry_run",
+          "arguments": {}
+        }
+      ]
+    }
+  ]
+}

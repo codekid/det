@@ -1,0 +1,20 @@
+{
+  "id": "scaffold_ops_chain_write",
+  "scenario": "scaffold_ops",
+  "expect": ["dry_run_then_write"],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "scaffold_ops_dry_run",
+          "arguments": {}
+        },
+        {
+          "type": "cli",
+          "argv": ["det", "scaffold-ops"]
+        }
+      ]
+    }
+  ]
+}

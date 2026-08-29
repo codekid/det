@@ -132,6 +132,7 @@ _BOUND_PARAMS: dict[str, frozenset[str]] = {
         {"pipeline", "select", "command", "full_refresh", "target", "lake_path", "set_"}
     ),
     "scaffold-dbt": frozenset({"pipeline", "force", "set_"}),
+    "scaffold-ops": frozenset({"force"}),
     "init-pipeline": frozenset(
         {
             "name",

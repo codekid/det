@@ -187,6 +187,10 @@ not a DET destination — there is no `destination.type: bigquery`.
 ## Ops models
 
 - Models under `dbt/models/ops/` are tagged `ops` and use schema `ops`.
+- Embedders (or a fresh project): after `det runs-materialize`, run
+  `det scaffold-ops` (MCP `scaffold_ops_dry_run` first) to emit models, tests,
+  macros, `dbt_project`/`profiles` ops wiring, and the SLO seed. Cube is not
+  scaffolded.
 - Source: Iceberg `{lake}/ops/run_receipts` — DuckDB `iceberg_scan` (local) or
   BigLake `ops.run_receipts` (GCS + `--target bigquery`) after `det runs-materialize`.
 - Analytics builds (`det dbt`, `det_dbt_silver_gold`, MCP `dbt_dry_run`) always
@@ -208,8 +212,9 @@ not a DET destination — there is no `destination.type: bigquery`.
   Declare policy with pipeline `slo:` (opt-in; omit → not in the expected set).
   Shared defaults on `slo:`; sparse `extract` / `load` overlays; `false` skips a
   command. Cadence hours are not inferred from `interval_*` or `dbt.silver.lookback`.
-  `det scaffold-dbt` always regenerates `dbt/seeds/ops_slo_expected.csv` from **all**
-  pipelines. `det check` errors `slo_seed_stale` on drift. Walk-through: DAG
+  `det scaffold-dbt` / `det scaffold-ops` always regenerate
+  `dbt/seeds/ops_slo_expected.csv` from **all** pipelines. `det check` errors
+  `slo_seed_stale` on drift. Walk-through: DAG
   `det_ops_receipts` (`dbt build --select tag:ops --target ops`) — mart
   `det__ops_run_daily` plus recency / error-rate / p95 / fail-closed tests.
   Extract/load never read SLOs. Do not add `ops_slo_*` lists to `dbt_project.yml`.

@@ -99,7 +99,9 @@ A paused extract DAG cannot self-check; `det_ops_receipts` is the walk-through.
    overlays; `extract: false` / `load: false` skips a command. Cadence hours live
    in Python (not `interval_*` / `dbt.silver.lookback`).
 2. `det scaffold-dbt` always regenerates `dbt/seeds/ops_slo_expected.csv` from all
-   pipelines. `det check` errors `slo_seed_stale` on drift. MCP
+   pipelines. Embedders without in-tree ops models: `det scaffold-ops` (MCP
+   `scaffold_ops_dry_run`) copies models/tests/macros into `./dbt` and regenerates
+   the same seed. `det check` errors `slo_seed_stale` on drift. MCP
    `scaffold_dbt_dry_run` includes the seed action.
 3. Alert path: DAG `det_ops_receipts` → `dbt build --select tag:ops` (target `ops`
    locally, `bigquery` on GCS when `DET_DBT_TARGET=bigquery`)
