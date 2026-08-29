@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from typer.testing import CliRunner
 
 from det.cli import app
 from det.mcp.tools import scaffold_ops_dry_run
@@ -89,11 +88,20 @@ def test_scaffold_ops_merges_existing_profiles(tmp_path: Path):
 
 
 def test_scaffold_ops_cli_dry_run(tmp_path: Path):
+    import structlog
+    from typer.testing import CliRunner
+
+    from det.logging import configure_logging
+
     runner = CliRunner()
-    result = runner.invoke(
-        app,
-        ["scaffold-ops", "--dry-run", "--project-root", str(tmp_path)],
-    )
+    try:
+        result = runner.invoke(
+            app,
+            ["scaffold-ops", "--dry-run", "--project-root", str(tmp_path)],
+        )
+    finally:
+        structlog.reset_defaults()
+        configure_logging("WARNING")
     assert result.exit_code == 0, result.output
     assert "DRY-RUN scaffold-ops" in result.output
     assert not (tmp_path / "dbt" / "models" / "ops").exists()
