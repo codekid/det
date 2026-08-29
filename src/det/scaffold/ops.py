@@ -103,6 +103,38 @@ _MINIMAL_PROFILES: dict[str, Any] = {
 }
 
 
+def _dbt_profile_name(project_root: Path) -> str:
+    """Profile key from dbt_project.yml ``profile:`` (default ``analytics``)."""
+    path = project_root / "dbt" / "dbt_project.yml"
+    if path.is_file():
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if isinstance(data, dict):
+            raw = data.get("profile")
+            if raw is not None and str(raw).strip():
+                return str(raw).strip()
+    return str(_MINIMAL_DBT_PROJECT["profile"])
+
+
+def _minimal_profiles_for(profile_name: str) -> dict[str, Any]:
+    if profile_name == "analytics":
+        return dict(_MINIMAL_PROFILES)
+    return {
+        profile_name: {
+            "target": "duckdb",
+            "outputs": {
+                "duckdb": {
+                    "type": "duckdb",
+                    "path": "{{ env_var('DET_ANALYTICS_DUCKDB', '../data/analytics.duckdb') }}",
+                    "schema": "main",
+                    "threads": 1,
+                    "extensions": ["httpfs", "iceberg"],
+                },
+                "ops": dict(_OPS_PROFILE_OUTPUT),
+            },
+        }
+    }
+
+
 def ops_template_root() -> Path:
     """Return the on-disk root for packaged ops templates."""
     return _TEMPLATES_OPS
@@ -208,24 +240,25 @@ def _ensure_profiles(
     dry_run: bool,
     actions: list[ScaffoldAction],
 ) -> None:
-    """Create or patch profiles.yml so analytics.outputs.ops exists."""
+    """Create or patch profiles.yml so ``{profile}.outputs.ops`` exists."""
     path = (project_root / "dbt" / "profiles.yml").resolve()
+    profile_name = _dbt_profile_name(project_root)
     if path.exists():
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         if not isinstance(data, dict):
             data = {}
     else:
-        data = dict(_MINIMAL_PROFILES)
+        data = _minimal_profiles_for(profile_name)
 
-    analytics = data.setdefault("analytics", {})
-    if not isinstance(analytics, dict):
-        analytics = {}
-        data["analytics"] = analytics
-    analytics.setdefault("target", "duckdb")
-    outputs = analytics.setdefault("outputs", {})
+    profile = data.setdefault(profile_name, {})
+    if not isinstance(profile, dict):
+        profile = {}
+        data[profile_name] = profile
+    profile.setdefault("target", "duckdb")
+    outputs = profile.setdefault("outputs", {})
     if not isinstance(outputs, dict):
         outputs = {}
-        analytics["outputs"] = outputs
+        profile["outputs"] = outputs
     if "ops" not in outputs or not isinstance(outputs.get("ops"), dict):
         outputs["ops"] = dict(_OPS_PROFILE_OUTPUT)
     else:

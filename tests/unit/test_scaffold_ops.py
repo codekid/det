@@ -87,6 +87,50 @@ def test_scaffold_ops_merges_existing_profiles(tmp_path: Path):
     assert "ops" in profiles["analytics"]["outputs"]
 
 
+def test_scaffold_ops_uses_dbt_project_profile_name(tmp_path: Path):
+    dbt = tmp_path / "dbt"
+    dbt.mkdir(parents=True)
+    (dbt / "dbt_project.yml").write_text(
+        yaml.safe_dump(
+            {
+                "name": "myco",
+                "version": "1.0.0",
+                "config-version": 2,
+                "profile": "myco",
+                "model-paths": ["models"],
+                "seed-paths": ["seeds"],
+                "test-paths": ["tests"],
+                "macro-paths": ["macros"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (dbt / "profiles.yml").write_text(
+        yaml.safe_dump(
+            {
+                "myco": {
+                    "target": "duckdb",
+                    "outputs": {
+                        "duckdb": {
+                            "type": "duckdb",
+                            "path": "/custom/myco.duckdb",
+                            "schema": "main",
+                        }
+                    },
+                },
+                "other": {"target": "duckdb", "outputs": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    scaffold_ops(project_root=tmp_path, dry_run=False)
+    profiles = yaml.safe_load((dbt / "profiles.yml").read_text(encoding="utf-8"))
+    assert profiles["myco"]["outputs"]["duckdb"]["path"] == "/custom/myco.duckdb"
+    assert profiles["myco"]["outputs"]["ops"]["type"] == "duckdb"
+    assert "ops" not in profiles["other"]["outputs"]
+    assert "analytics" not in profiles
+
+
 def test_scaffold_ops_cli_dry_run(tmp_path: Path):
     import structlog
     from typer.testing import CliRunner
