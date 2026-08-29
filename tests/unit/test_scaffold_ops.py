@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from det.cli import app
 from det.mcp.tools import scaffold_ops_dry_run
+from det.scaffold import ops as ops_mod
 from det.scaffold.ops import iter_ops_template_pairs, scaffold_ops
 
 
@@ -129,6 +131,21 @@ def test_scaffold_ops_uses_dbt_project_profile_name(tmp_path: Path):
     assert profiles["myco"]["outputs"]["ops"]["type"] == "duckdb"
     assert "ops" not in profiles["other"]["outputs"]
     assert "analytics" not in profiles
+
+
+def test_scaffold_ops_rejects_destination_outside_project_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(
+        ops_mod,
+        "_OPS_MODEL_FILES",
+        (("../../outside.txt", "models/sources.yml"),),
+    )
+    monkeypatch.setattr(ops_mod, "_OPS_TEST_FILES", ())
+    monkeypatch.setattr(ops_mod, "_OPS_MACRO_FILES", ())
+    with pytest.raises(ValueError, match="escapes project root"):
+        scaffold_ops(project_root=tmp_path, dry_run=True)
+    assert not (tmp_path.parent / "outside.txt").exists()
 
 
 def test_scaffold_ops_cli_dry_run(tmp_path: Path):

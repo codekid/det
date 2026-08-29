@@ -103,9 +103,18 @@ _MINIMAL_PROFILES: dict[str, Any] = {
 }
 
 
+def _ensure_under_root(path: Path, *, root: Path) -> Path:
+    """Resolve ``path`` and reject destinations that escape ``root``."""
+    resolved = path.expanduser().resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"scaffold path escapes project root {root}: {resolved}")
+    return resolved
+
+
 def _dbt_profile_name(project_root: Path) -> str:
     """Profile key from dbt_project.yml ``profile:`` (default ``analytics``)."""
-    path = project_root / "dbt" / "dbt_project.yml"
+    root = project_root.resolve()
+    path = _ensure_under_root(root / "dbt" / "dbt_project.yml", root=root)
     if path.is_file():
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         if isinstance(data, dict):
@@ -167,7 +176,8 @@ def _ensure_dbt_project(
     actions: list[ScaffoldAction],
 ) -> None:
     """Create or merge dbt_project.yml so ops models/seeds are configured."""
-    path = (project_root / "dbt" / "dbt_project.yml").resolve()
+    root = project_root.resolve()
+    path = _ensure_under_root(root / "dbt" / "dbt_project.yml", root=root)
     if path.exists():
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         if not isinstance(data, dict):
@@ -241,8 +251,9 @@ def _ensure_profiles(
     actions: list[ScaffoldAction],
 ) -> None:
     """Create or patch profiles.yml so ``{profile}.outputs.ops`` exists."""
-    path = (project_root / "dbt" / "profiles.yml").resolve()
-    profile_name = _dbt_profile_name(project_root)
+    root = project_root.resolve()
+    path = _ensure_under_root(root / "dbt" / "profiles.yml", root=root)
+    profile_name = _dbt_profile_name(root)
     if path.exists():
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         if not isinstance(data, dict):
@@ -305,6 +316,8 @@ def scaffold_ops(
     regenerated. ``dbt_project.yml`` / ``profiles.yml`` are merged so ops config
     exists without wiping unrelated keys.
     """
+    from det.runtime.slo import SLO_SEED_RELPATH
+
     root = project_root.resolve()
     dbt_root = root / "dbt"
     actions: list[ScaffoldAction] = []
@@ -314,9 +327,10 @@ def scaffold_ops(
         *_OPS_TEST_FILES,
         *_OPS_MACRO_FILES,
     ):
+        dest = _ensure_under_root(dbt_root / dest_rel, root=root)
         content = load_ops_template(tmpl_rel)
         _write_or_skip(
-            dbt_root / dest_rel,
+            dest,
             content,
             force=force,
             dry_run=dry_run,
@@ -325,6 +339,7 @@ def scaffold_ops(
 
     _ensure_dbt_project(root, force=force, dry_run=dry_run, actions=actions)
     _ensure_profiles(root, dry_run=dry_run, actions=actions)
+    _ensure_under_root(root / SLO_SEED_RELPATH, root=root)
     _write_slo_seed(root, dry_run=dry_run, actions=actions)
 
     return ScaffoldResult(dataset="ops", actions=actions)

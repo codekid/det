@@ -17,7 +17,7 @@ windowed as (
     e.pipeline,
     e.command,
     e.p95_ms as max_p95_ms,
-    {% if target.name == 'bigquery' %}
+    {% if target.type == 'bigquery' %}
     approx_quantiles(r.duration_ms, 100)[offset(95)] as observed_p95_ms
     {% else %}
     quantile_cont(r.duration_ms, 0.95) as observed_p95_ms
