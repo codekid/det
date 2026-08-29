@@ -1,6 +1,6 @@
 {{ config(tags=['ops']) }}
 
--- Max of daily mart p95_ms in the score window vs seed p95_ms.
+-- p95 of receipt duration_ms over score_hours (started_at) vs seed p95_ms.
 -- Skip the row when p95_ms is null. Empty seed → pass.
 
 with expected as (
@@ -17,14 +17,16 @@ windowed as (
     e.pipeline,
     e.command,
     e.p95_ms as max_p95_ms,
-    max(d.p95_ms) as observed_p95_ms
+    {% if target.name == 'bigquery' %}
+    approx_quantiles(r.duration_ms, 100)[offset(95)] as observed_p95_ms
+    {% else %}
+    quantile_cont(r.duration_ms, 0.95) as observed_p95_ms
+    {% endif %}
   from expected e
-  left join {{ ref('det__ops_run_daily') }} d
-    on d.pipeline = e.pipeline
-   and d.command = e.command
-   and d.attempt_date >= cast(
-     {{ det_timestamp_minus_hours('current_timestamp', 'e.score_hours') }} as date
-   )
+  left join {{ ref('stg_det__run_receipts') }} r
+    on r.pipeline = e.pipeline
+   and r.command = e.command
+   and r.started_at >= {{ det_timestamp_minus_hours('current_timestamp', 'e.score_hours') }}
   group by 1, 2, 3
 )
 

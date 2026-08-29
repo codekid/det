@@ -1,7 +1,7 @@
 {{ config(tags=['ops']) }}
 
--- sum(error) / sum(attempts) over score_hours vs seed max_error_rate.
--- Skip the row when max_error_rate is null. Empty seed → pass.
+-- sum(error) / sum(attempts) over score_hours (receipt started_at) vs seed
+-- max_error_rate. Skip the row when max_error_rate is null. Empty seed → pass.
 
 with expected as (
   select
@@ -17,15 +17,13 @@ windowed as (
     e.pipeline,
     e.command,
     e.max_error_rate,
-    coalesce(sum(d.attempts), 0) as attempts,
-    coalesce(sum(d.error), 0) as errors
+    coalesce(count(r.attempt_id), 0) as attempts,
+    coalesce(sum(case when r.status = 'error' then 1 else 0 end), 0) as errors
   from expected e
-  left join {{ ref('det__ops_run_daily') }} d
-    on d.pipeline = e.pipeline
-   and d.command = e.command
-   and d.attempt_date >= cast(
-     {{ det_timestamp_minus_hours('current_timestamp', 'e.score_hours') }} as date
-   )
+  left join {{ ref('stg_det__run_receipts') }} r
+    on r.pipeline = e.pipeline
+   and r.command = e.command
+   and r.started_at >= {{ det_timestamp_minus_hours('current_timestamp', 'e.score_hours') }}
   group by 1, 2, 3
 )
 
