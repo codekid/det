@@ -1,6 +1,6 @@
 [project]
 name = "det-elt"
-version = "0.1.0"
+version = "0.2.0"
 description = "DET — Data Extract Tool: config-driven extraction runtime with pluggable ingestion"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -92,7 +92,11 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-det = ["py.typed", "scaffold/templates/*.j2"]
+det = [
+    "py.typed",
+    "scaffold/templates/*.j2",
+    "scaffold/templates/ops/**/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

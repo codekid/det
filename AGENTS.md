@@ -55,6 +55,7 @@ inclusive, `-e` exclusive (default start + 1 day). Lake hive/SQL contract:
 | Gold / fleet metrics | MCP `cube_meta` / `cube_load` (`make cube-up`) |
 | Silver or ops row detail | MCP `query_analytics` (`warehouse=analytics` or `ops`) |
 | Draft schema / mapper / migrate / prune / dbt | MCP `*_dry_run` (`approval_plan`) then `det approve` then CLI `--approval` |
+| Ops dbt models for embedders | After `runs-materialize`: MCP `scaffold_ops_dry_run` → show plan, wait for confirm → `det approve`; later turn `det scaffold-ops --approval <id>` |
 | Extract, load, run, apply prune, write migrate | CLI / Airflow after `det approve` (and `--approval` when required) |
 
 This-run receipts: `list_runs`. Fleet: `cube_load` on `run_daily` or `query_analytics` `warehouse=ops`.

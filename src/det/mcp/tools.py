@@ -463,6 +463,36 @@ def scaffold_dbt_dry_run(
     }
 
 
+def scaffold_ops_dry_run(
+    *,
+    force: bool = False,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Preview scaffold-ops file actions without writing."""
+    _prepare_tool()
+    from det.runtime.approval import scaffold_ops_write_argv
+    from det.scaffold.ops import scaffold_ops
+
+    base = _root(root)
+    result = scaffold_ops(project_root=base, force=force, dry_run=True)
+    return {
+        "dry_run": True,
+        "dataset": result.dataset,
+        "approval_plan": _approval_plan(
+            "scaffold-ops",
+            scaffold_ops_write_argv(force=force),
+        ),
+        "actions": [
+            {
+                "action": a.action,
+                "path": _rel(a.path, base),
+                "detail": a.detail,
+            }
+            for a in result.actions
+        ],
+    }
+
+
 def init_pipeline_dry_run(
     name: str,
     source_type: str,

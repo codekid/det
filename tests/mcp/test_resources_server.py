@@ -34,6 +34,7 @@ def test_create_server_registers_tools():
         "prune_dry_run",
         "dbt_dry_run",
         "scaffold_dbt_dry_run",
+        "scaffold_ops_dry_run",
         "init_pipeline_dry_run",
         "diff_partitions",
         "sample_raw",

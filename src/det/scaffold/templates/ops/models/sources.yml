@@ -1,0 +1,63 @@
+version: 2
+
+sources:
+  - name: det_ops
+    description: >
+      DET ops Iceberg tables under the lake (Hadoop catalog). Separate from
+      bronze analytics sources; read via DuckDB iceberg_scan.
+    database: "{% if target.name == 'bigquery' %}{{ env_var('DET_GCP_PROJECT') }}{% endif %}"
+    schema: "{% if target.name == 'bigquery' %}ops{% else %}main{% endif %}"
+    tables:
+      - name: run_receipts
+        description: >
+          Materialized extract/load attempt receipts. Source of truth remains
+          `{lake}/runs/*.json`; this table is a replace-by-attempt_date projection.
+        meta:
+          formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
+          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH') }}/ops/run_receipts'){% endif %}"
+        columns:
+          - name: receipt_version
+            description: Receipt schema version from the JSON body
+          - name: attempt_id
+            description: Unique attempt id (hex)
+            tests: [not_null, unique]
+          - name: attempt_date
+            description: UTC date of started_at (partition key)
+          - name: pipeline
+            description: Canonical pipeline id
+          - name: command
+            description: extract or load
+          - name: interval_start
+            description: Data interval start (ISO)
+          - name: interval_end
+            description: Data interval end exclusive (ISO)
+          - name: extract_run_datetime
+            description: Extract run clock when applicable
+          - name: wire_version
+            description: Wire / bronze era
+          - name: status
+            description: ok or error
+          - name: started_at
+            description: Attempt start (UTC)
+          - name: finished_at
+            description: Attempt end (UTC)
+          - name: duration_ms
+            description: Wall duration in milliseconds
+          - name: owner
+            description: DET_LOCK_OWNER / Airflow DagRun owner
+          - name: destination
+            description: Destination type only (never a DSN)
+          - name: artifacts
+            description: Artifact count when recorded
+          - name: raw_bytes
+            description: Sum of artifact bytes when recorded
+          - name: rows
+            description: Rows written when recorded
+          - name: schema_sha256
+            description: Schema fingerprint when recorded
+          - name: error_code
+            description: Stable error code on failure
+          - name: error_class
+            description: Exception class name on failure
+          - name: error_message
+            description: Truncated, secret-scrubbed message on failure

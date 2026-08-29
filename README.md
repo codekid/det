@@ -191,6 +191,7 @@ det list-sources
 | `det prune -p … -s … --keep 1 --dry-run` then `--apply` | Drop old bronze extract-run siblings (never raw) |
 | `det migrate -p … --to-bronze … --schema … --mapper identity -s … -e …` | Rebuild bronze from raw after a contract change |
 | `det scaffold-dbt -p …` | Emit stg/silver + `sources.yml` |
+| `det scaffold-ops` | Emit ops dbt models/tests/macros + SLO seed (after `runs-materialize`) |
 | `det runs` / `det runs-materialize` | Attempt receipts; optional ops Iceberg + `det dbt --select tag:ops` |
 | `det lock-show` / `lock-release --force` | Lake lease on `(pipeline, interval)` if a worker died |
 

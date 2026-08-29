@@ -240,6 +240,47 @@ def test_scaffold_creates_and_skips_without_force(tmp_path: Path):
     assert seed_actions and seed_actions[0].action == "write"
 
 
+def test_scaffold_bootstraps_generate_schema_name_never_force(tmp_path: Path):
+    pipeline = _write_mini_project(tmp_path)
+    config = load_pipeline_config(pipeline)
+    models = tmp_path / "dbt" / "models" / "silver"
+    macro = tmp_path / "dbt" / "macros" / "generate_schema_name.sql"
+
+    first = scaffold_dbt(config, project_root=tmp_path, dbt_models_dir=models)
+    assert macro.is_file()
+    assert "custom_schema_name" in macro.read_text(encoding="utf-8")
+    assert any(
+        a.action == "write" and a.path == macro.resolve() and a.detail == "create"
+        for a in first.actions
+    )
+
+    macro.write_text("-- embedder custom\n", encoding="utf-8")
+    forced = scaffold_dbt(
+        config, project_root=tmp_path, force=True, dbt_models_dir=models
+    )
+    assert macro.read_text(encoding="utf-8") == "-- embedder custom\n"
+    assert any(
+        a.action == "skip" and a.path == macro.resolve() for a in forced.actions
+    )
+
+
+def test_bootstrap_generate_schema_name_rejects_symlink_escape(tmp_path: Path):
+    from det.scaffold.dbt import _bootstrap_generate_schema_name
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    project = tmp_path / "project"
+    dbt = project / "dbt"
+    dbt.mkdir(parents=True)
+    (dbt / "macros").symlink_to(outside)
+
+    with pytest.raises(ValueError, match="escapes project root"):
+        _bootstrap_generate_schema_name(
+            project, dry_run=False, actions=[]
+        )
+    assert not (outside / "generate_schema_name.sql").exists()
+
+
 def test_scaffold_force_refreshes_stg_when_schema_gains_property(tmp_path: Path):
     pipeline = _write_mini_project(tmp_path)
     config = load_pipeline_config(pipeline)

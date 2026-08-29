@@ -142,7 +142,7 @@ def test_feed(tmp_path):
 Optional: `pytest_plugins = ["det.testing.pytest"]` for autouse registry isolation.
 More helpers: [api.md](api.md) stable submodule `det.testing`.
 
-## 7. Day-2: migrate, check, prune
+## 7. Day-2: migrate, check, prune, ops
 
 Library callers are trusted — no approval files on
 `PipelineRunner` / `BronzeMigrator` / `BronzePruner.apply`. Operators/agents use
@@ -166,6 +166,19 @@ pruner = BronzePruner(settings=settings)
 plan = pruner.plan("myco.feed", interval_start="2026-01-01", keep=3)
 pruner.apply("myco.feed", plan)  # bronze-only; never deletes raw
 ```
+
+### Fleet ops dbt (optional)
+
+After extract/load have written receipts under `{lake}/runs/`:
+
+```bash
+det runs-materialize                         # Iceberg ops.run_receipts
+det scaffold-ops                             # models/tests/macros + SLO seed into ./dbt
+# MCP preview: scaffold_ops_dry_run (never writes)
+det dbt --select tag:ops --target ops        # needs det-elt[dbt]
+```
+
+Cube Core over ops metrics remains an operator/optional add-on — not scaffolded.
 
 Concurrency (leases, processes vs threads): [api.md § Concurrency](api.md#concurrency).
 

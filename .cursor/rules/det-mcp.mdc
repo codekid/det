@@ -19,7 +19,8 @@ plans, or scaffold/dbt previews.
 `airflow_health`, `list_airflow_dags`, `list_airflow_dag_runs`,
 `describe_airflow_det_env`, `preview_backfill_conf`, `migrate_dry_run`,
 `list_runs`, `summarize_runs`,
-`prune_dry_run`, `dbt_dry_run`, `scaffold_dbt_dry_run`, `init_pipeline_dry_run`,
+`prune_dry_run`, `dbt_dry_run`, `scaffold_dbt_dry_run`, `scaffold_ops_dry_run`,
+`init_pipeline_dry_run`,
 `list_approvals`, `describe_approval`,
 `det://` resources, and prompts `det_ops` / `det_new_source` / `det_migrate` /
 `det_dbt` / `det_airflow` (skill playbooks).
@@ -75,6 +76,7 @@ Paths are sandboxed under `DET_PROJECT_ROOT` (default cwd / project root).
 | Preview migrate | MCP `migrate_dry_run` then **ask user**; `det approve`; later CLI `det migrate --approval` |
 | Preview prune | MCP `prune_dry_run` then **ask user**; `det approve`; later CLI `--apply --approval` |
 | Preview dbt/scaffold | MCP `*_dry_run` then **ask user**; `det approve`; later CLI `--approval` without `--dry-run` |
+| Preview ops dbt scaffold | MCP `scaffold_ops_dry_run` then **ask user**; `det approve`; later `det scaffold-ops --approval` |
 | Mutating extract/load / DagRun trigger | CLI / Airflow UI only — after explicit user approval |
 
 **Agent rule:** never chain a dry-run preview into a writing CLI command in the same

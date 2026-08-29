@@ -26,6 +26,7 @@ def create_server():
             "sample_bronze, diagnose_pipeline (sample size via limit/sample_limit, "
             "default 5, max 50). "
             "Generate (dry-run): schema_from_sample_dry_run, mapper_from_diff_dry_run. "
+            "scaffold_ops_dry_run previews ops dbt models (never writes). "
             "Airflow inspect (read-only): airflow_health, list_airflow_dags, "
             "list_airflow_dag_runs, describe_airflow_det_env, preview_backfill_conf. "
             "Configure via DET_AIRFLOW_BASE_URL/USER/PASSWORD (Compose defaults). "
@@ -117,6 +118,11 @@ def create_server():
     def scaffold_dbt_dry_run(pipeline: p.PipelineRef, force: p.Force = False) -> dict[str, Any]:
         """Preview scaffold-dbt file actions without writing."""
         return t.scaffold_dbt_dry_run(pipeline, force=force)
+
+    @mcp.tool()
+    def scaffold_ops_dry_run(force: p.Force = False) -> dict[str, Any]:
+        """Preview scaffold-ops file actions without writing."""
+        return t.scaffold_ops_dry_run(force=force)
 
     @mcp.tool()
     def init_pipeline_dry_run(

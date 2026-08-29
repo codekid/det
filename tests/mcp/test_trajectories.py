@@ -39,6 +39,8 @@ def test_trajectory_fixtures_cover_plan_ids():
         "prune_chain_apply",
         "migrate_dry_run_stop",
         "migrate_chain_write",
+        "scaffold_ops_dry_run_stop",
+        "scaffold_ops_chain_write",
         "fleet_cube_load",
         "fleet_sql_without_cube",
         "gold_cube_load",
@@ -62,6 +64,8 @@ def test_writing_argv_classifier():
     assert not is_writing_cli(
         ["det", "init-pipeline", "--name", "a.b", "--source-type", "a.b", "--dry-run"]
     )
+    assert is_writing_cli(["det", "scaffold-ops"])
+    assert not is_writing_cli(["det", "scaffold-ops", "--dry-run"])
     assert is_writing_cli(["det", "dbt"])
     assert is_writing_cli(["det", "lock-release", "-p", "x", "-s", "2026-08-06", "--force"])
     assert is_writing_cli(["airflow", "dags", "trigger", "det_extract"])

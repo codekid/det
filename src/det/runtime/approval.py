@@ -705,6 +705,13 @@ def scaffold_dbt_write_argv(
     return argv
 
 
+def scaffold_ops_write_argv(*, force: bool = False) -> list[str]:
+    argv = ["scaffold-ops"]
+    if force:
+        argv.append("--force")
+    return argv
+
+
 def dbt_write_argv(
     pipeline: str | None = None,
     *,
