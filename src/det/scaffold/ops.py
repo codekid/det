@@ -10,6 +10,7 @@ import yaml
 from det.logging import get_logger
 from det.scaffold.dbt import (
     _bootstrap_generate_schema_name,
+    _ensure_under_root,
     _write_or_skip,
     _write_slo_seed,
 )
@@ -111,14 +112,6 @@ _MINIMAL_PROFILES: dict[str, Any] = {
         },
     }
 }
-
-
-def _ensure_under_root(path: Path, *, root: Path) -> Path:
-    """Resolve ``path`` and reject destinations that escape ``root``."""
-    resolved = path.expanduser().resolve()
-    if not resolved.is_relative_to(root):
-        raise ValueError(f"scaffold path escapes project root {root}: {resolved}")
-    return resolved
 
 
 def _dbt_profile_name(project_root: Path) -> str:

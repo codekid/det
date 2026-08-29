@@ -89,6 +89,14 @@ _GENERATE_SCHEMA_NAME_TMPL = (
 )
 
 
+def _ensure_under_root(path: Path, *, root: Path) -> Path:
+    """Resolve ``path`` and reject destinations that escape ``root``."""
+    resolved = path.expanduser().resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"scaffold path escapes project root {root}: {resolved}")
+    return resolved
+
+
 def _write_or_skip(
     path: Path,
     content: str,
@@ -135,7 +143,11 @@ def _bootstrap_generate_schema_name(
     greenfield gap so ``schema="silver_*"`` / ``+schema: ops`` are not prefixed
     with ``target.schema``.
     """
-    path = (project_root.resolve() / "dbt" / "macros" / "generate_schema_name.sql").resolve()
+    root = project_root.resolve()
+    path = _ensure_under_root(
+        root / "dbt" / "macros" / "generate_schema_name.sql",
+        root=root,
+    )
     if path.exists():
         actions.append(ScaffoldAction(path=path, action="skip", detail="exists"))
         return
