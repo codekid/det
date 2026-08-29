@@ -63,6 +63,22 @@ def test_scaffold_ops_skips_existing_without_force(tmp_path: Path):
     assert any(a.action == "write" and a.path == stg.resolve() for a in forced.actions)
 
 
+def test_scaffold_ops_never_overwrites_generate_schema_name(tmp_path: Path):
+    scaffold_ops(project_root=tmp_path, dry_run=False)
+    macro = tmp_path / "dbt" / "macros" / "generate_schema_name.sql"
+    assert macro.is_file()
+    macro.write_text("-- embedder custom\n", encoding="utf-8")
+
+    forced = scaffold_ops(project_root=tmp_path, force=True, dry_run=False)
+    assert macro.read_text(encoding="utf-8") == "-- embedder custom\n"
+    assert any(
+        a.action == "skip" and a.path == macro.resolve() for a in forced.actions
+    )
+    # DET-owned macro still refreshes under --force.
+    compat = tmp_path / "dbt" / "macros" / "det_sql_compat.sql"
+    assert any(a.action == "write" and a.path == compat.resolve() for a in forced.actions)
+
+
 def test_scaffold_ops_merges_existing_profiles(tmp_path: Path):
     dbt = tmp_path / "dbt"
     dbt.mkdir(parents=True)

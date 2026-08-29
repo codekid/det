@@ -79,6 +79,15 @@ from det.validation.jsonschema_validator import load_json_schema
 
 logger = get_logger(__name__)
 
+# Shared with scaffold-ops; create-if-missing only (never --force overwrite).
+_GENERATE_SCHEMA_NAME_TMPL = (
+    Path(__file__).resolve().parent
+    / "templates"
+    / "ops"
+    / "macros"
+    / "generate_schema_name.sql"
+)
+
 
 def _write_or_skip(
     path: Path,
@@ -112,6 +121,34 @@ def _write_or_skip(
         )
     )
     logger.info("scaffolded file", path=str(path), detail=actions[-1].detail)
+
+
+def _bootstrap_generate_schema_name(
+    project_root: Path,
+    *,
+    dry_run: bool,
+    actions: list[ScaffoldAction],
+) -> None:
+    """Install ``generate_schema_name`` once; never overwrite (ignores ``--force``).
+
+    Embedders often customize this global dbt override. DET only fills the
+    greenfield gap so ``schema="silver_*"`` / ``+schema: ops`` are not prefixed
+    with ``target.schema``.
+    """
+    path = (project_root.resolve() / "dbt" / "macros" / "generate_schema_name.sql").resolve()
+    if path.exists():
+        actions.append(ScaffoldAction(path=path, action="skip", detail="exists"))
+        return
+    content = _GENERATE_SCHEMA_NAME_TMPL.read_text(encoding="utf-8")
+    if dry_run:
+        actions.append(
+            ScaffoldAction(path=path, action="would_write", detail="create")
+        )
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    actions.append(ScaffoldAction(path=path, action="write", detail="create"))
+    logger.info("scaffolded file", path=str(path), detail="create")
 
 
 def _write_slo_seed(
@@ -161,8 +198,10 @@ def scaffold_dbt(
 
     Create-if-missing by default; `--force` overwrites generated SQL and refreshes
     YAML entries for the dataset. Always regenerates ``dbt/seeds/ops_slo_expected.csv``
-    from **all** pipelines (derived; ignores ``force``). When ``warn`` is true, emit
-    advisory view-size warnings for large view-materialized relations.
+    from **all** pipelines (derived; ignores ``force``). Bootstraps
+    ``macros/generate_schema_name.sql`` if missing (never overwrites). When
+    ``warn`` is true, emit advisory view-size warnings for large view-materialized
+    relations.
     """
     root = project_root.resolve()
     # Stable analytics names from pipeline ``name``; lake/SQL table stays versioned.
@@ -185,6 +224,7 @@ def scaffold_dbt(
 
     models_dir = (dbt_models_dir or (root / "dbt" / "models" / "silver")).resolve()
     actions: list[ScaffoldAction] = []
+    _bootstrap_generate_schema_name(root, dry_run=dry_run, actions=actions)
 
     stg_sql = _render(
         "stg.sql.j2",

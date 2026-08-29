@@ -8,7 +8,11 @@ from typing import Any
 import yaml
 
 from det.logging import get_logger
-from det.scaffold.dbt import _write_or_skip, _write_slo_seed
+from det.scaffold.dbt import (
+    _bootstrap_generate_schema_name,
+    _write_or_skip,
+    _write_slo_seed,
+)
 from det.scaffold.dbt_sql import ScaffoldAction, ScaffoldResult
 
 logger = get_logger(__name__)
@@ -30,9 +34,15 @@ _OPS_TEST_FILES: tuple[tuple[str, str], ...] = (
     ("tests/ops/assert_ops_slo_recency.sql", "tests/assert_ops_slo_recency.sql"),
 )
 
+# DET-owned; --force may refresh. generate_schema_name is bootstrapped separately
+# (create-if-missing only — never overwrite embedder customizations).
 _OPS_MACRO_FILES: tuple[tuple[str, str], ...] = (
-    ("macros/generate_schema_name.sql", "macros/generate_schema_name.sql"),
     ("macros/det_sql_compat.sql", "macros/det_sql_compat.sql"),
+)
+
+_GENERATE_SCHEMA_NAME_PAIR: tuple[str, str] = (
+    "macros/generate_schema_name.sql",
+    "macros/generate_schema_name.sql",
 )
 
 _MINIMAL_DBT_PROJECT: dict[str, Any] = {
@@ -159,7 +169,12 @@ def iter_ops_template_pairs() -> list[tuple[str, Path, Path]]:
     """Return (label, canonical_repo_path, template_path) for drift tests."""
     repo = Path(__file__).resolve().parents[3]
     pairs: list[tuple[str, Path, Path]] = []
-    for dest, tmpl in (*_OPS_MODEL_FILES, *_OPS_TEST_FILES, *_OPS_MACRO_FILES):
+    for dest, tmpl in (
+        *_OPS_MODEL_FILES,
+        *_OPS_TEST_FILES,
+        *_OPS_MACRO_FILES,
+        _GENERATE_SCHEMA_NAME_PAIR,
+    ):
         pairs.append((f"dbt/{dest}", repo / f"dbt/{dest}", _TEMPLATES_OPS / tmpl))
     return pairs
 
@@ -312,7 +327,8 @@ def scaffold_ops(
     """
     Emit ops dbt models, tests, macros, project/profile wiring, and SLO seed.
 
-    Template copies are create-if-missing unless ``force``. The SLO seed is always
+    Template copies are create-if-missing unless ``force``. ``generate_schema_name``
+    is create-if-missing only (never overwritten). The SLO seed is always
     regenerated. ``dbt_project.yml`` / ``profiles.yml`` are merged so ops config
     exists without wiping unrelated keys.
     """
@@ -337,6 +353,7 @@ def scaffold_ops(
             actions=actions,
         )
 
+    _bootstrap_generate_schema_name(root, dry_run=dry_run, actions=actions)
     _ensure_dbt_project(root, force=force, dry_run=dry_run, actions=actions)
     _ensure_profiles(root, dry_run=dry_run, actions=actions)
     _ensure_under_root(root / SLO_SEED_RELPATH, root=root)

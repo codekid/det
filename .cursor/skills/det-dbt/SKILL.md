@@ -18,7 +18,9 @@ Install: `uv pip install -e ".[mcp,dbt]"`.
 - SQL schemas mirror bronze: `bronze_{provider}` → `silver_{provider}`; gold stays `gold`.
   Silver schema comes from model `config(schema="silver_{provider}")` (scaffold), not
   `dbt_project.yml +schema`. `generate_schema_name` prevents `target.schema` prefixing
-  (`main_silver_*`). Note: `stg_*` models also land in `silver_{provider}` (not a
+  (`main_silver_*`). `scaffold-dbt` / `scaffold-ops` bootstrap
+  `macros/generate_schema_name.sql` if missing and never overwrite it (even with
+  `--force`). Note: `stg_*` models also land in `silver_{provider}` (not a
   separate `stg_*` SQL schema). Model names stay stable from pipeline ``name``
   (`stg_noaa__storm_events`); bronze ``_vN`` is wired in ``sources.yml`` /
   ``det_bronze_from``.
