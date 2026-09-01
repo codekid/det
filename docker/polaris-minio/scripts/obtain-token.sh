@@ -1,36 +1,21 @@
-#
-# Licensed to the Apache Software Foundation (ASF) under one
-# or more contributor license agreements.  See the NOTICE file
-# distributed with this work for additional information
-# regarding copyright ownership.  The ASF licenses this file
-# to you under the Apache License, Version 2.0 (the
-# "License"); you may not use this file except in compliance
-# with the License.  You may obtain a copy of the License at
-#
-#   http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an
-# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-# KIND, either express or implied.  See the License for the
-# specific language governing permissions and limitations
-# under the License.
-#
-
+#!/bin/sh
+# Obtain Polaris OAuth token. Adapted from Apache Polaris getting-started (Apache-2.0).
+# Pure POSIX + curl (no jq/apk) for alpine/curl on read-only mounts.
 set -e
 
-apk add --no-cache jq
+realm="${1:-POLARIS}"
 
-realm=${1:-"POLARIS"}
-
-TOKEN=$(curl -s http://polaris:8181/api/catalog/v1/oauth/tokens \
-  --user ${CLIENT_ID}:${CLIENT_SECRET} \
-  -H "Polaris-Realm: $realm" \
+RESP=$(curl -sS http://polaris:8181/api/catalog/v1/oauth/tokens \
+  --user "${CLIENT_ID}:${CLIENT_SECRET}" \
+  -H "Polaris-Realm: ${realm}" \
   -d grant_type=client_credentials \
-  -d scope=PRINCIPAL_ROLE:ALL | jq -r .access_token)
+  -d scope=PRINCIPAL_ROLE:ALL)
 
-if [ -z "${TOKEN}" ]; then
-  echo "Failed to obtain access token."
+# Extract access_token without jq (alpine/curl has no jq by default).
+TOKEN=$(printf '%s' "$RESP" | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+
+if [ -z "${TOKEN}" ] || [ "${TOKEN}" = "null" ]; then
+  echo "Failed to obtain access token: ${RESP}" >&2
   exit 1
 fi
 

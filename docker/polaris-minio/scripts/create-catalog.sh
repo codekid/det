@@ -1,88 +1,74 @@
-#
-# Licensed to the Apache Software Foundation (ASF) under one
-# or more contributor license agreements.  See the NOTICE file
-# distributed with this work for additional information
-# regarding copyright ownership.  The ASF licenses this file
-# to you under the Apache License, Version 2.0 (the
-# "License"); you may not use this file except in compliance
-# with the License.  You may obtain a copy of the License at
-#
-#   http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an
-# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-# KIND, either express or implied.  See the License for the
-# specific language governing permissions and limitations
-# under the License.
-#
-
+#!/bin/sh
+# Create Polaris catalog for DET local/CI soaks.
+# Adapted from Apache Polaris getting-started (Apache-2.0); POSIX sh, no jq/apk.
 set -e
 
-apk add --no-cache jq
+realm="${1:-POLARIS}"
+TOKEN="${2:-}"
+BASEDIR=$(dirname "$0")
 
-realm=${1:-"POLARIS"}
-
-TOKEN=${2:-""}
-
-BASEDIR=$(dirname $0)
-
-if [ -z "$TOKEN" ]; then
-  source $BASEDIR/obtain-token.sh
+if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+  # shellcheck source=obtain-token.sh
+  . "$BASEDIR/obtain-token.sh"
 fi
 
-echo
-echo "Obtained access token: ${TOKEN}"
+echo "Obtained access token (len=${#TOKEN})"
 
-STORAGE_TYPE="FILE"
 if [ -z "${STORAGE_LOCATION}" ]; then
-    echo "STORAGE_LOCATION is not set, using FILE storage type"
-    STORAGE_LOCATION="file:///var/tmp/quickstart_catalog/"
+  STORAGE_LOCATION="file:///var/tmp/quickstart_catalog/"
+  STORAGE_TYPE="FILE"
 else
-    echo "STORAGE_LOCATION is set to '$STORAGE_LOCATION'"
-    if [[ "$STORAGE_LOCATION" == s3* ]]; then
-        STORAGE_TYPE="S3"
-    elif [[ "$STORAGE_LOCATION" == gs* ]]; then
-        STORAGE_TYPE="GCS"
-    else
-        STORAGE_TYPE="AZURE"
-    fi
-    echo "Using StorageType: $STORAGE_TYPE"
+  case "$STORAGE_LOCATION" in
+    s3*) STORAGE_TYPE="S3" ;;
+    gs*) STORAGE_TYPE="GCS" ;;
+    *) STORAGE_TYPE="AZURE" ;;
+  esac
 fi
 
 if [ -z "${STORAGE_CONFIG_INFO}" ]; then
-    STORAGE_CONFIG_INFO="{\"storageType\": \"$STORAGE_TYPE\", \"allowedLocations\": [\"$STORAGE_LOCATION\"]}"
-
-    if [[ "$STORAGE_TYPE" == "S3" ]]; then
-        STORAGE_CONFIG_INFO=$(echo "$STORAGE_CONFIG_INFO" | jq --arg roleArn "$AWS_ROLE_ARN" '. + {roleArn: $roleArn}')
-    elif [[ "$STORAGE_TYPE" == "AZURE" ]]; then
-        STORAGE_CONFIG_INFO=$(echo "$STORAGE_CONFIG_INFO" | jq --arg tenantId "$AZURE_TENANT_ID" '. + {tenantId: $tenantId}')
-    fi
+  STORAGE_CONFIG_INFO="{\"storageType\": \"$STORAGE_TYPE\", \"allowedLocations\": [\"$STORAGE_LOCATION\"]}"
 fi
 
+CATALOG_NAME="${CATALOG_NAME:-det_lake}"
+echo "Creating catalog ${CATALOG_NAME} in realm ${realm}..."
+
+PAYLOAD=$(
+  cat <<EOF
+{
+  "catalog": {
+    "name": "${CATALOG_NAME}",
+    "type": "INTERNAL",
+    "readOnly": false,
+    "properties": {
+      "default-base-location": "${STORAGE_LOCATION}"
+    },
+    "storageConfigInfo": ${STORAGE_CONFIG_INFO}
+  }
+}
+EOF
+)
+
+echo "$PAYLOAD"
+
+HTTP_CODE=$(curl -sS -o /tmp/create-catalog.out -w "%{http_code}" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -H "Polaris-Realm: ${realm}" \
+  http://polaris:8181/api/management/v1/catalogs \
+  -d "$PAYLOAD")
+
+cat /tmp/create-catalog.out
 echo
-echo Creating a catalog named ${CATALOG_NAME:-det_lake} in realm $realm...
+echo "create-catalog HTTP ${HTTP_CODE}"
 
-PAYLOAD='{
-   "catalog": {
-     "name": "'${CATALOG_NAME:-det_lake}'",
-     "type": "INTERNAL",
-     "readOnly": false,
-     "properties": {
-       "default-base-location": "'$STORAGE_LOCATION'"
-     },
-     "storageConfigInfo": '$STORAGE_CONFIG_INFO'
-   }
- }'
+# 201 created, 409 already exists
+case "$HTTP_CODE" in
+  200|201|409) ;;
+  *)
+    echo "Failed to create catalog" >&2
+    exit 1
+    ;;
+esac
 
-echo $PAYLOAD
-
-curl -s -H "Authorization: Bearer ${TOKEN}" \
-   -H 'Accept: application/json' \
-   -H 'Content-Type: application/json' \
-   -H "Polaris-Realm: $realm" \
-   http://polaris:8181/api/management/v1/catalogs \
-   -d "$PAYLOAD" -v
-
-echo
 echo Done.

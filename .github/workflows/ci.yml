@@ -64,7 +64,12 @@ jobs:
       - name: Start MinIO + Polaris
         # Shared MinIO for -m minio and -m polaris (docker/polaris-minio).
         run: |
-          docker compose -f docker/polaris-minio/docker-compose.yml up -d --wait
+          if ! docker compose -f docker/polaris-minio/docker-compose.yml up -d --wait; then
+            echo "compose --wait failed; dumping logs" >&2
+            docker compose -f docker/polaris-minio/docker-compose.yml ps -a >&2 || true
+            docker compose -f docker/polaris-minio/docker-compose.yml logs >&2 || true
+            exit 1
+          fi
           for i in $(seq 1 60); do
             if curl -sf http://127.0.0.1:9000/minio/health/live \
               && curl -sf http://127.0.0.1:8182/q/health; then
