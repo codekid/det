@@ -65,23 +65,34 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Start MinIO + Polaris
         # Shared MinIO for -m minio and -m polaris (docker/polaris-minio).
+        # compose --wait requires polaris-setup (one-shot) to exit 0; we also
+        # assert that exit code before the health loop so soak never starts on
+        # a failed catalog bootstrap / grants call.
         run: |
-          if ! docker compose -f docker/polaris-minio/docker-compose.yml up -d --wait; then
+          COMPOSE="docker compose -f docker/polaris-minio/docker-compose.yml"
+          if ! $COMPOSE up -d --wait; then
             echo "compose --wait failed; dumping logs" >&2
-            docker compose -f docker/polaris-minio/docker-compose.yml ps -a >&2 || true
-            docker compose -f docker/polaris-minio/docker-compose.yml logs >&2 || true
+            $COMPOSE ps -a >&2 || true
+            $COMPOSE logs >&2 || true
+            exit 1
+          fi
+          SETUP_ID=$($COMPOSE ps -aq polaris-setup)
+          SETUP_EC=$(docker inspect -f '{{.State.ExitCode}}' "$SETUP_ID")
+          if [ "$SETUP_EC" != "0" ]; then
+            echo "polaris-setup exited ${SETUP_EC}" >&2
+            $COMPOSE logs polaris-setup >&2 || true
             exit 1
           fi
           for i in $(seq 1 60); do
             if curl -sf http://127.0.0.1:9000/minio/health/live \
               && curl -sf http://127.0.0.1:8182/q/health; then
-              echo "minio+polaris ready"
+              echo "minio+polaris ready (polaris-setup ok)"
               exit 0
             fi
             sleep 2
           done
           echo "minio/polaris failed to become healthy" >&2
-          docker compose -f docker/polaris-minio/docker-compose.yml logs >&2 || true
+          $COMPOSE logs >&2 || true
           exit 1
       - name: Start fake-gcs-server
         # STORAGE_EMULATOR_HOST-compatible (same env as localgcp GCS).
