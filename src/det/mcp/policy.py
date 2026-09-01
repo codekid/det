@@ -215,6 +215,7 @@ def score_trace(
     violations.extend(_score_scenario(trace))
     violations.extend(_score_metrics_without_cube(trace))
     violations.extend(_score_dlt_landing(trace))
+    violations.extend(_score_full_validate_gating(trace))
     return violations
 
 
@@ -374,6 +375,50 @@ def _score_dlt_landing(trace: Trace) -> list[Violation]:
                     code="dlt_landing",
                     turn=turn_i,
                     detail="assistant text suggests dlt.pipeline / pipeline.run for landing",
+                )
+            )
+    return found
+
+
+def _score_full_validate_gating(trace: Trace) -> list[Violation]:
+    """Full-partition migrate dry-run must follow the sample ladder and confirm flag."""
+    found: list[Violation] = []
+    had_ladder = False
+    for turn_i, _ev_i, event in _iter_events(trace):
+        if event.type != "mcp":
+            continue
+        if event.name == "validate_sample":
+            had_ladder = True
+            continue
+        if event.name != "migrate_dry_run":
+            continue
+        args = event.arguments or {}
+        raw_limit = args.get("validate_limit", 50)
+        if raw_limit != 0:
+            if raw_limit == 50:
+                had_ladder = True
+            continue
+        if not args.get("confirm_full_validate"):
+            found.append(
+                Violation(
+                    code="full_validate_ungated",
+                    turn=turn_i,
+                    detail=(
+                        "migrate_dry_run validate_limit=0 without "
+                        "confirm_full_validate=true"
+                    ),
+                )
+            )
+            continue
+        if not had_ladder:
+            found.append(
+                Violation(
+                    code="full_validate_without_ladder",
+                    turn=turn_i,
+                    detail=(
+                        "migrate_dry_run validate_limit=0 without prior "
+                        "validate_sample or migrate_dry_run validate_limit=50"
+                    ),
                 )
             )
     return found

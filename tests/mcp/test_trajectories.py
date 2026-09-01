@@ -39,6 +39,8 @@ def test_trajectory_fixtures_cover_plan_ids():
         "prune_chain_apply",
         "migrate_dry_run_stop",
         "migrate_chain_write",
+        "migrate_full_validate_ungated",
+        "migrate_full_validate_gated_stop",
         "scaffold_ops_dry_run_stop",
         "scaffold_ops_chain_write",
         "fleet_cube_load",
@@ -84,6 +86,36 @@ def test_unknown_mcp_tool_is_a_violation():
         }
     )
     assert "unknown_mcp_tool" in violation_codes(score_trace(trace))
+
+
+def test_full_validate_limit_one_does_not_satisfy_ladder() -> None:
+    trace = trace_from_dict(
+        {
+            "id": "full_validate_limit_one",
+            "scenario": "migrate",
+            "expect": ["full_validate_without_ladder"],
+            "turns": [
+                {
+                    "events": [
+                        {
+                            "type": "mcp",
+                            "name": "migrate_dry_run",
+                            "arguments": {"validate_limit": 1},
+                        },
+                        {
+                            "type": "mcp",
+                            "name": "migrate_dry_run",
+                            "arguments": {
+                                "validate_limit": 0,
+                                "confirm_full_validate": True,
+                            },
+                        },
+                    ]
+                }
+            ],
+        }
+    )
+    assert violation_codes(score_trace(trace)) == {"full_validate_without_ladder"}
 
 
 def test_mcp_server_tools_are_inspect_only():

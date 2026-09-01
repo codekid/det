@@ -419,6 +419,7 @@ def check_project(
     ``lake_cloud_experimental`` when ``DET_LAKE_MODE=cloud``;
     ``approval_recommended_cloud_lake`` when cloud mode and
     ``DET_REQUIRE_APPROVAL`` is unset;
+    ``full_validate_gated`` when ``DET_ALLOW_FULL_VALIDATE`` is unset;
     ``iceberg_rest_uri_missing`` / ``iceberg_glue_requires_s3`` when catalog env
     is inconsistent.
     """
@@ -461,6 +462,7 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
         catalog_kind_from_env,
     )
     from det.runtime.approval import require_approvals_enabled
+    from det.runtime.full_validate import ENV_ALLOW_FULL_VALIDATE, full_validate_allowed
     from det.runtime.lake import (
         lake_mode_from_env,
         pick_lake_spec,
@@ -569,6 +571,20 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
                     ),
                 )
             )
+    if not full_validate_allowed(env=os.environ):
+        findings.append(
+            Finding(
+                severity="warning",
+                code="full_validate_gated",
+                pipeline="*",
+                path=ENV_ALLOW_FULL_VALIDATE,
+                detail=(
+                    "MCP full-partition migrate dry-run (validate_limit=0) is "
+                    "disabled until DET_ALLOW_FULL_VALIDATE=1. Use validate_sample "
+                    "and migrate_dry_run with validate_limit=50 first."
+                ),
+            )
+        )
     return findings
 
 

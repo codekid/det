@@ -34,6 +34,8 @@ jobs:
       # dbt parse, pytest), and tests/conftest.py clears this so suites must opt
       # in explicitly rather than inherit ambient CI env.
       DET_REQUIRE_APPROVAL: "1"
+      # MCP full-partition migrate dry-run gate; CI only runs det check (no MCP writes).
+      DET_ALLOW_FULL_VALIDATE: "1"
       DET_POSTGRES_DSN: postgresql://det:det@localhost:5432/det
       DET_LAKE_MODE: local
       DET_LAKE_PATH: ${{ github.workspace }}/data/lake
@@ -139,7 +141,8 @@ jobs:
       - name: dbt parse
         run: uv run dbt parse --project-dir dbt --profiles-dir dbt
       - name: Pytest
-        run: uv run pytest -q --cov=det --cov-report=term-missing:skip-covered
+        # -m "not lakehouse": live GCP Lakehouse REST needs ADC + billing; never CI.
+        run: uv run pytest -q -m "not lakehouse" --cov=det --cov-report=term-missing:skip-covered
 
   minimal:
     runs-on: ubuntu-latest

@@ -755,6 +755,7 @@ def migrate_dry_run(
     interval_end: str | None = None,
     from_raw: str | None = None,
     validate_limit: int = MAX_SAMPLE_LIMIT,
+    confirm_full_validate: bool = False,
     wire_version: int | None = None,
     recreate_iceberg: bool = False,
     all_raw: bool = False,
@@ -763,9 +764,14 @@ def migrate_dry_run(
 ) -> dict[str, Any]:
     """Preview det migrate: parse/map/validate raw partitions; never writes bronze."""
     _prepare_tool()
-    from det.mcp.inspect import clamp_sample_limit
+    from det.mcp.inspect._common import resolve_migrate_validate_limit
     from det.runtime.approval import migrate_write_argv
-    from det.runtime.migrate import BronzeMigrator, MigratePlan
+    from det.runtime.full_validate import assert_full_validate_allowed
+    from det.runtime.migrate import (
+        DEFAULT_MIGRATE_VALIDATE_MAX_ROWS,
+        BronzeMigrator,
+        MigratePlan,
+    )
     from det.runtime.pipelines import resolve_pipeline_ref
 
     if all_raw:
@@ -777,7 +783,11 @@ def migrate_dry_run(
         raise ValueError("interval_start is required unless all_raw")
 
     base = _root(root)
-    capped = clamp_sample_limit(validate_limit)
+    resolved_limit = resolve_migrate_validate_limit(validate_limit)
+    validate_max_rows: int | None = None
+    if resolved_limit is None:
+        assert_full_validate_allowed(confirm=confirm_full_validate)
+        validate_max_rows = DEFAULT_MIGRATE_VALIDATE_MAX_ROWS
     resolved = resolve_pipeline_ref(pipeline, project_root=base)
     schema_path = Path(schema)
     if not schema_path.is_absolute():
@@ -791,7 +801,8 @@ def migrate_dry_run(
         interval_end=interval_end,
         from_raw=from_raw,
         dry_run=True,
-        validate_limit=capped,
+        validate_limit=resolved_limit,
+        validate_max_rows=validate_max_rows,
         wire_version=wire_version,
         recreate_iceberg=recreate_iceberg,
         all_raw=all_raw,
@@ -800,7 +811,11 @@ def migrate_dry_run(
     if not isinstance(plan, MigratePlan):
         raise TypeError(f"expected MigratePlan, got {type(plan).__name__}")
     out = plan.to_dict()
-    out["validate_limit"] = capped
+    out["validate_limit"] = validate_limit
+    if confirm_full_validate:
+        out["confirm_full_validate"] = True
+    if validate_max_rows is not None:
+        out["validate_max_rows"] = validate_max_rows
     out["pipeline"] = resolved.canonical_id
     out["approval_plan"] = _approval_plan(
         "migrate",

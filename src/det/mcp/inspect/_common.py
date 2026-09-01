@@ -29,6 +29,19 @@ def clamp_sample_limit(limit: int | None = None) -> int:
     return max(1, min(int(limit), MAX_SAMPLE_LIMIT))
 
 
+def resolve_migrate_validate_limit(limit: int) -> int | None:
+    """Map MCP migrate_dry_run validate_limit: 0 → full partition, 1–50 → clamp."""
+    value = int(limit)
+    if value == 0:
+        return None
+    if 1 <= value <= MAX_SAMPLE_LIMIT:
+        return clamp_sample_limit(value)
+    raise ValueError(
+        f"validate_limit must be 0 (full partition, gated) or 1..{MAX_SAMPLE_LIMIT}, "
+        f"got {value}"
+    )
+
+
 def clamp_list_limit(limit: int | None = None) -> int:
     if limit is None:
         return DEFAULT_LIST_LIMIT
