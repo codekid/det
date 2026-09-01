@@ -461,8 +461,8 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
         ENV_REST_URI,
         catalog_kind_from_env,
     )
-    from det.runtime.full_validate import ENV_ALLOW_FULL_VALIDATE, full_validate_allowed
     from det.runtime.approval import require_approvals_enabled
+    from det.runtime.full_validate import ENV_ALLOW_FULL_VALIDATE, full_validate_allowed
     from det.runtime.lake import (
         lake_mode_from_env,
         pick_lake_spec,

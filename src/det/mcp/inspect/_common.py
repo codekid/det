@@ -7,11 +7,6 @@ from typing import Any, Literal
 
 from det.mcp.context import PathSandboxError, project_root, resolve_under_root
 from det.runtime.config import PipelineConfig, load_pipeline_config
-from det.runtime.full_validate import (
-    ENV_ALLOW_FULL_VALIDATE,
-    assert_full_validate_allowed,
-    full_validate_allowed,
-)
 from det.runtime.lake import LakeRef, is_lake_uri, open_lake
 from det.runtime.lake import relpath as lake_relpath
 from det.runtime.manifest import is_committed_raw_dir
