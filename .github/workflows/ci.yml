@@ -83,7 +83,7 @@ jobs:
             $COMPOSE logs polaris-setup >&2 || true
             exit 1
           fi
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             if curl -sf http://127.0.0.1:9000/minio/health/live \
               && curl -sf http://127.0.0.1:8182/q/health; then
               echo "minio+polaris ready (polaris-setup ok)"
