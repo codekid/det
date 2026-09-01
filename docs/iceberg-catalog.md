@@ -139,6 +139,9 @@ metadata will diverge.
 - `iceberg_glue_requires_s3` — `CATALOG=glue` with a non-`s3://` lake
 - `lake_cloud_experimental` — cloud lakes still warn; copy mentions whether
   `hadoop` or a managed catalog is selected
+- `approval_recommended_cloud_lake` — `DET_LAKE_MODE=cloud` without
+  `DET_REQUIRE_APPROVAL=1` (CLI/agent Path B; leave unset on the Airflow
+  scheduler)
 
 ## Related
 

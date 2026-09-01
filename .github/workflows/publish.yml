@@ -4,7 +4,7 @@
 #   - Add a trusted publisher: owner codekid, repo det, workflow publish.yml
 #   - Create the det-elt project on PyPI first (or let first upload create it)
 #
-# Release: tag v0.2.0, push tag, create GitHub Release from the tag.
+# Release: tag v0.3.0, push tag, create GitHub Release from the tag.
 
 name: publish
 
