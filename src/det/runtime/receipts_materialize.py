@@ -12,6 +12,7 @@ from datetime import date, datetime
 from typing import Any, cast
 
 from det.ingestion.iceberg_catalog_factory import (
+    ensure_iceberg_namespace,
     lake_ref_uri,
     maybe_bind_location,
     resolve_iceberg_catalog,
@@ -105,7 +106,7 @@ def ensure_ops_run_receipts_table(*, catalog: Any, location: str) -> Any:
     try:
         table = catalog.load_table(identifier)
     except NoSuchTableError:
-        catalog.create_namespace(OPS_NAMESPACE)
+        ensure_iceberg_namespace(catalog, OPS_NAMESPACE, table_location=location)
         return catalog.create_table(
             identifier,
             schema=schema,

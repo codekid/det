@@ -45,7 +45,9 @@ jobs:
       AWS_SECRET_ACCESS_KEY: minioadmin
       AWS_REGION: us-east-1
       DET_MINIO_BUCKET: det-ci
-      # Polaris REST catalog soak (tests/integration/test_polaris_iceberg_soak.py).
+      # Polaris REST env is present for -m polaris soaks; pin hadoop so the
+      # soft-default (URI set → rest) does not route the whole suite at Polaris.
+      DET_ICEBERG_CATALOG: hadoop
       DET_ICEBERG_REST_URI: http://127.0.0.1:8181/api/catalog
       DET_ICEBERG_REST_WAREHOUSE: det_lake
       DET_ICEBERG_REST_CREDENTIAL: root:s3cr3t

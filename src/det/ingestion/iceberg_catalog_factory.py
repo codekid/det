@@ -82,6 +82,53 @@ def maybe_bind_location(catalog: Any, identifier: Any, location: str) -> None:
         bind(identifier, location)
 
 
+def object_store_root_uri(location: str) -> str | None:
+    """Bucket root for object-store table URIs (``s3://b/…`` → ``s3://b/``).
+
+    Polaris/REST namespaces pin ``allowedLocations``; using the bucket root lets
+    many lake prefixes under one catalog share a namespace. Returns ``None`` for
+    ``file://`` / other schemes (Hadoop ignores namespace location props).
+    """
+    for scheme in ("s3://", "gs://"):
+        if not location.startswith(scheme):
+            continue
+        rest = location[len(scheme) :]
+        bucket = rest.split("/", 1)[0]
+        if not bucket:
+            return None
+        return f"{scheme}{bucket}/"
+    if location.startswith("gcs://"):
+        rest = location[len("gcs://") :]
+        bucket = rest.split("/", 1)[0]
+        if not bucket:
+            return None
+        return f"gs://{bucket}/"
+    return None
+
+
+def ensure_iceberg_namespace(
+    catalog: Any, namespace: str, *, table_location: str | None = None
+) -> None:
+    """Idempotent ``create_namespace``; set object-store ``location`` when known."""
+    props: dict[str, str] = {}
+    if table_location:
+        root = object_store_root_uri(table_location)
+        if root:
+            props["location"] = root
+    try:
+        if props:
+            catalog.create_namespace(namespace, props)
+        else:
+            catalog.create_namespace(namespace)
+    except Exception as exc:
+        name = type(exc).__name__
+        if "AlreadyExists" in name or "NamespaceAlreadyExists" in name:
+            return
+        if "already" in str(exc).lower():
+            return
+        raise
+
+
 def _file_io_props(warehouse: str, env: Mapping[str, str] | None) -> dict[str, str]:
     from det.runtime.object_store import iceberg_gcs_properties, iceberg_s3_properties
 

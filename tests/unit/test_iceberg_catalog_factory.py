@@ -52,6 +52,42 @@ def test_catalog_kind_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
         catalog_kind_from_env()
 
 
+def test_object_store_root_uri() -> None:
+    from det.ingestion.iceberg_catalog_factory import object_store_root_uri
+
+    assert object_store_root_uri("s3://det-ci/lake/bronze/x") == "s3://det-ci/"
+    assert object_store_root_uri("gs://b/a") == "gs://b/"
+    assert object_store_root_uri("gcs://b/a") == "gs://b/"
+    assert object_store_root_uri("file:///tmp/lake/bronze/x") is None
+
+
+def test_ensure_iceberg_namespace_idempotent_and_sets_location() -> None:
+    from det.ingestion.iceberg_catalog_factory import ensure_iceberg_namespace
+
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    class _Cat:
+        def create_namespace(self, namespace: str, properties: Any = None) -> None:
+            props = dict(properties or {})
+            calls.append((namespace, props))
+            if len(calls) > 1:
+                from pyiceberg.exceptions import NamespaceAlreadyExistsError
+
+                raise NamespaceAlreadyExistsError("already")
+
+    cat = _Cat()
+    ensure_iceberg_namespace(
+        cat, "bronze_example_api", table_location="s3://det-ci/lake/bronze/x"
+    )
+    ensure_iceberg_namespace(
+        cat, "bronze_example_api", table_location="s3://det-ci/lake/bronze/x"
+    )
+    assert calls == [
+        ("bronze_example_api", {"location": "s3://det-ci/"}),
+        ("bronze_example_api", {"location": "s3://det-ci/"}),
+    ]
+
+
 def test_rest_catalog_props_require_uri(tmp_path: Path) -> None:
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     with pytest.raises(ValueError, match=ENV_REST_URI):

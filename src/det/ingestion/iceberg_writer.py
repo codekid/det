@@ -15,6 +15,7 @@ from typing import Any
 
 from det.ingestion.chunks import iter_chunks
 from det.ingestion.iceberg_catalog_factory import (
+    ensure_iceberg_namespace,
     hadoop_catalog,
     lake_ref_uri,
     maybe_bind_location,
@@ -308,7 +309,9 @@ def ensure_iceberg_table(
     try:
         table = catalog.load_table(identifier)
     except NoSuchTableError:
-        catalog.create_namespace(identifier[0])
+        ensure_iceberg_namespace(
+            catalog, identifier[0], table_location=location
+        )
         return catalog.create_table(
             identifier,
             schema=schema,

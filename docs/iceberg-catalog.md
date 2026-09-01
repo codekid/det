@@ -72,8 +72,11 @@ make polaris-down
 Printed env includes `DET_ICEBERG_REST_CREDENTIAL=root:s3cr3t` (compose bootstrap
 only — not for production).
 
-CI starts the same compose for `-m minio` and `-m polaris` soaks. There is **no**
-live GCP Lakehouse or AWS Glue account soak.
+CI starts the same compose for `-m minio` and `-m polaris` soaks and sets
+`DET_ICEBERG_CATALOG=hadoop` at the job level so the soft-default (URI → rest)
+does not route the whole pytest suite at Polaris. Polaris tests set
+`DET_ICEBERG_CATALOG=rest` themselves. There is **no** live GCP Lakehouse or AWS
+Glue account soak.
 
 ## Examples
 

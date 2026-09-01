@@ -20,6 +20,7 @@ from det.ingestion.iceberg_catalog_factory import (
     ENV_REST_URI,
     IcebergCatalogKind,
     catalog_kind_from_env,
+    ensure_iceberg_namespace,
     resolve_iceberg_catalog,
 )
 from det.logging import get_logger
@@ -253,18 +254,10 @@ def approval_plan_for_register(argv: list[str]) -> ApprovalPlan:
     return make_plan("iceberg-register", argv)
 
 
-def _ensure_namespace(catalog: Any, namespace: str) -> None:
-    try:
-        catalog.create_namespace(namespace)
-    except Exception as exc:
-        # AlreadyExists and similar — idempotent.
-        name = type(exc).__name__
-        if "AlreadyExists" in name or "NamespaceAlreadyExists" in name:
-            return
-        # Some catalogs treat create as no-op when present.
-        if "already" in str(exc).lower():
-            return
-        raise
+def _ensure_namespace(
+    catalog: Any, namespace: str, *, table_location: str | None = None
+) -> None:
+    ensure_iceberg_namespace(catalog, namespace, table_location=table_location)
 
 
 def apply_iceberg_register(
@@ -289,7 +282,9 @@ def apply_iceberg_register(
             catalog.load_table(ident)
             status = "exists"
         except NoSuchTableError:
-            _ensure_namespace(catalog, table.namespace)
+            _ensure_namespace(
+                catalog, table.namespace, table_location=table.table_location
+            )
             logger.info(
                 "iceberg register",
                 namespace=table.namespace,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -72,6 +73,19 @@ def _isolate_approval_policy(monkeypatch: pytest.MonkeyPatch):
     tests would silently depend on ambient env and behave differently locally.
     """
     monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_iceberg_catalog(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest):
+    """Keep the main suite on Hadoop when CI/local Polaris REST env is present.
+
+    Soft-default ``DET_ICEBERG_REST_URI`` → ``rest`` would otherwise route every
+    Iceberg write at Polaris. Polaris-marked soaks opt in via their own env.
+    """
+    if request.node.get_closest_marker("polaris"):
+        return
+    if (os.environ.get("DET_ICEBERG_REST_URI") or "").strip():
+        monkeypatch.setenv("DET_ICEBERG_CATALOG", "hadoop")
 
 
 @pytest.fixture(autouse=True)
