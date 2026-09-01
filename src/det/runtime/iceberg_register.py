@@ -245,7 +245,8 @@ def iceberg_register_write_argv(
         argv.extend(["--lake-path", lake_path])
     if pipeline:
         argv.extend(["--pipeline", pipeline])
-    if skip_ops:
+    # Pipeline-scoped plans never include ops; keep argv in sync with that.
+    if skip_ops or pipeline is not None:
         argv.append("--skip-ops")
     return argv
 

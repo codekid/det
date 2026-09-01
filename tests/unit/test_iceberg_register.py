@@ -137,6 +137,22 @@ def test_argv() -> None:
     ]
 
 
+def test_argv_pipeline_implies_skip_ops() -> None:
+    """CLI builds argv via write_argv; pipeline plans always bind --skip-ops."""
+    argv = iceberg_register_write_argv(pipeline="example_api.events")
+    assert argv == [
+        "iceberg-register",
+        "--apply",
+        "--pipeline",
+        "example_api.events",
+        "--skip-ops",
+    ]
+    # Explicit False still normalizes when pipeline is set (approval binding).
+    assert "--skip-ops" in iceberg_register_write_argv(
+        pipeline="example_api.events", skip_ops=False
+    )
+
+
 def test_apply_register_then_exists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

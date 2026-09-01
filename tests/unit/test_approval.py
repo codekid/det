@@ -1227,7 +1227,7 @@ def test_bound_params_encoded_in_write_argv_builders():
                 ),
                 "pipeline": (
                     iceberg_register_write_argv(pipeline="noaa.storm_events"),
-                    ("--pipeline", "noaa.storm_events"),
+                    ("--pipeline", "noaa.storm_events", "--skip-ops"),
                 ),
                 "skip_ops": (
                     iceberg_register_write_argv(skip_ops=True),

@@ -273,7 +273,7 @@ def iceberg_register_cmd(
     argv = iceberg_register_write_argv(
         lake_path=lake_path,
         pipeline=pipeline,
-        skip_ops=skip_ops or pipeline is not None,
+        skip_ops=skip_ops,
     )
     try:
         plan = build_iceberg_register_plan(
