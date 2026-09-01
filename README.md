@@ -144,7 +144,9 @@ Prod on GCS: BigQuery reads Iceberg bronze via **BigLake** — see
 [docs/gcp-biglake.md](docs/gcp-biglake.md) (architecture C). For multi-engine
 metastores (`rest` / `glue`), see [docs/iceberg-catalog.md](docs/iceberg-catalog.md)
 (`DET_ICEBERG_CATALOG`, default `hadoop`). Local Polaris+MinIO: `make polaris-up`.
-Publish existing Hadoop tables with `det iceberg-register` after switching catalog.
+Publish existing Hadoop tables with `det iceberg-register --dry-run` then
+`--apply` (exactly one required) after switching catalog — see
+[docs/iceberg-catalog.md](docs/iceberg-catalog.md).
 
 | `destination.type` | Bronze |
 | --- | --- |
