@@ -12,7 +12,6 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlparse
 
 from det.ingestion.iceberg_catalog import resolve_metadata_location
 from det.ingestion.iceberg_catalog_factory import (
@@ -22,6 +21,7 @@ from det.ingestion.iceberg_catalog_factory import (
     catalog_kind_from_env,
     ensure_iceberg_namespace,
     resolve_iceberg_catalog,
+    rest_uri_identity,
 )
 from det.logging import get_logger
 from det.runtime.approval import ApprovalPlan, make_plan
@@ -190,7 +190,7 @@ def _require_register_catalog(
                 f"{ENV_CATALOG}=rest requires {ENV_REST_URI} "
                 "(Iceberg REST catalog endpoint)"
             )
-        rest_host = urlparse(uri).netloc or uri
+        rest_host = rest_uri_identity(uri)
         warehouse = (environ.get("DET_ICEBERG_REST_WAREHOUSE") or "").strip() or None
     else:
         if not lake_uri.startswith("s3://"):

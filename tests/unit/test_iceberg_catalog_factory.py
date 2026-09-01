@@ -19,6 +19,7 @@ from det.ingestion.iceberg_catalog_factory import (
     maybe_bind_location,
     resolve_iceberg_catalog,
     rest_catalog_props,
+    rest_uri_identity,
 )
 from det.ingestion.iceberg_writer import ensure_iceberg_table
 from det.runtime.lake import open_lake
@@ -44,6 +45,18 @@ def test_catalog_kind_soft_default_from_rest_uri(
     monkeypatch.delenv(ENV_CATALOG, raising=False)
     monkeypatch.setenv(ENV_REST_URI, "https://catalog.example/iceberg")
     assert catalog_kind_from_env() == "rest"
+
+
+def test_rest_uri_identity_scheme_path_and_no_userinfo() -> None:
+    assert (
+        rest_uri_identity("https://catalog.example:443/iceberg/v1")
+        == "https://catalog.example:443/iceberg/v1"
+    )
+    assert (
+        rest_uri_identity("http://alice:s3cr3t@catalog.example:8181/api/catalog?x=1#f")
+        == "http://catalog.example:8181/api/catalog"
+    )
+    assert rest_uri_identity("http://[::1]:8181/api") == "http://[::1]:8181/api"
 
 
 def test_catalog_kind_invalid(monkeypatch: pytest.MonkeyPatch) -> None:

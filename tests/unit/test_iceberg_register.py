@@ -108,7 +108,7 @@ def test_plan_builds_bronze_and_ops(
     monkeypatch.setenv("DET_ICEBERG_REST_WAREHOUSE", "det_lake")
     plan = build_iceberg_register_plan(project_root=tmp_path)
     assert plan.catalog_kind == "rest"
-    assert plan.rest_uri_host == "localhost:8181"
+    assert plan.rest_uri_host == "http://localhost:8181/api/catalog"
     assert plan.warehouse == "det_lake"
     names = {(t.namespace, t.table, t.kind) for t in plan.tables}
     assert ("bronze_example_api", "events_v1", "bronze") in names
@@ -171,8 +171,26 @@ def test_catalog_target_bound_into_approval_argv(
     target = argv[argv.index("--catalog-target") + 1]
     assert target == format_catalog_target(plan)
     assert "kind=rest" in target
-    assert "rest_host=catalog.example:8181" in target
+    assert "rest_host=http://catalog.example:8181/api/catalog" in target
     assert "warehouse=det_lake" in target
+
+
+def test_catalog_target_redacts_rest_uri_userinfo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_pipeline(tmp_path)
+    lake = _plant_bronze(tmp_path)
+    monkeypatch.setenv("DET_LAKE_PATH", str(lake))
+    monkeypatch.setenv(ENV_CATALOG, "rest")
+    monkeypatch.setenv(
+        ENV_REST_URI, "http://alice:s3cr3t@catalog.example:8181/api/catalog"
+    )
+    plan = build_iceberg_register_plan(project_root=tmp_path, include_ops=False)
+    assert plan.rest_uri_host == "http://catalog.example:8181/api/catalog"
+    target = format_catalog_target(plan)
+    assert "s3cr3t" not in target
+    assert "alice" not in target
+    assert "rest_host=http://catalog.example:8181/api/catalog" in target
 
 
 def test_apply_rejects_catalog_target_drift(
@@ -189,6 +207,22 @@ def test_apply_rejects_catalog_target_drift(
         assert_catalog_target_matches_env(plan)
     with pytest.raises(ValueError, match="catalog target changed"):
         apply_iceberg_register(plan, project_root=tmp_path)
+
+
+def test_apply_rejects_rest_path_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_pipeline(tmp_path)
+    lake = _plant_bronze(tmp_path)
+    monkeypatch.setenv("DET_LAKE_PATH", str(lake))
+    monkeypatch.setenv(ENV_CATALOG, "rest")
+    monkeypatch.setenv(ENV_REST_URI, "http://catalog.example:8181/api/catalog")
+    plan = build_iceberg_register_plan(project_root=tmp_path, include_ops=False)
+    monkeypatch.setenv(
+        ENV_REST_URI, "http://catalog.example:8181/api/catalog/v2"
+    )
+    with pytest.raises(ValueError, match="catalog target changed"):
+        assert_catalog_target_matches_env(plan)
 
 
 def test_apply_register_then_exists(

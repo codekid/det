@@ -139,9 +139,30 @@ def _file_io_props(warehouse: str, env: Mapping[str, str] | None) -> dict[str, s
     return {}
 
 
+def rest_uri_identity(uri: str) -> str:
+    """Canonical non-secret REST endpoint identity for digests and logs.
+
+    Includes scheme, host, explicit port, and path. Omits userinfo, query, and
+    fragment so inline credentials in ``DET_ICEBERG_REST_URI`` never appear in
+    approvals or structured logs.
+    """
+    raw = (uri or "").strip()
+    parsed = urlparse(raw)
+    hostname = parsed.hostname
+    if not parsed.scheme or not hostname:
+        # Opaque / unparseable: never echo netloc (may contain userinfo).
+        return parsed.path or raw.split("@")[-1]
+
+    if ":" in hostname and not hostname.startswith("["):
+        host = f"[{hostname}]"
+    else:
+        host = hostname
+    authority = f"{host}:{parsed.port}" if parsed.port is not None else host
+    return f"{parsed.scheme}://{authority}{parsed.path or ''}"
+
+
 def _rest_uri_host(uri: str) -> str:
-    parsed = urlparse(uri)
-    return parsed.netloc or uri
+    return rest_uri_identity(uri)
 
 
 def _is_aws_glue_rest_uri(uri: str) -> bool:
