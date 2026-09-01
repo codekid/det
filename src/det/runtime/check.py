@@ -428,7 +428,7 @@ def check_project(
         resolved = resolve_pipeline_ref(pipeline, project_root=root)
         return check_pipeline_config(resolved.path, project_root=root)
 
-    findings.extend(_lake_mode_findings())
+    findings.extend(_lake_mode_findings(root))
 
     paths = discover_pipeline_files(root)
     if not paths:
@@ -449,7 +449,7 @@ def check_project(
     return findings
 
 
-def _lake_mode_findings() -> list[Finding]:
+def _lake_mode_findings(project_root: Path) -> list[Finding]:
     """Validate DET_LAKE_MODE / Iceberg catalog env against the resolved lake URI."""
     import os
 
@@ -524,21 +524,7 @@ def _lake_mode_findings() -> list[Finding]:
                 )
             )
     elif kind == "glue":
-        lake_text = (spec or "").strip()
-        if not lake_text.startswith("s3://"):
-            findings.append(
-                Finding(
-                    severity="error",
-                    code="iceberg_glue_requires_s3",
-                    pipeline="*",
-                    path=spec,
-                    detail=(
-                        f"{ENV_CATALOG}=glue requires an s3:// lake "
-                        f"(got {lake_text!r}); use rest for GCS Lakehouse "
-                        "or keep hadoop"
-                    ),
-                )
-            )
+        findings.extend(_iceberg_glue_lake_findings(project_root))
 
     if mode == "cloud":
         if kind == "hadoop":
@@ -565,6 +551,61 @@ def _lake_mode_findings() -> list[Finding]:
                 detail=detail,
             )
         )
+    return findings
+
+
+def _iceberg_glue_lake_findings(project_root: Path) -> list[Finding]:
+    """Glue catalog needs s3:// for each lake URI registration would use."""
+    import os
+
+    from det.runtime.iceberg_register import _lake_uri_str, _require_register_catalog
+    from det.runtime.lake import open_lake, pick_lake_spec
+
+    root = project_root.resolve()
+    environ = dict(os.environ)
+    findings: list[Finding] = []
+    checked: set[str] = set()
+
+    def _check(pipeline_id: str, lake_spec: str) -> None:
+        key = lake_spec.strip()
+        if not key or key in checked:
+            return
+        checked.add(key)
+        try:
+            lake = open_lake(lake_spec, root, env=environ)
+            lake_uri = _lake_uri_str(lake)
+        except ValueError:
+            # Mode mismatch etc. — still validate the effective spec string
+            # registration would pick (destination.path wins over DET_LAKE_PATH).
+            lake_uri = key
+        try:
+            _require_register_catalog(environ, lake_uri)
+        except ValueError as exc:
+            msg = str(exc)
+            if "s3://" not in msg and "glue" not in msg.lower():
+                return
+            findings.append(
+                Finding(
+                    severity="error",
+                    code="iceberg_glue_requires_s3",
+                    pipeline=pipeline_id,
+                    path=lake_spec,
+                    detail=msg,
+                )
+            )
+
+    # Same precedence as iceberg-register: destination.path then DET_LAKE_PATH.
+    _check("*", pick_lake_spec(env=environ))
+    for path in discover_pipeline_files(root):
+        try:
+            config = load_pipeline_config(path)
+        except Exception:
+            continue
+        effective = pick_lake_spec(
+            destination_path=config.destination.path,
+            env=environ,
+        )
+        _check(config.name, effective)
     return findings
 
 
