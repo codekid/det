@@ -144,6 +144,36 @@ def _rest_uri_host(uri: str) -> str:
     return parsed.netloc or uri
 
 
+def _is_aws_glue_rest_uri(uri: str) -> bool:
+    """True for Glue Iceberg REST hosts (``glue.<region>.amazonaws.com``)."""
+    host = (urlparse(uri).hostname or "").lower()
+    return host.startswith("glue.") and host.endswith(".amazonaws.com")
+
+
+def _glue_rest_sigv4_props(
+    uri: str, env: Mapping[str, str]
+) -> dict[str, str]:
+    """PyIceberg REST SigV4 props for AWS Glue Iceberg REST catalogs."""
+    if not _is_aws_glue_rest_uri(uri):
+        return {}
+    from det.runtime.object_store import s3_region_from_env
+
+    props: dict[str, str] = {
+        "rest.sigv4-enabled": "true",
+        "rest.signing-name": "glue",
+    }
+    region = s3_region_from_env(env)
+    if not region:
+        host = (urlparse(uri).hostname or "").lower()
+        # glue.us-east-1.amazonaws.com → us-east-1
+        parts = host.split(".")
+        if len(parts) >= 4 and parts[0] == "glue":
+            region = parts[1]
+    if region:
+        props["rest.signing-region"] = region
+    return props
+
+
 def hadoop_catalog(lake: LakeRef, *, env: Mapping[str, str] | None = None) -> Any:
     """DET filesystem catalog (``version-hint.text`` on the table location)."""
     _require_iceberg()
@@ -181,6 +211,7 @@ def rest_catalog_props(
     realm = (environ.get(ENV_REST_REALM) or "").strip()
     if realm:
         props["header.Polaris-Realm"] = realm
+    props.update(_glue_rest_sigv4_props(uri, environ))
     props.update(_file_io_props(lake_ref_uri(lake), env))
     return props
 

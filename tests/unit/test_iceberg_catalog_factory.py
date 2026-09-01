@@ -118,6 +118,54 @@ def test_rest_catalog_props_default_warehouse_to_lake(tmp_path: Path) -> None:
     )
     assert props["warehouse"].startswith("file://")
     assert "credential" not in props
+    assert "rest.sigv4-enabled" not in props
+
+
+def test_rest_catalog_props_glue_enables_sigv4() -> None:
+    class _Fake:
+        is_local = False
+
+        def __str__(self) -> str:
+            return "s3://bucket/det-lake"
+
+    props = rest_catalog_props(
+        _Fake(),  # type: ignore[arg-type]
+        env={
+            ENV_REST_URI: "https://glue.us-west-2.amazonaws.com/iceberg",
+            ENV_REST_WAREHOUSE: "s3://bucket/det-lake",
+            "AWS_REGION": "us-west-2",
+        },
+    )
+    assert props["rest.sigv4-enabled"] == "true"
+    assert props["rest.signing-name"] == "glue"
+    assert props["rest.signing-region"] == "us-west-2"
+
+
+def test_resolve_rest_glue_passes_sigv4_to_load_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("pyiceberg")
+    monkeypatch.setenv(ENV_CATALOG, "rest")
+    monkeypatch.setenv(
+        ENV_REST_URI, "https://glue.us-east-1.amazonaws.com/iceberg"
+    )
+    monkeypatch.setenv(ENV_REST_WAREHOUSE, "s3://bucket/lake")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    lake.mkdir(parents=True, exist_ok=True)
+    sentinel = object()
+    seen: dict[str, str] = {}
+
+    def _fake_load(name: str, **props: str) -> object:
+        assert name == "det"
+        seen.update(props)
+        return sentinel
+
+    monkeypatch.setattr("pyiceberg.catalog.load_catalog", _fake_load)
+    assert resolve_iceberg_catalog(lake) is sentinel
+    assert seen["rest.sigv4-enabled"] == "true"
+    assert seen["rest.signing-name"] == "glue"
+    assert seen["rest.signing-region"] == "us-east-1"
 
 
 def test_glue_catalog_props_require_s3(tmp_path: Path) -> None:
