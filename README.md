@@ -295,4 +295,4 @@ never `dlt.pipeline` for landing.
 | Cube MCP `cube_unavailable` | `make cube-up`; copy `cube/.env.example` → `cube/.env` |
 | DuckDB lock with Cube | Do not `det dbt` while Cube has that file open |
 | `DET_LAKE_MODE=local forbids…` / `requires an s3://` | Align mode and path: local + filesystem, or cloud + `s3://`/`gs://` |
-| GCS soak / localgcp | Set `STORAGE_EMULATOR_HOST` (`http://127.0.0.1:4443`), `GOOGLE_CLOUD_PROJECT`, `DET_GCS_BUCKET`; `pytest -m gcs`. BigLake needs a real GCP project — see [docs/gcp-biglake.md](docs/gcp-biglake.md) |
+| GCS soak / localgcp | Set `STORAGE_EMULATOR_HOST` (`http://127.0.0.1:4443`), `GOOGLE_CLOUD_PROJECT`, `DET_GCS_BUCKET`; `pytest -m gcs`. Lakehouse REST on real GCP: [docs/gcp-lakehouse-soak.md](docs/gcp-lakehouse-soak.md) (`pytest -m lakehouse`). BigLake BQ externals: [docs/gcp-biglake.md](docs/gcp-biglake.md) |

@@ -8,6 +8,7 @@ REST (GCP Lakehouse, Polaris, Glue Iceberg REST, …) or classic AWS Glue via
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -15,6 +16,7 @@ from urllib.parse import urlparse
 from det.logging import get_logger
 from det.optional_deps import pip_extra_hint
 from det.runtime.lake import LakeRef
+from det.runtime.object_store import gcs_project_from_env, iceberg_gcs_properties
 
 logger = get_logger(__name__)
 
@@ -26,7 +28,10 @@ ENV_REST_WAREHOUSE = "DET_ICEBERG_REST_WAREHOUSE"
 ENV_REST_CREDENTIAL = "DET_ICEBERG_REST_CREDENTIAL"
 ENV_REST_SCOPE = "DET_ICEBERG_REST_SCOPE"
 ENV_REST_REALM = "DET_ICEBERG_REST_REALM"
+ENV_REST_ACCESS_DELEGATION = "DET_ICEBERG_REST_ACCESS_DELEGATION"
 ENV_GLUE_ID = "DET_ICEBERG_GLUE_ID"
+
+_BL_WAREHOUSE_PROJECT = re.compile(r"^bl://projects/([^/]+)/catalogs/")
 
 _ICEBERG_HINT = pip_extra_hint("iceberg")
 _KINDS = frozenset({"hadoop", "rest", "glue"})
@@ -129,8 +134,48 @@ def ensure_iceberg_namespace(
         raise
 
 
+def _is_gcp_lakehouse_rest_uri(uri: str) -> bool:
+    host = (urlparse(uri).hostname or "").lower()
+    return host == "biglake.googleapis.com"
+
+
+def _gcp_lakehouse_project(warehouse: str, env: Mapping[str, str]) -> str | None:
+    match = _BL_WAREHOUSE_PROJECT.match(warehouse.strip())
+    if match:
+        return match.group(1)
+    for key in ("DET_GCP_PROJECT", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "GCP_PROJECT"):
+        text = (env.get(key) or "").strip()
+        if text:
+            return text
+    return gcs_project_from_env(env)
+
+
+def _gcp_lakehouse_rest_props(
+    uri: str, warehouse: str, env: Mapping[str, str]
+) -> dict[str, Any]:
+    """PyIceberg REST props for GCP Lakehouse (ADC + billing project header)."""
+    if not _is_gcp_lakehouse_rest_uri(uri):
+        return {}
+    project = _gcp_lakehouse_project(warehouse, env)
+    if not project:
+        return {}
+    props: dict[str, Any] = {
+        "auth": {"type": "google"},
+        "header.x-goog-user-project": project,
+    }
+    delegation = (env.get(ENV_REST_ACCESS_DELEGATION) or "").strip()
+    if not delegation and warehouse.startswith("bl://"):
+        delegation = "vended-credentials"
+    if delegation:
+        props["header.X-Iceberg-Access-Delegation"] = delegation
+    creds_path = (env.get("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+    if creds_path:
+        props["auth"] = {"type": "google", "google": {"credentials_path": creds_path}}
+    return props
+
+
 def _file_io_props(warehouse: str, env: Mapping[str, str] | None) -> dict[str, str]:
-    from det.runtime.object_store import iceberg_gcs_properties, iceberg_s3_properties
+    from det.runtime.object_store import iceberg_s3_properties
 
     if warehouse.startswith("s3://"):
         return dict(iceberg_s3_properties(env))
@@ -208,7 +253,7 @@ def hadoop_catalog(lake: LakeRef, *, env: Mapping[str, str] | None = None) -> An
 
 def rest_catalog_props(
     lake: LakeRef, *, env: Mapping[str, str] | None = None
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Build PyIceberg REST catalog properties (no network)."""
     environ = _env(env)
     uri = (environ.get(ENV_REST_URI) or "").strip()
@@ -218,19 +263,21 @@ def rest_catalog_props(
             "(Iceberg REST catalog endpoint)"
         )
     explicit_warehouse = (environ.get(ENV_REST_WAREHOUSE) or "").strip()
-    props: dict[str, str] = {
+    lake_uri = lake_ref_uri(lake)
+    warehouse = explicit_warehouse or (
+        lake_uri if not _is_aws_glue_rest_uri(uri) else ""
+    )
+    props: dict[str, Any] = {
         "type": "rest",
         "uri": uri,
     }
-    if explicit_warehouse:
-        props["warehouse"] = explicit_warehouse
-    elif not _is_aws_glue_rest_uri(uri):
-        # Polaris / Lakehouse: default warehouse to the lake root.
-        # Glue Iceberg REST: omit — warehouse is a catalog id, not the lake URI.
-        props["warehouse"] = lake_ref_uri(lake)
+    if warehouse:
+        props["warehouse"] = warehouse
     credential = (environ.get(ENV_REST_CREDENTIAL) or "").strip()
     if credential:
         props["credential"] = credential
+    elif _is_gcp_lakehouse_rest_uri(uri):
+        props.update(_gcp_lakehouse_rest_props(uri, warehouse, environ))
     scope = (environ.get(ENV_REST_SCOPE) or "").strip()
     if scope:
         props["scope"] = scope
@@ -238,7 +285,7 @@ def rest_catalog_props(
     if realm:
         props["header.Polaris-Realm"] = realm
     props.update(_glue_rest_sigv4_props(uri, environ))
-    props.update(_file_io_props(lake_ref_uri(lake), env))
+    props.update(_file_io_props(lake_uri, env))
     return props
 
 

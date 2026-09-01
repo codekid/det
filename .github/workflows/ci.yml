@@ -139,7 +139,8 @@ jobs:
       - name: dbt parse
         run: uv run dbt parse --project-dir dbt --profiles-dir dbt
       - name: Pytest
-        run: uv run pytest -q --cov=det --cov-report=term-missing:skip-covered
+        # -m "not lakehouse": live GCP Lakehouse REST needs ADC + billing; never CI.
+        run: uv run pytest -q -m "not lakehouse" --cov=det --cov-report=term-missing:skip-covered
 
   minimal:
     runs-on: ubuntu-latest

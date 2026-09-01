@@ -22,7 +22,8 @@ SQL / Iceberg identity stays `{medallion}_{provider}.{source}_vN`
 | `DET_ICEBERG_CATALOG` | `hadoop` \| `rest` \| `glue`. Unset/empty → `hadoop`. If unset but `DET_ICEBERG_REST_URI` is set → soft-default `rest`. Never auto-picks `glue` from `s3://` alone. |
 | `DET_ICEBERG_REST_URI` | Required for `rest` — catalog HTTP endpoint |
 | `DET_ICEBERG_REST_WAREHOUSE` | Optional warehouse / catalog id (defaults to the lake URI) |
-| `DET_ICEBERG_REST_CREDENTIAL` | Optional `client_id:secret` or token. Prefer ADC / IAM on GCP and AWS when possible. **Secret** — do not put in pipeline YAML. |
+| `DET_ICEBERG_REST_CREDENTIAL` | Optional `client_id:secret` or token (Polaris, …). **Not used for GCP Lakehouse** — DET sets PyIceberg `auth.type=google` (ADC) when `DET_ICEBERG_REST_URI` is `biglake.googleapis.com`. **Secret** — do not put in pipeline YAML. |
+| `DET_ICEBERG_REST_ACCESS_DELEGATION` | Optional `header.X-Iceberg-Access-Delegation` (default `vended-credentials` for `bl://` warehouses). Set to empty for user-credentials catalogs. |
 | `DET_ICEBERG_REST_SCOPE` | Optional OAuth scope (Polaris: `PRINCIPAL_ROLE:ALL`) |
 | `DET_ICEBERG_REST_REALM` | Optional `header.Polaris-Realm` (Polaris: `POLARIS`) |
 | `DET_ICEBERG_GLUE_ID` | Optional Glue catalog id (cross-account) |
@@ -76,7 +77,8 @@ CI starts the same compose for `-m minio` and `-m polaris` soaks and sets
 `DET_ICEBERG_CATALOG=hadoop` at the job level so the soft-default (URI → rest)
 does not route the whole pytest suite at Polaris. Polaris tests set
 `DET_ICEBERG_CATALOG=rest` themselves. There is **no** live GCP Lakehouse or AWS
-Glue account soak.
+Glue account soak in CI. Manual sandbox only (not CI): [`gcp-lakehouse-soak.md`](gcp-lakehouse-soak.md)
+(`pytest -m lakehouse` with ADC + `bl://` warehouse env).
 
 ## Examples
 
@@ -98,7 +100,8 @@ export DET_LAKE_PATH=gs://YOUR_BUCKET/det-lake
 export DET_ICEBERG_CATALOG=rest
 export DET_ICEBERG_REST_URI=https://biglake.googleapis.com/iceberg/v1/restcatalog
 export DET_ICEBERG_REST_WAREHOUSE=bl://projects/PROJECT/catalogs/CATALOG_ID
-# ADC / workload identity — usually no DET_ICEBERG_REST_CREDENTIAL
+# ADC via PyIceberg google auth (auto when URI is biglake.googleapis.com)
+# Grant catalog + bucket IAM; vended-credentials needs BigLake SA on the bucket
 ```
 
 This is different from [`det biglake-register`](gcp-biglake.md), which creates

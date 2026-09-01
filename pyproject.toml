@@ -107,6 +107,7 @@ markers = [
     "minio: live MinIO/S3 (skipped unless AWS_ENDPOINT_URL is set)",
     "polaris: live Polaris REST + MinIO (skipped unless DET_ICEBERG_REST_URI is set)",
     "gcs: live GCS emulator (skipped unless STORAGE_EMULATOR_HOST is set)",
+    "lakehouse: live GCP Lakehouse REST + gs:// (skipped unless DET_ICEBERG_REST_WAREHOUSE bl:// is set)",
 ]
 
 [tool.ruff]

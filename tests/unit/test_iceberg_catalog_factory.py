@@ -121,6 +121,22 @@ def test_rest_catalog_props_builds(tmp_path: Path) -> None:
     assert props["uri"].startswith("https://biglake.googleapis.com/")
     assert props["warehouse"] == "bl://projects/p/catalogs/c"
     assert props["credential"] == "cid:secret"
+    assert "auth" not in props
+
+
+def test_rest_catalog_props_gcp_lakehouse_adc(tmp_path: Path) -> None:
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    props = rest_catalog_props(
+        lake,
+        env={
+            ENV_REST_URI: "https://biglake.googleapis.com/iceberg/v1/restcatalog",
+            ENV_REST_WAREHOUSE: "bl://projects/my-proj/catalogs/c",
+        },
+    )
+    assert props["auth"] == {"type": "google"}
+    assert props["header.x-goog-user-project"] == "my-proj"
+    assert props["header.X-Iceberg-Access-Delegation"] == "vended-credentials"
+    assert "credential" not in props
 
 
 def test_rest_catalog_props_default_warehouse_to_lake(tmp_path: Path) -> None:
