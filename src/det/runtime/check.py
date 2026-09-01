@@ -417,6 +417,8 @@ def check_project(
     Warnings: missing dbt stg/silver when ``dbt/`` exists;
     ``scaffold_sql_stale`` when silver SQL drifts from scaffold templates;
     ``lake_cloud_experimental`` when ``DET_LAKE_MODE=cloud``;
+    ``approval_recommended_cloud_lake`` when cloud mode and
+    ``DET_REQUIRE_APPROVAL`` is unset;
     ``iceberg_rest_uri_missing`` / ``iceberg_glue_requires_s3`` when catalog env
     is inconsistent.
     """
@@ -458,6 +460,7 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
         ENV_REST_URI,
         catalog_kind_from_env,
     )
+    from det.runtime.approval import require_approvals_enabled
     from det.runtime.lake import (
         lake_mode_from_env,
         pick_lake_spec,
@@ -551,6 +554,21 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
                 detail=detail,
             )
         )
+        if not require_approvals_enabled():
+            findings.append(
+                Finding(
+                    severity="warning",
+                    code="approval_recommended_cloud_lake",
+                    pipeline="*",
+                    path="DET_REQUIRE_APPROVAL",
+                    detail=(
+                        "DET_LAKE_MODE=cloud without DET_REQUIRE_APPROVAL=1: "
+                        "CLI/agent sessions can write without an approved plan. "
+                        "Set DET_REQUIRE_APPROVAL=1 for Path B (intent-binding, "
+                        "not authorization). Leave unset on the Airflow scheduler."
+                    ),
+                )
+            )
     return findings
 
 

@@ -288,12 +288,39 @@ def test_lake_cloud_experimental_warning(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("DET_LAKE_PATH", "s3://bucket/det-lake")
     monkeypatch.delenv("DET_ICEBERG_CATALOG", raising=False)
     monkeypatch.delenv("DET_ICEBERG_REST_URI", raising=False)
+    monkeypatch.setenv("DET_REQUIRE_APPROVAL", "1")
     findings = check_project(tmp_path)
     assert not has_errors(findings)
     assert has_warnings(findings)
     cloud = [f for f in findings if f.code == "lake_cloud_experimental"]
     assert len(cloud) == 1
     assert "hadoop" in cloud[0].detail
+    assert not any(f.code == "approval_recommended_cloud_lake" for f in findings)
+
+
+def test_approval_recommended_cloud_lake_when_gate_off(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_pipeline(tmp_path)
+    monkeypatch.setenv("DET_LAKE_MODE", "cloud")
+    monkeypatch.setenv("DET_LAKE_PATH", "s3://bucket/det-lake")
+    monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
+    monkeypatch.delenv("DET_ICEBERG_CATALOG", raising=False)
+    monkeypatch.delenv("DET_ICEBERG_REST_URI", raising=False)
+    findings = check_project(tmp_path)
+    assert not has_errors(findings)
+    assert any(f.code == "approval_recommended_cloud_lake" for f in findings)
+
+
+def test_approval_recommended_cloud_lake_skipped_for_local(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_pipeline(tmp_path)
+    monkeypatch.setenv("DET_LAKE_MODE", "local")
+    monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path / "data" / "lake"))
+    monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
+    findings = check_project(tmp_path)
+    assert not any(f.code == "approval_recommended_cloud_lake" for f in findings)
 
 
 def test_iceberg_rest_uri_missing_is_error(tmp_path: Path, monkeypatch):
@@ -341,11 +368,13 @@ def test_iceberg_rest_ok_with_uri(tmp_path: Path, monkeypatch):
         "DET_ICEBERG_REST_URI",
         "https://biglake.googleapis.com/iceberg/v1/restcatalog",
     )
+    monkeypatch.setenv("DET_REQUIRE_APPROVAL", "1")
     findings = check_project(tmp_path)
     assert not has_errors(findings)
     cloud = [f for f in findings if f.code == "lake_cloud_experimental"]
     assert len(cloud) == 1
     assert "rest" in cloud[0].detail
+    assert not any(f.code == "approval_recommended_cloud_lake" for f in findings)
 
 
 def test_ingestion_library_dlt_deprecated_warning(tmp_path: Path):
