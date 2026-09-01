@@ -1216,6 +1216,25 @@ def test_bound_params_encoded_in_write_argv_builders():
                 ),
                 "apply": (base, ("--apply",)),  # implicit: always present
             }
+        elif command == "iceberg-register":
+            from det.runtime.iceberg_register import iceberg_register_write_argv
+
+            base = iceberg_register_write_argv()
+            checks = {
+                "lake_path": (
+                    iceberg_register_write_argv(lake_path="s3://bucket/lake"),
+                    ("--lake-path", "s3://bucket/lake"),
+                ),
+                "pipeline": (
+                    iceberg_register_write_argv(pipeline="noaa.storm_events"),
+                    ("--pipeline", "noaa.storm_events", "--skip-ops"),
+                ),
+                "skip_ops": (
+                    iceberg_register_write_argv(skip_ops=True),
+                    ("--skip-ops",),
+                ),
+                "apply": (base, ("--apply",)),  # implicit: always present
+            }
         elif command == "lock-release":
             base = lock_release_write_argv("noaa.storm_events", "2026-08-06")
             checks = {

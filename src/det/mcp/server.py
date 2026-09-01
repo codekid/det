@@ -45,6 +45,7 @@ def create_server():
             "--approval. Inspect records: list_approvals (status=claimed finds one "
             "stuck by a crashed run) / describe_approval. "
             "biglake_register_dry_run previews BigLake registration (never writes). "
+            "iceberg_register_dry_run previews REST/Glue catalog registration (never writes). "
             "Prompts det_ops / det_new_source / det_migrate / det_dbt / det_airflow "
             "load .cursor/skills playbooks. "
             "dlt is extraction only — never suggest dlt.pipeline for landing."
@@ -355,6 +356,19 @@ def create_server():
             project=project,
             location=location,
             connection=connection,
+            skip_ops=skip_ops,
+        )
+
+    @mcp.tool()
+    def iceberg_register_dry_run(
+        pipeline: p.PipelineRefOpt = None,
+        lake_path: p.LakePathOpt = None,
+        skip_ops: bool = False,
+    ) -> dict[str, Any]:
+        """Preview Iceberg REST/Glue registration (never mutates the catalog)."""
+        return t.iceberg_register_dry_run(
+            pipeline=pipeline,
+            lake_path=lake_path,
             skip_ops=skip_ops,
         )
 

@@ -286,10 +286,66 @@ def test_lake_cloud_experimental_warning(tmp_path: Path, monkeypatch):
     _write_pipeline(tmp_path)
     monkeypatch.setenv("DET_LAKE_MODE", "cloud")
     monkeypatch.setenv("DET_LAKE_PATH", "s3://bucket/det-lake")
+    monkeypatch.delenv("DET_ICEBERG_CATALOG", raising=False)
+    monkeypatch.delenv("DET_ICEBERG_REST_URI", raising=False)
     findings = check_project(tmp_path)
     assert not has_errors(findings)
     assert has_warnings(findings)
-    assert any(f.code == "lake_cloud_experimental" for f in findings)
+    cloud = [f for f in findings if f.code == "lake_cloud_experimental"]
+    assert len(cloud) == 1
+    assert "hadoop" in cloud[0].detail
+
+
+def test_iceberg_rest_uri_missing_is_error(tmp_path: Path, monkeypatch):
+    _write_pipeline(tmp_path)
+    monkeypatch.setenv("DET_ICEBERG_CATALOG", "rest")
+    monkeypatch.delenv("DET_ICEBERG_REST_URI", raising=False)
+    monkeypatch.delenv("DET_LAKE_MODE", raising=False)
+    monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    findings = check_project(tmp_path)
+    assert has_errors(findings)
+    assert any(f.code == "iceberg_rest_uri_missing" for f in findings)
+
+
+def test_iceberg_glue_requires_s3_is_error(tmp_path: Path, monkeypatch):
+    _write_pipeline(tmp_path)
+    monkeypatch.setenv("DET_ICEBERG_CATALOG", "glue")
+    monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path / "data" / "lake"))
+    monkeypatch.delenv("DET_LAKE_MODE", raising=False)
+    findings = check_project(tmp_path)
+    assert has_errors(findings)
+    assert any(f.code == "iceberg_glue_requires_s3" for f in findings)
+
+
+def test_iceberg_glue_requires_s3_uses_destination_path(
+    tmp_path: Path, monkeypatch
+):
+    """Env lake may be s3:// while destination.path is local — register uses dest."""
+    _write_pipeline(tmp_path)
+    monkeypatch.setenv("DET_ICEBERG_CATALOG", "glue")
+    monkeypatch.setenv("DET_LAKE_MODE", "cloud")
+    monkeypatch.setenv("DET_LAKE_PATH", "s3://bucket/det-lake")
+    findings = check_project(tmp_path)
+    assert has_errors(findings)
+    glue = [f for f in findings if f.code == "iceberg_glue_requires_s3"]
+    assert glue
+    assert any(f.pipeline == "example_api.events" for f in glue)
+
+
+def test_iceberg_rest_ok_with_uri(tmp_path: Path, monkeypatch):
+    _write_pipeline(tmp_path)
+    monkeypatch.setenv("DET_LAKE_MODE", "cloud")
+    monkeypatch.setenv("DET_LAKE_PATH", "gs://bucket/det-lake")
+    monkeypatch.setenv("DET_ICEBERG_CATALOG", "rest")
+    monkeypatch.setenv(
+        "DET_ICEBERG_REST_URI",
+        "https://biglake.googleapis.com/iceberg/v1/restcatalog",
+    )
+    findings = check_project(tmp_path)
+    assert not has_errors(findings)
+    cloud = [f for f in findings if f.code == "lake_cloud_experimental"]
+    assert len(cloud) == 1
+    assert "rest" in cloud[0].detail
 
 
 def test_ingestion_library_dlt_deprecated_warning(tmp_path: Path):

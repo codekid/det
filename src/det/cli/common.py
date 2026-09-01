@@ -147,6 +147,7 @@ _BOUND_PARAMS: dict[str, frozenset[str]] = {
     "biglake-register": frozenset(
         {"lake_path", "pipeline", "project", "location", "connection", "skip_ops", "apply"}
     ),
+    "iceberg-register": frozenset({"lake_path", "pipeline", "skip_ops", "apply"}),
     "lock-release": frozenset(
         {"pipeline", "interval_start", "interval_end", "dataset_id", "force", "lake_path"}
     ),

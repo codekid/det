@@ -1,18 +1,26 @@
 """DET-owned Iceberg+Parquet bronze writer (PyIceberg + PyArrow).
 
-Not dlt.pipeline, not Spark. Hadoop-style catalog on the lake root; table files
-live at ``{lake}/bronze/{provider}/{source}_vN/`` (Iceberg owns data-file names).
+Not dlt.pipeline, not Spark. Catalog is env-selected (hadoop default; rest/glue
+via ``DET_ICEBERG_CATALOG``). Table files live at
+``{lake}/bronze/{provider}/{source}_vN/`` (Iceberg owns data-file names).
 """
 
 from __future__ import annotations
 
 import json
 import warnings
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable
 from datetime import date, datetime
 from typing import Any
 
 from det.ingestion.chunks import iter_chunks
+from det.ingestion.iceberg_catalog_factory import (
+    ensure_iceberg_namespace,
+    hadoop_catalog,
+    lake_ref_uri,
+    maybe_bind_location,
+    resolve_iceberg_catalog,
+)
 from det.ingestion.sql_replace import (
     assert_chunk_matches_identity,
     resolve_run_identity,
@@ -36,6 +44,16 @@ _END = "__interval_end_datetime"
 _RUN = "__extract_run_datetime"
 _ICEBERG_HINT = pip_extra_hint("iceberg")
 
+# Re-export for callers that imported these from iceberg_writer.
+__all__ = [
+    "hadoop_catalog",
+    "lake_ref_uri",
+    "load_iceberg_table",
+    "purge_iceberg_table",
+    "resolve_iceberg_catalog",
+    "write_iceberg_table",
+]
+
 
 def _require_iceberg() -> None:
     try:
@@ -45,30 +63,6 @@ def _require_iceberg() -> None:
         raise ImportError(
             f"Iceberg bronze requires the optional extra: {_ICEBERG_HINT}"
         ) from exc
-
-
-def lake_ref_uri(ref: LakeRef) -> str:
-    """URI PyIceberg FileIO accepts (file://, s3://, gs://)."""
-    if ref.is_local:
-        return ref.to_path().resolve().as_uri()
-    text = str(ref)
-    if text.startswith("gcs://"):
-        return "gs://" + text[len("gcs://") :]
-    return text
-
-
-def hadoop_catalog(lake: LakeRef, *, env: Mapping[str, str] | None = None):
-    _require_iceberg()
-    from det.ingestion.iceberg_catalog import LakeHadoopCatalog
-    from det.runtime.object_store import iceberg_gcs_properties, iceberg_s3_properties
-
-    warehouse = lake_ref_uri(lake)
-    props: dict[str, str] = {"warehouse": warehouse}
-    if warehouse.startswith("s3://"):
-        props.update(iceberg_s3_properties(env))
-    elif warehouse.startswith("gs://"):
-        props.update(iceberg_gcs_properties(env))
-    return LakeHadoopCatalog("det", **props)
 
 
 def _pyiceberg_type(type_name: str):
@@ -206,10 +200,10 @@ def purge_iceberg_table(
     from pyiceberg.exceptions import NoSuchTableError
 
     _require_iceberg()
-    catalog = hadoop_catalog(lake)
+    catalog = resolve_iceberg_catalog(lake)
     ident = (namespace, table)
     location = lake_ref_uri(table_location)
-    catalog.bind_location(ident, location)
+    maybe_bind_location(catalog, ident, location)
     try:
         catalog.drop_table(ident)
     except NoSuchTableError:
@@ -311,11 +305,13 @@ def ensure_iceberg_table(
     from pyiceberg.exceptions import NoSuchTableError
 
     schema = iceberg_schema_from_columns(columns)
-    catalog.bind_location(identifier, location)
+    maybe_bind_location(catalog, identifier, location)
     try:
         table = catalog.load_table(identifier)
     except NoSuchTableError:
-        catalog.create_namespace(identifier[0])
+        ensure_iceberg_namespace(
+            catalog, identifier[0], table_location=location
+        )
         return catalog.create_table(
             identifier,
             schema=schema,
@@ -369,10 +365,10 @@ def load_iceberg_table(
     from pyiceberg.exceptions import NoSuchTableError
 
     _require_iceberg()
-    catalog = hadoop_catalog(lake)
+    catalog = resolve_iceberg_catalog(lake)
     ident = (namespace, table)
     location = lake_ref_uri(table_location)
-    catalog.bind_location(ident, location)
+    maybe_bind_location(catalog, ident, location)
     try:
         return catalog.load_table(ident)
     except NoSuchTableError:
@@ -410,7 +406,7 @@ def write_iceberg_table(
     first_chunk = next(chunks, None)
     identity = resolve_run_identity(run_identity, first_chunk)
     col_types = bronze_iceberg_columns(json_schema)
-    catalog = hadoop_catalog(lake)
+    catalog = resolve_iceberg_catalog(lake)
     ident = (namespace, table)
     location = lake_ref_uri(table_location)
     ice_table = ensure_iceberg_table(

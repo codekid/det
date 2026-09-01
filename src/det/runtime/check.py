@@ -416,7 +416,9 @@ def check_project(
     ``lake_mode_mismatch`` when ``DET_LAKE_MODE`` disagrees with the lake URI.
     Warnings: missing dbt stg/silver when ``dbt/`` exists;
     ``scaffold_sql_stale`` when silver SQL drifts from scaffold templates;
-    ``lake_cloud_experimental`` when ``DET_LAKE_MODE=cloud``.
+    ``lake_cloud_experimental`` when ``DET_LAKE_MODE=cloud``;
+    ``iceberg_rest_uri_missing`` / ``iceberg_glue_requires_s3`` when catalog env
+    is inconsistent.
     """
     root = resolve_project_root(project_root)
     load_plugins()
@@ -426,7 +428,7 @@ def check_project(
         resolved = resolve_pipeline_ref(pipeline, project_root=root)
         return check_pipeline_config(resolved.path, project_root=root)
 
-    findings.extend(_lake_mode_findings())
+    findings.extend(_lake_mode_findings(root))
 
     paths = discover_pipeline_files(root)
     if not paths:
@@ -447,8 +449,15 @@ def check_project(
     return findings
 
 
-def _lake_mode_findings() -> list[Finding]:
-    """Validate DET_LAKE_MODE against the resolved lake URI (no object I/O)."""
+def _lake_mode_findings(project_root: Path) -> list[Finding]:
+    """Validate DET_LAKE_MODE / Iceberg catalog env against the resolved lake URI."""
+    import os
+
+    from det.ingestion.iceberg_catalog_factory import (
+        ENV_CATALOG,
+        ENV_REST_URI,
+        catalog_kind_from_env,
+    )
     from det.runtime.lake import (
         lake_mode_from_env,
         pick_lake_spec,
@@ -485,20 +494,121 @@ def _lake_mode_findings() -> list[Finding]:
         )
         return findings
 
+    try:
+        kind = catalog_kind_from_env()
+    except ValueError as exc:
+        findings.append(
+            Finding(
+                severity="error",
+                code="iceberg_catalog_invalid",
+                pipeline="*",
+                path=ENV_CATALOG,
+                detail=str(exc),
+            )
+        )
+        return findings
+
+    if kind == "rest":
+        uri = (os.environ.get(ENV_REST_URI) or "").strip()
+        if not uri:
+            findings.append(
+                Finding(
+                    severity="error",
+                    code="iceberg_rest_uri_missing",
+                    pipeline="*",
+                    path=ENV_REST_URI,
+                    detail=(
+                        f"{ENV_CATALOG}=rest requires {ENV_REST_URI} "
+                        "(Iceberg REST catalog endpoint)"
+                    ),
+                )
+            )
+    elif kind == "glue":
+        findings.extend(_iceberg_glue_lake_findings(project_root))
+
     if mode == "cloud":
+        if kind == "hadoop":
+            detail = (
+                "DET_LAKE_MODE=cloud with DET_ICEBERG_CATALOG=hadoop (default): "
+                "CI covers MinIO/GCS extract→Iceberg→iceberg_scan. Shared "
+                "multi-writer lakes still need care; set DET_ICEBERG_CATALOG="
+                "rest|glue for a managed metastore (see docs/iceberg-catalog.md)."
+            )
+        else:
+            detail = (
+                f"DET_LAKE_MODE=cloud with DET_ICEBERG_CATALOG={kind}: "
+                "bronze commits go through a managed Iceberg catalog. "
+                "Multi-writer safety is whatever that catalog provides; "
+                "DuckDB path iceberg_scan still works when table files stay "
+                "under {{lake}}/bronze/… (see docs/iceberg-catalog.md)."
+            )
         findings.append(
             Finding(
                 severity="warning",
                 code="lake_cloud_experimental",
                 pipeline="*",
                 path=spec,
-                detail=(
-                    "DET_LAKE_MODE=cloud: CI covers MinIO extract→Iceberg→"
-                    "iceberg_scan; multi-writer object lakes and Glue/REST "
-                    "catalogs are still out of scope."
-                ),
+                detail=detail,
             )
         )
+    return findings
+
+
+def _iceberg_glue_lake_findings(project_root: Path) -> list[Finding]:
+    """Glue catalog needs s3:// for each lake URI registration would use."""
+    import os
+
+    from det.runtime.iceberg_register import _lake_uri_str, _require_register_catalog
+    from det.runtime.lake import open_lake, pick_lake_spec
+
+    root = project_root.resolve()
+    environ = dict(os.environ)
+    findings: list[Finding] = []
+    checked: set[str] = set()
+
+    def _check(pipeline_id: str, lake_spec: str) -> None:
+        key = lake_spec.strip()
+        if not key or key in checked:
+            return
+        checked.add(key)
+        try:
+            lake = open_lake(lake_spec, root, env=environ)
+            lake_uri = _lake_uri_str(lake)
+        except ValueError:
+            # Mode mismatch etc. — still validate the effective spec string
+            # registration would pick (destination.path wins over DET_LAKE_PATH).
+            lake_uri = key
+        try:
+            _require_register_catalog(environ, lake_uri)
+        except ValueError as exc:
+            msg = str(exc)
+            if "s3://" not in msg and "glue" not in msg.lower():
+                return
+            findings.append(
+                Finding(
+                    severity="error",
+                    code="iceberg_glue_requires_s3",
+                    pipeline=pipeline_id,
+                    path=lake_spec,
+                    detail=msg,
+                )
+            )
+
+    # Same precedence as iceberg-register: destination.path then DET_LAKE_PATH.
+    _check("*", pick_lake_spec(env=environ))
+    for path in discover_pipeline_files(root):
+        try:
+            config = load_pipeline_config(path)
+        except Exception:
+            # Invalid YAML is reported by check_pipeline_config; skip glue lake probe.
+            config = None
+        if config is None:
+            continue
+        effective = pick_lake_spec(
+            destination_path=config.destination.path,
+            env=environ,
+        )
+        _check(config.name, effective)
     return findings
 
 

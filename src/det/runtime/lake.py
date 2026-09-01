@@ -137,7 +137,8 @@ def open_lake(
     if mode == "cloud" and not _CLOUD_EXPERIMENTAL_WARNED:
         logger.warning(
             "object-store lake: CI MinIO/GCS soaks cover extract→Iceberg; "
-            "shared multi-writer / Glue catalogs are still out of scope",
+            "set DET_ICEBERG_CATALOG=rest|glue for a managed metastore "
+            "(default hadoop uses version-hint on the lake)",
             lake_mode=mode,
             lake=text,
         )

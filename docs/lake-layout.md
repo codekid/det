@@ -120,7 +120,8 @@ do **not** require a layout bump.
 - Switching **`destination.type`** on the same pipeline (same dataset path; re-extract
   or migrate as needed).
 - Iceberg catalog implementation (Hadoop on disk vs REST/Glue in prod) — table
-  location under `{lake}/bronze/…` stays layout 1.
+  location under `{lake}/bronze/…` stays layout 1. See
+  [iceberg-catalog.md](iceberg-catalog.md) for `DET_ICEBERG_CATALOG`.
 - Iceberg **partition spec** (`destination.partition: extract_run` \| `none`) —
   create-time table property, not hive path keys. Changing it does not rename
   raw/bronze directories. Live mismatch **hard-fails** load/migrate until

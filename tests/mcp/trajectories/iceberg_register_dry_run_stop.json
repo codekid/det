@@ -1,0 +1,16 @@
+{
+  "id": "iceberg_register_dry_run_stop",
+  "scenario": "iceberg_register",
+  "expect": [],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "iceberg_register_dry_run",
+          "arguments": {"lake_path": "s3://example/det-lake"}
+        }
+      ]
+    }
+  ]
+}

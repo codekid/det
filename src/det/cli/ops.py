@@ -234,6 +234,82 @@ def biglake_register_cmd(
         )
 
 
+@app.command("iceberg-register")
+def iceberg_register_cmd(
+    ctx: typer.Context,
+    pipeline: str | None = typer.Option(
+        None,
+        "--pipeline",
+        "-p",
+        help="Register one pipeline bronze table only (default: all bronze + ops)",
+    ),
+    lake_path: str | None = typer.Option(None, "--lake-path"),
+    skip_ops: bool = typer.Option(False, "--skip-ops", help="Do not register ops.run_receipts"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview registration plan only"),
+    apply: bool = typer.Option(False, "--apply", help="Register tables into REST/Glue catalog"),
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+    approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
+) -> None:
+    """Register DET Iceberg tables into REST/Glue catalog (not Hadoop)."""
+    from det.runtime.iceberg_register import (
+        apply_iceberg_register,
+        build_iceberg_register_plan,
+        format_dry_run,
+        iceberg_register_write_argv,
+        with_catalog_target_argv,
+    )
+
+    if dry_run == apply:
+        raise typer.BadParameter(
+            "exactly one of --dry-run or --apply is required",
+            param_hint="--dry-run/--apply",
+        )
+
+    root = _project_root(project_root)
+    pipe_path = None
+    if pipeline is not None:
+        pipe_path = _resolve_pipeline(pipeline, root).path
+
+    try:
+        plan = build_iceberg_register_plan(
+            project_root=root,
+            lake_path=lake_path,
+            pipeline=pipe_path,
+            include_ops=not skip_ops and pipeline is None,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    argv = with_catalog_target_argv(
+        iceberg_register_write_argv(
+            lake_path=lake_path,
+            pipeline=pipeline,
+            skip_ops=skip_ops,
+        ),
+        plan,
+    )
+
+    if dry_run:
+        typer.echo(format_dry_run(plan, argv))
+        return
+
+    claimed = _gate_approval(root, "iceberg-register", argv, approval, require_approval, ctx=ctx)
+    try:
+        with _claimed_approval_work(claimed, approval):
+            result = apply_iceberg_register(plan, project_root=root)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _consume_approval(root, approval)
+    typer.echo(f"OK iceberg-register applied={result['count']}")
+    for row in result["applied"]:
+        typer.echo(
+            f"  {row['status']} {row['namespace']}.{row['table']} "
+            f"metadata={row['metadata_uri']}"
+        )
+
+
 @app.command("lock-show")
 def lock_show(
     pipeline: str = typer.Option(..., "--pipeline", "-p", help=_PIPELINE_HELP),
