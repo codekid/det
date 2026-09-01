@@ -600,6 +600,9 @@ def _iceberg_glue_lake_findings(project_root: Path) -> list[Finding]:
         try:
             config = load_pipeline_config(path)
         except Exception:
+            # Invalid YAML is reported by check_pipeline_config; skip glue lake probe.
+            config = None
+        if config is None:
             continue
         effective = pick_lake_spec(
             destination_path=config.destination.path,
