@@ -20,6 +20,9 @@ SourcePlugin → extract → raw on gs:// → load → Iceberg bronze on gs://
 - Emulators do **not** cover BigLake Iceberg end-to-end — use a real GCP sandbox
   for register/`SELECT`/dbt-BQ. CI covers GCS + Iceberg write/read via
   `STORAGE_EMULATOR_HOST` (fake-gcs / localgcp) and marker `gcs`.
+- This doc is the **BigQuery external registration** path (`hadoop` writes +
+  `det biglake-register`). Committing through the Lakehouse **REST** catalog at
+  load time is separate — see [iceberg-catalog.md](iceberg-catalog.md).
 
 ## Auth
 
@@ -260,5 +263,7 @@ MinIO soak stays separate (`-m minio`). Optional manual sandbox: `pytest -m bigq
 ## Related
 
 - [lake-layout.md](lake-layout.md) — hive + SQL names
+- [iceberg-catalog.md](iceberg-catalog.md) — `DET_ICEBERG_CATALOG=hadoop|rest|glue`
+  (Lakehouse REST commits at load time vs this doc’s post-hoc BigLake register)
 - [getting-started-library.md](getting-started-library.md) — embedders
 - Operator README — destinations table

@@ -11,14 +11,17 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, cast
 
+from det.ingestion.iceberg_catalog_factory import (
+    lake_ref_uri,
+    maybe_bind_location,
+    resolve_iceberg_catalog,
+)
 from det.ingestion.iceberg_writer import (
     _chunk_to_arrow,
     _live_type_name,
     _pyiceberg_type,
     _require_iceberg,
-    hadoop_catalog,
     iceberg_schema_from_columns,
-    lake_ref_uri,
 )
 from det.logging import get_logger
 from det.runtime.lake import LakeRef
@@ -98,7 +101,7 @@ def ensure_ops_run_receipts_table(*, catalog: Any, location: str) -> Any:
 
     identifier = (OPS_NAMESPACE, OPS_TABLE)
     schema = iceberg_schema_from_columns(OPS_COLUMN_TYPES)
-    catalog.bind_location(identifier, location)
+    maybe_bind_location(catalog, identifier, location)
     try:
         table = catalog.load_table(identifier)
     except NoSuchTableError:
@@ -190,7 +193,7 @@ def materialize_receipts(
 
     table_location = ops_run_receipts_location(lake)
     location = lake_ref_uri(table_location)
-    catalog = hadoop_catalog(lake)
+    catalog = resolve_iceberg_catalog(lake)
     ice_table = ensure_ops_run_receipts_table(catalog=catalog, location=location)
     pa_schema = ice_table.schema().as_arrow()
     live_days = _live_attempt_dates(ice_table)

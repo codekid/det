@@ -10,6 +10,7 @@ is separate — see the [operator README](../README.md).
 | [api.md](api.md) | SemVer surface (`det.__all__`), concurrency, errors |
 | [lake-layout.md](lake-layout.md) | Hive paths, `__*` meta, `lake_layout` |
 | [gcp-biglake.md](gcp-biglake.md) | Architecture C: `gs://` Iceberg bronze + BigLake + dbt-BQ |
+| [iceberg-catalog.md](iceberg-catalog.md) | `DET_ICEBERG_CATALOG=hadoop|rest|glue` (multi-engine metastores) |
 
 ## 1. Install
 

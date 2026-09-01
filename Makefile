@@ -1,4 +1,4 @@
-.PHONY: install unhide test lint typecheck run-local dbt all clean airflow-up airflow-down airflow-logs airflow-ps cube-up cube-down cube-logs
+.PHONY: install unhide test lint typecheck run-local dbt all clean airflow-up airflow-down airflow-logs airflow-ps cube-up cube-down cube-logs polaris-up polaris-down polaris-env
 
 INTERVAL_START ?= 2026-08-06
 INTERVAL_END ?=
@@ -6,6 +6,8 @@ INTERVAL_END ?=
 # Absolute: this path is baked into the persisted bronze view, so a relative one
 # would only resolve for clients whose working directory is dbt/.
 export DET_LAKE_PATH ?= $(CURDIR)/data/lake
+
+POLARIS_COMPOSE := docker/polaris-minio/docker-compose.yml
 
 install:
 	uv pip install -e ".[dev,dbt,mcp,postgres,iceberg,examples,duckdb,scaffold,s3]"
@@ -73,3 +75,27 @@ cube-down:
 
 cube-logs:
 	cd cube && docker compose logs -f
+
+# Local Polaris REST catalog + MinIO (docker/polaris-minio).
+polaris-up:
+	docker compose -f $(POLARIS_COMPOSE) up -d --wait
+	@echo "Polaris REST http://127.0.0.1:8181/api/catalog warehouse=det_lake"
+	@echo "MinIO API http://127.0.0.1:9000 (minioadmin/minioadmin)"
+	@$(MAKE) --no-print-directory polaris-env
+
+polaris-down:
+	docker compose -f $(POLARIS_COMPOSE) down -v
+
+polaris-env:
+	@echo "export DET_LAKE_MODE=cloud"
+	@echo "export AWS_ENDPOINT_URL=http://127.0.0.1:9000"
+	@echo "export AWS_ACCESS_KEY_ID=minioadmin"
+	@echo "export AWS_SECRET_ACCESS_KEY=minioadmin"
+	@echo "export AWS_REGION=us-east-1"
+	@echo "export DET_MINIO_BUCKET=det-ci"
+	@echo "export DET_ICEBERG_CATALOG=rest"
+	@echo "export DET_ICEBERG_REST_URI=http://127.0.0.1:8181/api/catalog"
+	@echo "export DET_ICEBERG_REST_WAREHOUSE=det_lake"
+	@echo "export DET_ICEBERG_REST_CREDENTIAL=root:s3cr3t"
+	@echo "export DET_ICEBERG_REST_SCOPE=PRINCIPAL_ROLE:ALL"
+	@echo "export DET_ICEBERG_REST_REALM=POLARIS"

@@ -40,6 +40,7 @@ ALLOWED_MCP_TOOLS: frozenset[str] = frozenset(
         "preview_backfill_conf",
         "migrate_dry_run",
         "biglake_register_dry_run",
+        "iceberg_register_dry_run",
         "list_runs",
         "summarize_runs",
         "list_models",
@@ -66,6 +67,7 @@ WRITING_CLI_COMMANDS: frozenset[str] = frozenset(
         "scaffold-ops",
         "dbt",
         "biglake-register",
+        "iceberg-register",
         "lock-release",
     }
 )
@@ -77,6 +79,7 @@ SCENARIO_REQUIRED_MCP: dict[str, tuple[str, ...]] = {
     "prune": ("prune_dry_run",),
     "scaffold_ops": ("scaffold_ops_dry_run",),
     "biglake": ("biglake_register_dry_run",),
+    "iceberg_register": ("iceberg_register_dry_run",),
     "fleet_metrics": ("cube_load", "cube_meta"),
     "gold_metrics": ("cube_load", "cube_meta"),
     "new_source": ("list_sources",),

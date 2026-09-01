@@ -1,0 +1,20 @@
+{
+  "id": "iceberg_register_chain_apply",
+  "scenario": "iceberg_register",
+  "expect": ["dry_run_then_write"],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "iceberg_register_dry_run",
+          "arguments": {"lake_path": "s3://example/det-lake"}
+        },
+        {
+          "type": "cli",
+          "argv": ["det", "iceberg-register", "--apply", "--lake-path", "s3://example/det-lake"]
+        }
+      ]
+    }
+  ]
+}

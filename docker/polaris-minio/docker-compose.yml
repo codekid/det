@@ -1,0 +1,94 @@
+# Local Polaris Iceberg REST catalog + MinIO for DET soaks.
+# MinIO API :9000 (same defaults as CI MinIO soak). Polaris REST :8181.
+#
+#   make polaris-up
+#   export DET_ICEBERG_CATALOG=rest
+#   export DET_ICEBERG_REST_URI=http://127.0.0.1:8181/api/catalog
+#   export DET_ICEBERG_REST_WAREHOUSE=det_lake
+#   export DET_ICEBERG_REST_CREDENTIAL=root:s3cr3t
+#
+# Derived from Apache Polaris getting-started/minio (Apache-2.0).
+
+services:
+  minio:
+    image: quay.io/minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: ["server", "/data", "--console-address", ":9001"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 2s
+      timeout: 10s
+      retries: 15
+      start_period: 5s
+
+  setup_bucket:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - >-
+        mc alias set local http://minio:9000 minioadmin minioadmin;
+        mc mb -p local/det-ci || true;
+        mc anonymous set download local/det-ci || true;
+        echo bucket ready;
+
+  polaris:
+    image: apache/polaris:1.1.0-incubating
+    ports:
+      - "8181:8181"
+      - "8182:8182"
+    depends_on:
+      minio:
+        condition: service_healthy
+      setup_bucket:
+        condition: service_completed_successfully
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      POLARIS_BOOTSTRAP_CREDENTIALS: POLARIS,root,s3cr3t
+      polaris.realm-context.realms: POLARIS
+      quarkus.otel.sdk.disabled: "true"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8182/q/health"]
+      interval: 3s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+
+  polaris-setup:
+    image: alpine/curl:latest
+    depends_on:
+      polaris:
+        condition: service_healthy
+    environment:
+      CLIENT_ID: root
+      CLIENT_SECRET: s3cr3t
+      CATALOG_NAME: det_lake
+      STORAGE_LOCATION: s3://det-ci/
+      STORAGE_CONFIG_INFO: >-
+        {"storageType":"S3","endpoint":"http://127.0.0.1:9000","endpointInternal":"http://minio:9000","pathStyleAccess":true,"allowedLocations":["s3://det-ci/"]}
+    volumes:
+      - ./scripts:/polaris:ro
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - >-
+        set -e;
+        chmod +x /polaris/create-catalog.sh /polaris/obtain-token.sh;
+        . /polaris/obtain-token.sh;
+        /polaris/create-catalog.sh POLARIS "$$TOKEN";
+        curl -sf -H "Authorization: Bearer $$TOKEN" -H 'Content-Type: application/json'
+        -H 'Polaris-Realm: POLARIS'
+        -X PUT
+        "http://polaris:8181/api/management/v1/catalogs/det_lake/catalog-roles/catalog_admin/grants"
+        -d '{"type":"catalog","privilege":"CATALOG_MANAGE_CONTENT"}' || true;
+        echo polaris catalog det_lake ready;

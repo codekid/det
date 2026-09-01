@@ -1150,3 +1150,43 @@ def biglake_register_dry_run(
             "--approval <id> in a later turn."
         ),
     }
+
+
+def iceberg_register_dry_run(
+    *,
+    pipeline: str | None = None,
+    lake_path: str | None = None,
+    skip_ops: bool = False,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Preview Iceberg REST/Glue registration plan (never mutates the catalog)."""
+    _prepare_tool()
+    from det.runtime.iceberg_register import (
+        build_iceberg_register_plan,
+        iceberg_register_write_argv,
+    )
+
+    base = _root(root)
+    pipe_path = None
+    if pipeline:
+        _, pipe_path = _load_pipeline(pipeline, base)
+    argv = iceberg_register_write_argv(
+        lake_path=lake_path,
+        pipeline=pipeline,
+        skip_ops=skip_ops,
+    )
+    plan = build_iceberg_register_plan(
+        project_root=base,
+        lake_path=lake_path,
+        pipeline=pipe_path,
+        include_ops=not skip_ops and pipeline is None,
+    )
+    return {
+        **plan.to_dict(),
+        "approval_plan": _approval_plan("iceberg-register", argv),
+        "note": (
+            "Dry-run only — no catalog register. Operator: det approve --plan "
+            "<approval_plan> --approved-by <id>. Agent: det iceberg-register --apply "
+            "--approval <id> in a later turn."
+        ),
+    }

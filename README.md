@@ -141,7 +141,10 @@ no `destination.type: s3`.
 `mode=cloud`. Compose: `DET_LAKE_MODE` + overridable `DET_LAKE_PATH` (see
 `airflow/.env.example`). Local analytics/ops DuckDB stay on the worker filesystem.
 Prod on GCS: BigQuery reads Iceberg bronze via **BigLake** — see
-[docs/gcp-biglake.md](docs/gcp-biglake.md) (architecture C).
+[docs/gcp-biglake.md](docs/gcp-biglake.md) (architecture C). For multi-engine
+metastores (`rest` / `glue`), see [docs/iceberg-catalog.md](docs/iceberg-catalog.md)
+(`DET_ICEBERG_CATALOG`, default `hadoop`). Local Polaris+MinIO: `make polaris-up`.
+Publish existing Hadoop tables with `det iceberg-register` after switching catalog.
 
 | `destination.type` | Bronze |
 | --- | --- |

@@ -45,6 +45,12 @@ jobs:
       AWS_SECRET_ACCESS_KEY: minioadmin
       AWS_REGION: us-east-1
       DET_MINIO_BUCKET: det-ci
+      # Polaris REST catalog soak (tests/integration/test_polaris_iceberg_soak.py).
+      DET_ICEBERG_REST_URI: http://127.0.0.1:8181/api/catalog
+      DET_ICEBERG_REST_WAREHOUSE: det_lake
+      DET_ICEBERG_REST_CREDENTIAL: root:s3cr3t
+      DET_ICEBERG_REST_SCOPE: PRINCIPAL_ROLE:ALL
+      DET_ICEBERG_REST_REALM: POLARIS
       # GCS soak (tests/integration/test_gcs_iceberg_soak.py); fake-gcs-server /
       # localgcp both honor STORAGE_EMULATOR_HOST.
       STORAGE_EMULATOR_HOST: http://127.0.0.1:4443
@@ -55,23 +61,20 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Start MinIO
-        # GHA service containers cannot pass `server /data` to minio/minio.
+      - name: Start MinIO + Polaris
+        # Shared MinIO for -m minio and -m polaris (docker/polaris-minio).
         run: |
-          docker run -d --name det-minio \
-            -p 9000:9000 \
-            -e MINIO_ROOT_USER=minioadmin \
-            -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:latest server /data
-          for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:9000/minio/health/live; then
-              echo "minio ready"
+          docker compose -f docker/polaris-minio/docker-compose.yml up -d --wait
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:9000/minio/health/live \
+              && curl -sf http://127.0.0.1:8182/q/health; then
+              echo "minio+polaris ready"
               exit 0
             fi
-            sleep 1
+            sleep 2
           done
-          echo "minio failed to become healthy" >&2
-          docker logs det-minio >&2 || true
+          echo "minio/polaris failed to become healthy" >&2
+          docker compose -f docker/polaris-minio/docker-compose.yml logs >&2 || true
           exit 1
       - name: Start fake-gcs-server
         # STORAGE_EMULATOR_HOST-compatible (same env as localgcp GCS).
