@@ -196,12 +196,17 @@ def rest_catalog_props(
             f"{ENV_CATALOG}=rest requires {ENV_REST_URI} "
             "(Iceberg REST catalog endpoint)"
         )
-    warehouse = (environ.get(ENV_REST_WAREHOUSE) or "").strip() or lake_ref_uri(lake)
+    explicit_warehouse = (environ.get(ENV_REST_WAREHOUSE) or "").strip()
     props: dict[str, str] = {
         "type": "rest",
         "uri": uri,
-        "warehouse": warehouse,
     }
+    if explicit_warehouse:
+        props["warehouse"] = explicit_warehouse
+    elif not _is_aws_glue_rest_uri(uri):
+        # Polaris / Lakehouse: default warehouse to the lake root.
+        # Glue Iceberg REST: omit — warehouse is a catalog id, not the lake URI.
+        props["warehouse"] = lake_ref_uri(lake)
     credential = (environ.get(ENV_REST_CREDENTIAL) or "").strip()
     if credential:
         props["credential"] = credential
