@@ -181,6 +181,254 @@ def test_mcp_migrate_dry_run_tool(project_root: Path, tmp_path: Path, monkeypatc
     assert not bronze_v2.exists() or not any(bronze_v2.rglob("data.jsonl"))
 
 
+def test_mcp_migrate_dry_run_full_validate_requires_confirm(
+    project_root: Path, tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("DET_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("DET_ALLOW_FULL_VALIDATE", "1")
+    pipe_dir = tmp_path / "configs" / "pipelines" / "example_api"
+    pipe_dir.mkdir(parents=True)
+    schema_v1 = (
+        project_root / "schemas/example_api/events/events.schema.yaml"
+    ).read_text(encoding="utf-8")
+    (tmp_path / "schemas/example_api/events").mkdir(parents=True)
+    (tmp_path / "schemas/example_api/events/events.schema.yaml").write_text(
+        schema_v1, encoding="utf-8"
+    )
+    level_schema = tmp_path / "tests/fixtures/example_api/events_level.schema.yaml"
+    level_schema.parent.mkdir(parents=True)
+    level_schema.write_text(
+        (
+            project_root / "tests/fixtures/example_api/events_level.schema.yaml"
+        ).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    pipe_path = pipe_dir / "events.yaml"
+    pipe_path.write_text(
+        yaml.safe_dump(
+            {
+                "name": "example_api.events",
+                "source": {
+                    "type": "example_api.events",
+                    "overrides": {
+                        "fixture_records": [
+                            {
+                                "id": "e1",
+                                "occurred_at": "2026-08-06T12:00:00Z",
+                                "severity": "high",
+                                "state": "TX",
+                            }
+                        ]
+                    },
+                },
+                "schema": "schemas/example_api/events/events.schema.yaml",
+                "ingestion": {"library": "thin"},
+                "destination": {
+                    "type": "filesystem",
+                    "path": str(tmp_path / "lake"),
+                },
+                "medallion": {"bronze_prefix": "bronze", "raw_prefix": "raw"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    PipelineRunner(tmp_path).run(pipe_path, interval_start="2026-08-06")
+
+    with pytest.raises(ValueError, match="confirm_full_validate"):
+        mcp_tools.migrate_dry_run(
+            "example_api.events",
+            "example_api.events_level",
+            "tests/fixtures/example_api/events_level.schema.yaml",
+            "example_api_v1_to_v2",
+            "2026-08-06",
+            validate_limit=0,
+            root=tmp_path,
+        )
+
+
+def test_mcp_migrate_dry_run_full_validate_requires_env(
+    project_root: Path, tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("DET_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DET_ALLOW_FULL_VALIDATE", raising=False)
+    pipe_dir = tmp_path / "configs" / "pipelines" / "example_api"
+    pipe_dir.mkdir(parents=True)
+    schema_v1 = (
+        project_root / "schemas/example_api/events/events.schema.yaml"
+    ).read_text(encoding="utf-8")
+    (tmp_path / "schemas/example_api/events").mkdir(parents=True)
+    (tmp_path / "schemas/example_api/events/events.schema.yaml").write_text(
+        schema_v1, encoding="utf-8"
+    )
+    level_schema = tmp_path / "tests/fixtures/example_api/events_level.schema.yaml"
+    level_schema.parent.mkdir(parents=True)
+    level_schema.write_text(
+        (
+            project_root / "tests/fixtures/example_api/events_level.schema.yaml"
+        ).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    pipe_path = pipe_dir / "events.yaml"
+    pipe_path.write_text(
+        yaml.safe_dump(
+            {
+                "name": "example_api.events",
+                "source": {
+                    "type": "example_api.events",
+                    "overrides": {
+                        "fixture_records": [
+                            {
+                                "id": "e1",
+                                "occurred_at": "2026-08-06T12:00:00Z",
+                                "severity": "high",
+                                "state": "TX",
+                            }
+                        ]
+                    },
+                },
+                "schema": "schemas/example_api/events/events.schema.yaml",
+                "ingestion": {"library": "thin"},
+                "destination": {
+                    "type": "filesystem",
+                    "path": str(tmp_path / "lake"),
+                },
+                "medallion": {"bronze_prefix": "bronze", "raw_prefix": "raw"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    PipelineRunner(tmp_path).run(pipe_path, interval_start="2026-08-06")
+
+    with pytest.raises(ValueError, match="DET_ALLOW_FULL_VALIDATE"):
+        mcp_tools.migrate_dry_run(
+            "example_api.events",
+            "example_api.events_level",
+            "tests/fixtures/example_api/events_level.schema.yaml",
+            "example_api_v1_to_v2",
+            "2026-08-06",
+            validate_limit=0,
+            confirm_full_validate=True,
+            root=tmp_path,
+        )
+
+
+def test_mcp_migrate_dry_run_full_validate_with_gate(
+    project_root: Path, tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("DET_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("DET_ALLOW_FULL_VALIDATE", "1")
+    pipe_dir = tmp_path / "configs" / "pipelines" / "example_api"
+    pipe_dir.mkdir(parents=True)
+    schema_v1 = (
+        project_root / "schemas/example_api/events/events.schema.yaml"
+    ).read_text(encoding="utf-8")
+    (tmp_path / "schemas/example_api/events").mkdir(parents=True)
+    (tmp_path / "schemas/example_api/events/events.schema.yaml").write_text(
+        schema_v1, encoding="utf-8"
+    )
+    level_schema = tmp_path / "tests/fixtures/example_api/events_level.schema.yaml"
+    level_schema.parent.mkdir(parents=True)
+    level_schema.write_text(
+        (
+            project_root / "tests/fixtures/example_api/events_level.schema.yaml"
+        ).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    pipe_path = pipe_dir / "events.yaml"
+    pipe_path.write_text(
+        yaml.safe_dump(
+            {
+                "name": "example_api.events",
+                "source": {
+                    "type": "example_api.events",
+                    "overrides": {
+                        "fixture_records": [
+                            {
+                                "id": "e1",
+                                "occurred_at": "2026-08-06T12:00:00Z",
+                                "severity": "high",
+                                "state": "TX",
+                            }
+                        ]
+                    },
+                },
+                "schema": "schemas/example_api/events/events.schema.yaml",
+                "ingestion": {"library": "thin"},
+                "destination": {
+                    "type": "filesystem",
+                    "path": str(tmp_path / "lake"),
+                },
+                "medallion": {"bronze_prefix": "bronze", "raw_prefix": "raw"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    PipelineRunner(tmp_path).run(pipe_path, interval_start="2026-08-06")
+
+    out = mcp_tools.migrate_dry_run(
+        "example_api.events",
+        "example_api.events_level",
+        "tests/fixtures/example_api/events_level.schema.yaml",
+        "example_api_v1_to_v2",
+        "2026-08-06",
+        validate_limit=0,
+        confirm_full_validate=True,
+        root=tmp_path,
+    )
+    assert out["validate_limit"] == 0
+    assert out["confirm_full_validate"] is True
+    assert out["validate_max_rows"] == 100_000
+    assert out["ok"] is True
+
+
+def test_migrate_dry_run_validate_max_rows_cap(
+    project_root: Path, tmp_path: Path
+):
+    records = [
+        {
+            "id": f"e{i}",
+            "occurred_at": "2026-08-06T12:00:00Z",
+            "severity": "high",
+            "state": "TX",
+        }
+        for i in range(5)
+    ]
+    pipeline = {
+        "name": "example_api.events",
+        "source": {
+            "type": "example_api.events",
+            "overrides": {"fixture_records": records},
+        },
+        "schema": str(project_root / "schemas/example_api/events/events.schema.yaml"),
+        "ingestion": {"library": "thin"},
+        "destination": {"type": "filesystem", "path": str(tmp_path / "lake")},
+        "medallion": {"bronze_prefix": "bronze", "raw_prefix": "raw"},
+    }
+    pipe_path = tmp_path / "api.yaml"
+    pipe_path.write_text(yaml.safe_dump(pipeline), encoding="utf-8")
+    PipelineRunner(tmp_path).run(pipe_path, interval_start="2026-08-06")
+
+    plan = BronzeMigrator(tmp_path).migrate(
+        pipeline=pipe_path,
+        to_bronze="example_api.events_v1",
+        schema_path=project_root / "schemas/example_api/events/events.schema.yaml",
+        mapper_name="identity",
+        interval_start="2026-08-06",
+        lake_path=str(tmp_path / "lake"),
+        dry_run=True,
+        validate_limit=None,
+        validate_max_rows=3,
+    )
+    assert isinstance(plan, MigratePlan)
+    assert plan.validate_capped is True
+    assert plan.validate_max_rows == 3
+    assert plan.partitions[0].truncated is True
+    assert plan.partitions[0].rows == 3
+    payload = plan.to_dict()
+    assert payload["validate_capped"] is True
+    assert "validate_cap_message" in payload
+
+
 def test_create_server_registers_migrate_dry_run():
     server = create_server()
     names = sorted(server._tool_manager._tools)

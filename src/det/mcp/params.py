@@ -182,7 +182,22 @@ MaxErrors = Annotated[
 ]
 ValidateLimit = Annotated[
     int,
-    Field(description="Max rows to coerce+validate in the migrate preview (max 50)"),
+    Field(
+        description=(
+            "Max rows to coerce+validate per partition in the migrate preview. "
+            "Default 50; use 0 for full-partition (requires confirm_full_validate "
+            "and DET_ALLOW_FULL_VALIDATE=1; capped at 100k rows per partition)"
+        )
+    ),
+]
+ConfirmFullValidate = Annotated[
+    bool,
+    Field(
+        description=(
+            "Required with validate_limit=0 after validate_sample / "
+            "validate_limit=50 and user confirmation"
+        )
+    ),
 ]
 WireVersionOpt = Annotated[
     int | None,

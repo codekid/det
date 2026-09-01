@@ -7,6 +7,11 @@ from typing import Any, Literal
 
 from det.mcp.context import PathSandboxError, project_root, resolve_under_root
 from det.runtime.config import PipelineConfig, load_pipeline_config
+from det.runtime.full_validate import (
+    ENV_ALLOW_FULL_VALIDATE,
+    assert_full_validate_allowed,
+    full_validate_allowed,
+)
 from det.runtime.lake import LakeRef, is_lake_uri, open_lake
 from det.runtime.lake import relpath as lake_relpath
 from det.runtime.manifest import is_committed_raw_dir
@@ -27,6 +32,19 @@ def clamp_sample_limit(limit: int | None = None) -> int:
     if limit is None:
         return DEFAULT_SAMPLE_LIMIT
     return max(1, min(int(limit), MAX_SAMPLE_LIMIT))
+
+
+def resolve_migrate_validate_limit(limit: int) -> int | None:
+    """Map MCP migrate_dry_run validate_limit: 0 → full partition, 1–50 → clamp."""
+    value = int(limit)
+    if value == 0:
+        return None
+    if 1 <= value <= MAX_SAMPLE_LIMIT:
+        return clamp_sample_limit(value)
+    raise ValueError(
+        f"validate_limit must be 0 (full partition, gated) or 1..{MAX_SAMPLE_LIMIT}, "
+        f"got {value}"
+    )
 
 
 def clamp_list_limit(limit: int | None = None) -> int:

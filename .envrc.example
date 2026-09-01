@@ -17,6 +17,10 @@ export DET_REQUIRE_APPROVAL=1
 # Recorded as approved_by on `det approve` when --approved-by is omitted.
 # export DET_APPROVED_BY="your.name"
 
+# Allow MCP migrate_dry_run validate_limit=0 (full-partition, capped at 100k rows).
+# Requires confirm_full_validate=true and prior validate_sample / validate_limit=50.
+# export DET_ALLOW_FULL_VALIDATE=1
+
 # Approval lifetime in seconds (default 3600). Approvals are single-use.
 # export DET_APPROVAL_TTL_SEC=3600
 

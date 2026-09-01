@@ -377,6 +377,20 @@ def test_iceberg_rest_ok_with_uri(tmp_path: Path, monkeypatch):
     assert not any(f.code == "approval_recommended_cloud_lake" for f in findings)
 
 
+def test_full_validate_gated_when_env_unset(tmp_path: Path, monkeypatch) -> None:
+    _write_pipeline(tmp_path)
+    monkeypatch.delenv("DET_ALLOW_FULL_VALIDATE", raising=False)
+    findings = check_project(tmp_path)
+    assert any(f.code == "full_validate_gated" for f in findings)
+
+
+def test_full_validate_gated_skipped_when_env_set(tmp_path: Path, monkeypatch) -> None:
+    _write_pipeline(tmp_path)
+    monkeypatch.setenv("DET_ALLOW_FULL_VALIDATE", "1")
+    findings = check_project(tmp_path)
+    assert not any(f.code == "full_validate_gated" for f in findings)
+
+
 def test_ingestion_library_dlt_deprecated_warning(tmp_path: Path):
     path = _write_pipeline(tmp_path)
     data = yaml.safe_load(path.read_text(encoding="utf-8"))

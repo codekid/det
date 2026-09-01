@@ -52,9 +52,15 @@ CLI after the user confirms. Install: `uv pip install -e ".[mcp]"`.
      (MCP never writes these files). Do not edit `plugins.py`.
 5. New target schema file: write under `schemas/…` (from
    `schema_from_sample_dry_run` or hand-authored), point pipeline / `--schema` at it.
-6. Preview loadability: `validate_sample` and/or **`migrate_dry_run`** with
-   `to_bronze`, `schema`, `mapper`, interval (`validate_limit` default 50).
-   Show partition plan, `ok`, and errors. No bronze is written.
+6. Preview loadability — follow the **validation ladder** (det-ops):
+   - `validate_sample` **`limit=50`** on representative raw runs
+   - **`migrate_dry_run`** with `validate_limit=50` (default) — partition plan,
+     `ok`, errors; no bronze written
+   - Full-partition MCP validate only after user confirm:
+     `DET_ALLOW_FULL_VALIDATE=1`, `validate_limit=0`, `confirm_full_validate=true`
+     (capped at 100k rows/partition; see `validate_capped` / `truncated`)
+   - Operator uncapped preview: CLI `det migrate … --dry-run` without
+     `--validate-limit` (no MCP env gate; narrow `-s`/`-e`)
 7. **Stop and ask the user to approve the apply.** Do not run a writing
    `det migrate` (omit `--dry-run`) until they explicitly confirm. Same for
    CLI `--dry-run` previews: present results, then wait.

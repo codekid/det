@@ -34,6 +34,8 @@ jobs:
       # dbt parse, pytest), and tests/conftest.py clears this so suites must opt
       # in explicitly rather than inherit ambient CI env.
       DET_REQUIRE_APPROVAL: "1"
+      # MCP full-partition migrate dry-run gate; CI only runs det check (no MCP writes).
+      DET_ALLOW_FULL_VALIDATE: "1"
       DET_POSTGRES_DSN: postgresql://det:det@localhost:5432/det
       DET_LAKE_MODE: local
       DET_LAKE_PATH: ${{ github.workspace }}/data/lake

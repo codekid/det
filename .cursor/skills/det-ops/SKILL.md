@@ -114,6 +114,31 @@ A paused extract DAG cannot self-check; `det_ops_receipts` is the walk-through.
 `schema_invalid` from `diagnose_pipeline`, failed `validate_sample`, or a red
 `det load` / `det run` means the wire and JSON Schema disagree. That is the alert.
 
+### Validation ladder
+
+`validate_sample` runs the **same coerce + JSON Schema path as load** (no writes).
+A 50-row cap is a **sample**, not proof the partition is clean. Load stays
+**fail-closed** — there is no quarantine; fix wire/schema/mapper.
+
+| Step | Action | Gate |
+| --- | --- | --- |
+| 1 | `diagnose_pipeline` + `validate_sample` **`limit=50`** | — |
+| 2 | `validate_sample` on other runs from `diff_partitions` | — |
+| 3 | `migrate_dry_run` **`validate_limit=50`** (default) | — |
+| 4 | User confirms; set **`DET_ALLOW_FULL_VALIDATE=1`**; `migrate_dry_run` **`validate_limit=0`** + **`confirm_full_validate=true`** | **Required** |
+| 4b | Operator alternative: CLI `det migrate --dry-run` without `--validate-limit` | No MCP env gate |
+| 5 | Fix schema / `@mapper`; repeat 3–4 until `ok=true` | — |
+| 6 | Smoke `det load` on one interval | — |
+| 7 | `det migrate --apply` or backfill load | Path B if required |
+
+Notes:
+
+- MCP full-partition validate scans up to **100k rows per partition** and sets
+  `validate_capped` / partition `truncated` when capped — **not a full census**.
+  Narrow `-s`/`-e` or use CLI uncapped dry-run for operators.
+- `det check` warns `full_validate_gated` when `DET_ALLOW_FULL_VALIDATE` is unset.
+- Full validate cannot run quietly: missing `confirm_full_validate` or env → hard error.
+
 1. Read the validation errors (unexpected property, type, required). Prefer a
    **representative** sample — bump `limit` / `sample_limit` (max 50); a 5-row
    peek often misses nested extras (e.g. `availability.*`).
@@ -122,8 +147,8 @@ A paused extract DAG cannot self-check; `det_ops_receipts` is the walk-through.
    consciously open a subtree (`additionalProperties: true`) if junk is expected.
 4. **Do not** silently allowlist/strip fields in the source plugin. Enrichment-only
    in `records_from_raw` (e.g. inject `subject_key`) is fine; pruning is not.
-5. After schema edits: re-run `validate_sample` / smoke `det load`. True wire breaks
-   that need rebuilds → `det-migrate`.
+5. After schema edits: re-run the ladder (steps 3–4) / smoke `det load`. True wire
+   breaks that need rebuilds → `det-migrate`.
 
 Successful `det load` / migrate also stamps the raw partition
 `meta/manifest.json` with `validation.ok` + `schema_sha256` (and row count). That is a

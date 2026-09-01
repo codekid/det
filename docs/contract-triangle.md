@@ -32,6 +32,9 @@ det check --strict    # CI runs this; warnings fail the build
 Under `--strict`, stale scaffold SQL (`scaffold_sql_stale`) and missing dbt models
 (`missing_dbt_models`) are errors, not warnings.
 
+Schema/load validation ladder (sample → migrate dry-run → gated full validate):
+[det-ops](../.cursor/skills/det-ops/SKILL.md) **Schema invalid / contract drift**.
+
 ## Related docs
 
 - [publication-contract.md](publication-contract.md) — raw commit, bronze replace-by-run

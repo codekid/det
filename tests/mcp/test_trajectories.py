@@ -39,6 +39,8 @@ def test_trajectory_fixtures_cover_plan_ids():
         "prune_chain_apply",
         "migrate_dry_run_stop",
         "migrate_chain_write",
+        "migrate_full_validate_ungated",
+        "migrate_full_validate_gated_stop",
         "scaffold_ops_dry_run_stop",
         "scaffold_ops_chain_write",
         "fleet_cube_load",

@@ -56,6 +56,8 @@ from det.validation.jsonschema_validator import (
 
 logger = get_logger(__name__)
 
+DEFAULT_MIGRATE_VALIDATE_MAX_ROWS = 100_000
+
 
 @dataclass
 class MigrateResult:
@@ -104,13 +106,16 @@ class MigratePlan:
     recreate_warning: str | None = None
     all_raw: bool = False
     all_raw_runs: bool = False
+    validate_capped: bool = False
+    validate_max_rows: int | None = None
+    validate_cap_message: str | None = None
 
     @property
     def ok(self) -> bool:
         return all(p.ok for p in self.partitions)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "dry_run": self.dry_run,
             "ok": self.ok,
             "from_raw": self.from_raw,
@@ -131,6 +136,12 @@ class MigratePlan:
             "all_raw": self.all_raw,
             "all_raw_runs": self.all_raw_runs,
         }
+        if self.validate_capped:
+            out["validate_capped"] = True
+            out["validate_max_rows"] = self.validate_max_rows
+            if self.validate_cap_message:
+                out["validate_cap_message"] = self.validate_cap_message
+        return out
 
 
 def manifest_wire_version(manifest: Mapping[str, Any]) -> int:
@@ -284,6 +295,7 @@ class BronzeMigrator:
         overrides: list[str] | None = None,
         dry_run: bool = False,
         validate_limit: int | None = None,
+        validate_max_rows: int | None = None,
         wire_version: int | None = None,
         lock_ttl_sec: int | None = None,
         recreate_iceberg: bool = False,
@@ -296,7 +308,8 @@ class BronzeMigrator:
 
         When ``dry_run=True``, parse/map/validate only and return a ``MigratePlan``
         (never calls the bronze writer). ``validate_limit`` caps rows checked per
-        partition (dry-run only).
+        partition (dry-run only). ``validate_max_rows`` caps full-partition scans
+        (when ``validate_limit`` is None); CLI omits it for uncapped operator scans.
 
         ``recreate_iceberg`` purges the target Iceberg bronze table location before
         writing (full table drop). Default raw selection matches load: latest
@@ -306,6 +319,8 @@ class BronzeMigrator:
         """
         if not dry_run and validate_limit is not None:
             raise ValueError("validate_limit is only valid with dry_run=True")
+        if not dry_run and validate_max_rows is not None:
+            raise ValueError("validate_max_rows is only valid with dry_run=True")
         if wire_version is not None and wire_version < 1:
             raise ValueError("wire_version filter must be a positive integer (>= 1)")
         if all_raw:
@@ -471,6 +486,7 @@ class BronzeMigrator:
                     window_start=window_start or job_ts,
                     window_end=window_end or job_ts,
                     validate_limit=validate_limit,
+                    validate_max_rows=validate_max_rows,
                     wire_version_filter=wire_version,
                     recreate_iceberg=recreate_iceberg,
                     will_drop_table=recreate_iceberg,
@@ -680,6 +696,7 @@ class BronzeMigrator:
         window_start: str,
         window_end: str,
         validate_limit: int | None,
+        validate_max_rows: int | None = None,
         wire_version_filter: int | None = None,
         recreate_iceberg: bool = False,
         will_drop_table: bool = False,
@@ -692,6 +709,7 @@ class BronzeMigrator:
     ) -> MigratePlan:
         plans: list[PartitionPlan] = []
         rows_checked = 0
+        cap_truncated = False
 
         for raw_dir in source_parts:
             errors: list[str] = []
@@ -753,6 +771,10 @@ class BronzeMigrator:
                     if validate_limit is not None and len(named_rows) >= validate_limit:
                         truncated = True
                         break
+                    if validate_max_rows is not None and len(named_rows) >= validate_max_rows:
+                        truncated = True
+                        cap_truncated = True
+                        break
                     try:
                         named = apply_naming(source_row.data, config.bronze.naming)
                         mapped = mapper(named)
@@ -799,6 +821,13 @@ class BronzeMigrator:
             )
 
         plan_extract = plans[0].extract_run_datetime if plans else ""
+        validate_cap_message = None
+        if cap_truncated and validate_max_rows is not None:
+            validate_cap_message = (
+                f"Full-partition validate stopped at {validate_max_rows} rows per "
+                "partition; narrow -s/-e for a complete census or use CLI "
+                "det migrate --dry-run without --validate-limit"
+            )
         return MigratePlan(
             dry_run=True,
             from_raw=raw_name,
@@ -818,4 +847,7 @@ class BronzeMigrator:
             recreate_warning=recreate_warning,
             all_raw=all_raw,
             all_raw_runs=all_raw_runs,
+            validate_capped=cap_truncated,
+            validate_max_rows=validate_max_rows if cap_truncated else None,
+            validate_cap_message=validate_cap_message,
         )
