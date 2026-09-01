@@ -16,6 +16,7 @@ from det.ingestion.iceberg_catalog_factory import (
     ENV_CATALOG,
     resolve_iceberg_catalog,
 )
+from det.ingestion.iceberg_writer import scan_iceberg_rows
 from det.runtime.iceberg_register import apply_iceberg_register, build_iceberg_register_plan
 from det.runtime.ids import sql_names_for_config
 from det.runtime.lake import ENV_LAKE_MODE, open_lake
@@ -125,7 +126,8 @@ def test_polaris_hadoop_write_then_register(
 
     pipe = _pipe(tmp_path, project_root)
     runner = PipelineRunner(project_root=tmp_path)
-    runner.run(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
+    result = runner.run(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
+    assert result.rows == SOAK_ROWS
 
     _rest_env(monkeypatch)
     plan = build_iceberg_register_plan(
@@ -135,9 +137,9 @@ def test_polaris_hadoop_write_then_register(
         include_ops=False,
     )
     assert len(plan.tables) == 1
-    result = apply_iceberg_register(plan, project_root=tmp_path)
-    assert result["count"] == 1
-    assert result["applied"][0]["status"] == "registered"
+    result_reg = apply_iceberg_register(plan, project_root=tmp_path)
+    assert result_reg["count"] == 1
+    assert result_reg["applied"][0]["status"] == "registered"
 
     from det.runtime.config import load_pipeline_config
 
@@ -146,7 +148,8 @@ def test_polaris_hadoop_write_then_register(
     lake = open_lake(lake_uri, tmp_path)
     catalog = resolve_iceberg_catalog(lake)
     ice = catalog.load_table((ns, table))
-    rows = list(ice.scan().to_arrow().to_pylist())
+    # Avoid scan().to_arrow() — PyArrow dataset collides on DET __filename meta.
+    rows = scan_iceberg_rows(ice, limit=SOAK_ROWS + 5)
     assert len(rows) == SOAK_ROWS
 
 
@@ -164,7 +167,8 @@ def test_polaris_greenfield_rest_write(
 
     pipe = _pipe(tmp_path, project_root)
     runner = PipelineRunner(project_root=tmp_path)
-    runner.run(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
+    result = runner.run(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
+    assert result.rows == SOAK_ROWS
 
     from det.runtime.config import load_pipeline_config
 
@@ -173,5 +177,5 @@ def test_polaris_greenfield_rest_write(
     lake = open_lake(lake_uri, tmp_path)
     catalog = resolve_iceberg_catalog(lake)
     ice = catalog.load_table((ns, table))
-    rows = list(ice.scan().to_arrow().to_pylist())
+    rows = scan_iceberg_rows(ice, limit=SOAK_ROWS + 5)
     assert len(rows) == SOAK_ROWS
