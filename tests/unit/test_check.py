@@ -300,6 +300,8 @@ def test_iceberg_rest_uri_missing_is_error(tmp_path: Path, monkeypatch):
     _write_pipeline(tmp_path)
     monkeypatch.setenv("DET_ICEBERG_CATALOG", "rest")
     monkeypatch.delenv("DET_ICEBERG_REST_URI", raising=False)
+    monkeypatch.delenv("DET_LAKE_MODE", raising=False)
+    monkeypatch.delenv("DET_LAKE_PATH", raising=False)
     findings = check_project(tmp_path)
     assert has_errors(findings)
     assert any(f.code == "iceberg_rest_uri_missing" for f in findings)
