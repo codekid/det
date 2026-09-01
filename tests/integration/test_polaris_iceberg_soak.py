@@ -70,12 +70,15 @@ def _pipe(tmp_path: Path, project_root: Path) -> Path:
         }
         for i in range(SOAK_ROWS)
     ]
+    # Unique Iceberg table id per soak (shared Polaris catalog); keep name/source.
+    wire_version = abs(hash(tmp_path.name)) % 900_000 + 100_000
     pipe = tmp_path / "configs/pipelines/example_api/events.yaml"
     pipe.parent.mkdir(parents=True)
     pipe.write_text(
         yaml.safe_dump(
             {
                 "name": "example_api.events",
+                "wire_version": wire_version,
                 "source": {
                     "type": "example_api.events",
                     "overrides": {"fixture_records": fixtures},
