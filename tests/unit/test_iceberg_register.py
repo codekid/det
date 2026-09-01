@@ -12,8 +12,11 @@ import yaml
 from det.ingestion.iceberg_catalog_factory import ENV_CATALOG, ENV_REST_URI
 from det.runtime.iceberg_register import (
     apply_iceberg_register,
+    assert_catalog_target_matches_env,
     build_iceberg_register_plan,
+    format_catalog_target,
     iceberg_register_write_argv,
+    with_catalog_target_argv,
 )
 
 
@@ -151,6 +154,41 @@ def test_argv_pipeline_implies_skip_ops() -> None:
     assert "--skip-ops" in iceberg_register_write_argv(
         pipeline="example_api.events", skip_ops=False
     )
+
+
+def test_catalog_target_bound_into_approval_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_pipeline(tmp_path)
+    lake = _plant_bronze(tmp_path)
+    monkeypatch.setenv("DET_LAKE_PATH", str(lake))
+    monkeypatch.setenv(ENV_CATALOG, "rest")
+    monkeypatch.setenv(ENV_REST_URI, "http://catalog.example:8181/api/catalog")
+    monkeypatch.setenv("DET_ICEBERG_REST_WAREHOUSE", "det_lake")
+    plan = build_iceberg_register_plan(project_root=tmp_path, include_ops=False)
+    argv = with_catalog_target_argv(iceberg_register_write_argv(skip_ops=True), plan)
+    assert "--catalog-target" in argv
+    target = argv[argv.index("--catalog-target") + 1]
+    assert target == format_catalog_target(plan)
+    assert "kind=rest" in target
+    assert "rest_host=catalog.example:8181" in target
+    assert "warehouse=det_lake" in target
+
+
+def test_apply_rejects_catalog_target_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_pipeline(tmp_path)
+    lake = _plant_bronze(tmp_path)
+    monkeypatch.setenv("DET_LAKE_PATH", str(lake))
+    monkeypatch.setenv(ENV_CATALOG, "rest")
+    monkeypatch.setenv(ENV_REST_URI, "http://catalog.example:8181/api/catalog")
+    plan = build_iceberg_register_plan(project_root=tmp_path, include_ops=False)
+    monkeypatch.setenv(ENV_REST_URI, "http://other.example:8181/api/catalog")
+    with pytest.raises(ValueError, match="catalog target changed"):
+        assert_catalog_target_matches_env(plan)
+    with pytest.raises(ValueError, match="catalog target changed"):
+        apply_iceberg_register(plan, project_root=tmp_path)
 
 
 def test_apply_register_then_exists(

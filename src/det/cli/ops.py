@@ -257,6 +257,7 @@ def iceberg_register_cmd(
         build_iceberg_register_plan,
         format_dry_run,
         iceberg_register_write_argv,
+        with_catalog_target_argv,
     )
 
     if dry_run == apply:
@@ -270,11 +271,6 @@ def iceberg_register_cmd(
     if pipeline is not None:
         pipe_path = _resolve_pipeline(pipeline, root).path
 
-    argv = iceberg_register_write_argv(
-        lake_path=lake_path,
-        pipeline=pipeline,
-        skip_ops=skip_ops,
-    )
     try:
         plan = build_iceberg_register_plan(
             project_root=root,
@@ -284,6 +280,15 @@ def iceberg_register_cmd(
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+
+    argv = with_catalog_target_argv(
+        iceberg_register_write_argv(
+            lake_path=lake_path,
+            pipeline=pipeline,
+            skip_ops=skip_ops,
+        ),
+        plan,
+    )
 
     if dry_run:
         typer.echo(format_dry_run(plan, argv))

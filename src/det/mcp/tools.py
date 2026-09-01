@@ -1164,22 +1164,26 @@ def iceberg_register_dry_run(
     from det.runtime.iceberg_register import (
         build_iceberg_register_plan,
         iceberg_register_write_argv,
+        with_catalog_target_argv,
     )
 
     base = _root(root)
     pipe_path = None
     if pipeline:
         _, pipe_path = _load_pipeline(pipeline, base)
-    argv = iceberg_register_write_argv(
-        lake_path=lake_path,
-        pipeline=pipeline,
-        skip_ops=skip_ops,
-    )
     plan = build_iceberg_register_plan(
         project_root=base,
         lake_path=lake_path,
         pipeline=pipe_path,
         include_ops=not skip_ops and pipeline is None,
+    )
+    argv = with_catalog_target_argv(
+        iceberg_register_write_argv(
+            lake_path=lake_path,
+            pipeline=pipeline,
+            skip_ops=skip_ops,
+        ),
+        plan,
     )
     return {
         **plan.to_dict(),

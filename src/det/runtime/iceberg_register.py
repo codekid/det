@@ -54,9 +54,21 @@ class IcebergRegisterPlan:
     glue_id: str | None
     tables: tuple[IcebergRegisterTablePlan, ...]
 
+    def catalog_target(self) -> dict[str, str]:
+        """Non-secret catalog identity for digests and apply-time checks."""
+        out: dict[str, str] = {"kind": self.catalog_kind}
+        if self.rest_uri_host:
+            out["rest_host"] = self.rest_uri_host
+        if self.warehouse:
+            out["warehouse"] = self.warehouse
+        if self.glue_id:
+            out["glue_id"] = self.glue_id
+        return out
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "catalog_kind": self.catalog_kind,
+            "catalog_target": self.catalog_target(),
             "lake_uri": self.lake_uri,
             "rest_uri_host": self.rest_uri_host,
             "warehouse": self.warehouse,
@@ -251,8 +263,60 @@ def iceberg_register_write_argv(
     return argv
 
 
-def approval_plan_for_register(argv: list[str]) -> ApprovalPlan:
-    return make_plan("iceberg-register", argv)
+def format_catalog_target(plan: IcebergRegisterPlan) -> str:
+    """Stable ``k=v;…`` encoding of :meth:`IcebergRegisterPlan.catalog_target`."""
+    return ";".join(f"{k}={v}" for k, v in sorted(plan.catalog_target().items()))
+
+
+def with_catalog_target_argv(
+    argv: list[str], plan: IcebergRegisterPlan
+) -> list[str]:
+    """Append non-secret ``--catalog-target`` so approval digests bind the metastore."""
+    cleaned: list[str] = []
+    skip_next = False
+    for part in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if part == "--catalog-target":
+            skip_next = True
+            continue
+        cleaned.append(part)
+    cleaned.extend(["--catalog-target", format_catalog_target(plan)])
+    return cleaned
+
+
+def approval_plan_for_register(
+    plan: IcebergRegisterPlan, argv: list[str]
+) -> ApprovalPlan:
+    return make_plan("iceberg-register", with_catalog_target_argv(argv, plan))
+
+
+def assert_catalog_target_matches_env(
+    plan: IcebergRegisterPlan,
+    *,
+    env: dict[str, str] | None = None,
+) -> None:
+    """Refuse apply when live catalog env no longer matches the approved plan."""
+    environ = dict(os.environ if env is None else env)
+    kind, rest_host, warehouse, glue_id = _require_register_catalog(
+        environ, plan.lake_uri
+    )
+    live = IcebergRegisterPlan(
+        catalog_kind=kind,
+        lake_uri=plan.lake_uri,
+        rest_uri_host=rest_host,
+        warehouse=warehouse,
+        glue_id=glue_id,
+        tables=(),
+    )
+    if live.catalog_target() != plan.catalog_target():
+        raise ValueError(
+            "iceberg catalog target changed since the plan was built: "
+            f"plan={format_catalog_target(plan)} "
+            f"env={format_catalog_target(live)}. "
+            "Re-run dry-run and re-approve."
+        )
 
 
 def _ensure_namespace(
@@ -271,6 +335,7 @@ def apply_iceberg_register(
     from pyiceberg.exceptions import NoSuchTableError
 
     environ = dict(os.environ if env is None else env)
+    assert_catalog_target_matches_env(plan, env=environ)
     root = project_root.resolve()
     lake = open_lake(plan.lake_uri, root, env=environ)
     catalog = resolve_iceberg_catalog(lake, env=environ)
@@ -312,6 +377,7 @@ def format_dry_run(plan: IcebergRegisterPlan, argv: list[str]) -> str:
         f"DRY-RUN iceberg-register catalog={plan.catalog_kind} "
         f"lake={plan.lake_uri} tables={len(plan.tables)}",
     ]
+    lines.append(f"  catalog_target={format_catalog_target(plan)}")
     if plan.rest_uri_host:
         lines.append(f"  rest_uri_host={plan.rest_uri_host}")
     if plan.warehouse:
@@ -325,5 +391,5 @@ def format_dry_run(plan: IcebergRegisterPlan, argv: list[str]) -> str:
         )
     lines.append("")
     lines.append("approval_plan:")
-    lines.append(json.dumps(approval_plan_for_register(argv).to_dict(), indent=2))
+    lines.append(json.dumps(approval_plan_for_register(plan, argv).to_dict(), indent=2))
     return "\n".join(lines)
