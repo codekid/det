@@ -321,6 +321,8 @@ class BronzeMigrator:
             raise ValueError("validate_limit is only valid with dry_run=True")
         if not dry_run and validate_max_rows is not None:
             raise ValueError("validate_max_rows is only valid with dry_run=True")
+        if validate_max_rows is not None and validate_max_rows < 1:
+            raise ValueError("validate_max_rows must be >= 1")
         if wire_version is not None and wire_version < 1:
             raise ValueError("wire_version filter must be a positive integer (>= 1)")
         if all_raw:

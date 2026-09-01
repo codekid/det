@@ -429,6 +429,25 @@ def test_migrate_dry_run_validate_max_rows_cap(
     assert "validate_cap_message" in payload
 
 
+def test_migrate_dry_run_validate_max_rows_rejects_non_positive(
+    project_root: Path, tmp_path: Path
+):
+    pipe_path = _example_pipeline(project_root, tmp_path)
+    PipelineRunner(tmp_path).run(pipe_path, interval_start="2026-08-06")
+    with pytest.raises(ValueError, match="validate_max_rows must be >= 1"):
+        BronzeMigrator(tmp_path).migrate(
+            pipeline=pipe_path,
+            to_bronze="example_api.events_v1",
+            schema_path=project_root / "schemas/example_api/events/events.schema.yaml",
+            mapper_name="identity",
+            interval_start="2026-08-06",
+            lake_path=str(tmp_path / "lake"),
+            dry_run=True,
+            validate_limit=None,
+            validate_max_rows=0,
+        )
+
+
 def test_create_server_registers_migrate_dry_run():
     server = create_server()
     names = sorted(server._tool_manager._tools)

@@ -129,7 +129,7 @@ A 50-row cap is a **sample**, not proof the partition is clean. Load stays
 | 4b | Operator alternative: CLI `det migrate --dry-run` without `--validate-limit` | No MCP env gate |
 | 5 | Fix schema / `@mapper`; repeat 3–4 until `ok=true` | — |
 | 6 | Smoke `det load` on one interval | — |
-| 7 | `det migrate --apply` or backfill load | Path B if required |
+| 7 | `det migrate` (omit `--dry-run`; `--approval` when Path B) or backfill load | Path B if required |
 
 Notes:
 

@@ -395,7 +395,8 @@ def _score_full_validate_gating(trace: Trace) -> list[Violation]:
         args = event.arguments or {}
         raw_limit = args.get("validate_limit", 50)
         if raw_limit != 0:
-            had_ladder = True
+            if raw_limit == 50:
+                had_ladder = True
             continue
         if not args.get("confirm_full_validate"):
             found.append(
