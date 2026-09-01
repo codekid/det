@@ -163,11 +163,11 @@ def _gcp_lakehouse_rest_props(
         "auth": {"type": "google"},
         "header.x-goog-user-project": project,
     }
-    delegation = (env.get(ENV_REST_ACCESS_DELEGATION) or "").strip()
-    if not delegation and warehouse.startswith("bl://"):
+    delegation = env.get(ENV_REST_ACCESS_DELEGATION)
+    if delegation is None and warehouse.startswith("bl://"):
         delegation = "vended-credentials"
-    if delegation:
-        props["header.X-Iceberg-Access-Delegation"] = delegation
+    if delegation is not None:
+        props["header.X-Iceberg-Access-Delegation"] = delegation.strip()
     creds_path = (env.get("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
     if creds_path:
         props["auth"] = {"type": "google", "google": {"credentials_path": creds_path}}
