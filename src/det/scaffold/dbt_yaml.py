@@ -96,8 +96,15 @@ def _table_entry_yaml(
     )
     desc_indented = _yaml_block({"description": description}, indent=8)
 
-    # Layout 1/2 path via det_lake_bronze_path (see dbt/macros/).
-    bronze_path = f"{{{{ det_lake_bronze_path('{provider}', '{table}') }}}}"
+    # Layout 1: DET_LAKE_PATH/bronze/{provider}/{table}
+    # Layout 2: DET_LAKE_PATH_BRONZE/{provider}/{table} (flattened; no /bronze/).
+    # Inline env_var (not the det_lake_bronze_path macro): dbt does not expand
+    # project macros when rendering sources.yml meta.external_location.
+    bronze_root_jinja = (
+        "{{ env_var('DET_LAKE_PATH_BRONZE', "
+        "env_var('DET_LAKE_PATH', '../data/lake') ~ '/bronze') }}"
+    )
+    bronze_path = f"{bronze_root_jinja}/{provider}/{table}"
     if_not_bq = "{% if target.name != 'bigquery' %}"
     endif = "{% endif %}"
     if bronze_source == "iceberg":

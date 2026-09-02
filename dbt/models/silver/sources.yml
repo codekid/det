@@ -15,7 +15,7 @@ sources:
         description: Bronze contract for example_api events. Wire-faithful typed landing; analytics renames/coalesce live in dbt.stg.
         meta:
           formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
-          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ det_lake_bronze_path('example_api', 'events_v1') }}'){% endif %}"
+          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH_BRONZE', env_var('DET_LAKE_PATH', '../data/lake') ~ '/bronze') }}/example_api/events_v1'){% endif %}"
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.
@@ -45,7 +45,7 @@ sources:
         description: DET bronze example_api.orders_v1
         meta:
           formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
-          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ det_lake_bronze_path('example_api', 'orders_v1') }}'){% endif %}"
+          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH_BRONZE', env_var('DET_LAKE_PATH', '../data/lake') ~ '/bronze') }}/example_api/orders_v1'){% endif %}"
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.
@@ -68,7 +68,7 @@ sources:
         description: 'NOAA Storm Events details (StormEvents_details CSV). Bronze contract: snake_case names and typed values. DET coerces source strings to these types before validation. Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.'
         meta:
           formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
-          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ det_lake_bronze_path('noaa', 'storm_events_v1') }}'){% endif %}"
+          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH_BRONZE', env_var('DET_LAKE_PATH', '../data/lake') ~ '/bronze') }}/noaa/storm_events_v1'){% endif %}"
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.
@@ -186,7 +186,7 @@ sources:
         description: 'NOAA Storm Events fatalities (StormEvents_fatalities CSV). Bronze contract: snake_case names and typed values. DET coerces source strings to these types before validation. Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.'
         meta:
           formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
-          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ det_lake_bronze_path('noaa', 'fatalities_v1') }}'){% endif %}"
+          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH_BRONZE', env_var('DET_LAKE_PATH', '../data/lake') ~ '/bronze') }}/noaa/fatalities_v1'){% endif %}"
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.
@@ -220,7 +220,7 @@ sources:
         description: 'NOAA Storm Events locations (StormEvents_locations CSV). Bronze contract: snake_case names and typed values. DET coerces source strings to these types before validation. Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.'
         meta:
           formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
-          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ det_lake_bronze_path('noaa', 'locations_v1') }}'){% endif %}"
+          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH_BRONZE', env_var('DET_LAKE_PATH', '../data/lake') ~ '/bronze') }}/noaa/locations_v1'){% endif %}"
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.
@@ -267,7 +267,7 @@ sources:
         description: DET bronze openlibrary.subjects_v1
         meta:
           formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
-          external_location: "{% if target.name != 'bigquery' %}read_json('{{ det_lake_bronze_path('openlibrary', 'subjects_v1') }}/**/data.jsonl', columns={'key': 'VARCHAR', 'subject_key': 'VARCHAR', 'title': 'VARCHAR', 'edition_count': 'INTEGER', 'cover_id': 'INTEGER', 'cover_edition_key': 'VARCHAR', 'first_publish_year': 'INTEGER', 'has_fulltext': 'BOOLEAN', 'public_scan': 'BOOLEAN', 'printdisabled': 'BOOLEAN', 'ia': 'VARCHAR', 'lending_edition': 'VARCHAR', 'lending_identifier': 'VARCHAR', 'authors': 'JSON', 'subject': 'JSON', 'ia_collection': 'JSON', 'availability': 'JSON', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'}, union_by_name=true, hive_partitioning=false){% endif %}"
+          external_location: "{% if target.name != 'bigquery' %}read_json('{{ env_var('DET_LAKE_PATH_BRONZE', env_var('DET_LAKE_PATH', '../data/lake') ~ '/bronze') }}/openlibrary/subjects_v1/**/data.jsonl', columns={'key': 'VARCHAR', 'subject_key': 'VARCHAR', 'title': 'VARCHAR', 'edition_count': 'INTEGER', 'cover_id': 'INTEGER', 'cover_edition_key': 'VARCHAR', 'first_publish_year': 'INTEGER', 'has_fulltext': 'BOOLEAN', 'public_scan': 'BOOLEAN', 'printdisabled': 'BOOLEAN', 'ia': 'VARCHAR', 'lending_edition': 'VARCHAR', 'lending_identifier': 'VARCHAR', 'authors': 'JSON', 'subject': 'JSON', 'ia_collection': 'JSON', 'availability': 'JSON', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'}, union_by_name=true, hive_partitioning=false){% endif %}"
         columns:
         - name: __row_hash
           description: DET content hash used for silver dedupe.

@@ -300,6 +300,8 @@ def test_lake_cloud_experimental_warning(tmp_path: Path, monkeypatch):
 
 def test_lake_cloud_experimental_split_roots(tmp_path: Path, monkeypatch):
     """Split cloud lakes must reach lake_cloud_experimental with spec bound."""
+    from det.runtime.check import _lake_mode_findings
+
     _write_pipeline(tmp_path)
     monkeypatch.setenv("DET_LAKE_MODE", "cloud")
     monkeypatch.setenv("DET_LAKE_PATH_RAW", "s3://ci-raw")
@@ -315,7 +317,7 @@ def test_lake_cloud_experimental_split_roots(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "det.runtime.lake.resolve_lake_roots", lambda *a, **k: _Roots()
     )
-    findings = check_project(tmp_path)
+    findings = _lake_mode_findings(tmp_path)
     assert not has_errors(findings)
     cloud = [f for f in findings if f.code == "lake_cloud_experimental"]
     assert len(cloud) == 1
