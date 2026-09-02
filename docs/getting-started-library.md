@@ -114,6 +114,7 @@ except DetError:
 
 ```python
 settings = DetSettings.from_env(project_root=".").with_overrides(
+    lake_mode="cloud",
     lake_path_raw="s3://acme-ingest-prod",
     lake_path_bronze="s3://acme-curated-prod",
     lake_path_ops="s3://acme-platform-ops",

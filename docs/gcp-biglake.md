@@ -79,12 +79,19 @@ bq show --connection --location="$DET_BQ_LOCATION" \
 
 ```bash
 export DET_GCS_BUCKET=your-bucket   # from DET_LAKE_PATH=gs://BUCKET/det-lake
-# Layout 2: grant objectViewer on the bronze bucket (and ops bucket for ops tables),
-# not on the raw ingest bucket.
+# Layout 2: DET_GCS_BUCKET is the bronze bucket (DET_LAKE_PATH_BRONZE), not raw ingest.
+# Grant ops as well when DET_LAKE_PATH_OPS is a different bucket.
 
 gcloud storage buckets add-iam-policy-binding "gs://${DET_GCS_BUCKET}" \
   --member="serviceAccount:CONNECTION_SA_EMAIL" \
   --role="roles/storage.objectViewer"
+
+export DET_GCS_OPS_BUCKET="${DET_GCS_OPS_BUCKET:-$DET_GCS_BUCKET}"  # DET_LAKE_PATH_OPS
+if [ "${DET_GCS_OPS_BUCKET}" != "${DET_GCS_BUCKET}" ]; then
+  gcloud storage buckets add-iam-policy-binding "gs://${DET_GCS_OPS_BUCKET}" \
+    --member="serviceAccount:CONNECTION_SA_EMAIL" \
+    --role="roles/storage.objectViewer"
+fi
 ```
 
 ### IAM sketch (layout 2 split buckets)

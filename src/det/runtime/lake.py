@@ -243,6 +243,17 @@ def is_split_lake_configured(
     return any(v is not None for v in (raw, bronze, ops))
 
 
+def _lake_uri_kind(spec: str) -> str:
+    """Classify a lake URI for split-root consistency (scheme-specific)."""
+    text = (spec or "").strip()
+    if text.startswith("memory://"):
+        return "memory"
+    for scheme in _OBJECT_SCHEMES:
+        if text.startswith(scheme):
+            return scheme.removesuffix("://")
+    return "local"
+
+
 def validate_lake_roots(
     roots: LakeRoots,
     *,
@@ -262,16 +273,11 @@ def validate_lake_roots(
     for name, spec in specs.items():
         if mode is not None:
             validate_lake_mode(spec, mode)
-        if is_object_lake_spec(spec):
-            kinds[name] = "object"
-        elif spec.startswith("memory://"):
-            kinds[name] = "memory"
-        else:
-            kinds[name] = "local"
+        kinds[name] = _lake_uri_kind(spec)
     if len(set(kinds.values())) > 1:
         raise ValueError(
             "split lake roots must share the same URI kind "
-            f"(local / s3|gs / memory); got {kinds}"
+            f"(local / s3 / gs / gcs / memory); got {kinds}"
         )
 
 

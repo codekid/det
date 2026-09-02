@@ -49,7 +49,7 @@ from det.validation.jsonschema_validator import load_json_schema
 logger = get_logger(__name__)
 
 
-def assert_manifest_lake_layout(manifest: dict) -> None:
+def assert_manifest_lake_layout(manifest: ManifestPayload) -> None:
     """Refuse loads when manifest.lake_layout is newer than this DET install."""
     layout = lake_layout_of(manifest)
     if layout > LAKE_LAYOUT:

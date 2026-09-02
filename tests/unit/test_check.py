@@ -298,6 +298,30 @@ def test_lake_cloud_experimental_warning(tmp_path: Path, monkeypatch):
     assert not any(f.code == "approval_recommended_cloud_lake" for f in findings)
 
 
+def test_lake_cloud_experimental_split_roots(tmp_path: Path, monkeypatch):
+    """Split cloud lakes must reach lake_cloud_experimental with spec bound."""
+    _write_pipeline(tmp_path)
+    monkeypatch.setenv("DET_LAKE_MODE", "cloud")
+    monkeypatch.setenv("DET_LAKE_PATH_RAW", "s3://ci-raw")
+    monkeypatch.setenv("DET_LAKE_PATH_BRONZE", "s3://ci-bronze")
+    monkeypatch.setenv("DET_LAKE_PATH_OPS", "s3://ci-ops")
+    monkeypatch.delenv("DET_ICEBERG_CATALOG", raising=False)
+    monkeypatch.delenv("DET_ICEBERG_REST_URI", raising=False)
+    monkeypatch.setenv("DET_REQUIRE_APPROVAL", "1")
+
+    class _Roots:
+        bronze = "s3://ci-bronze"
+
+    monkeypatch.setattr(
+        "det.runtime.lake.resolve_lake_roots", lambda *a, **k: _Roots()
+    )
+    findings = check_project(tmp_path)
+    assert not has_errors(findings)
+    cloud = [f for f in findings if f.code == "lake_cloud_experimental"]
+    assert len(cloud) == 1
+    assert cloud[0].path == "s3://ci-bronze"
+
+
 def test_approval_recommended_cloud_lake_when_gate_off(
     tmp_path: Path, monkeypatch
 ) -> None:

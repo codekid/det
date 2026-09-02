@@ -90,9 +90,10 @@ def _metadata_uri_for_table(table_dir: LakeRef) -> str:
     return str(candidates[-1])
 
 
-def _bronze_table_plans(lake: LakeRef, pipeline: PipelineConfig | None) -> list[BigLakeTablePlan]:
-    # Layout 1: tables under lake/bronze/. Layout 2: lake *is* the bronze root.
-    bronze_root = lake / "bronze" if (lake / "bronze").exists() else lake
+def _bronze_table_plans(
+    lake: LakeRef, pipeline: PipelineConfig | None, *, layout: int = 1
+) -> list[BigLakeTablePlan]:
+    bronze_root = lake if layout >= 2 else lake / "bronze"
     if not bronze_root.exists():
         return []
 
@@ -200,7 +201,9 @@ def build_biglake_register_plan(
     bq_location = (location or environ.get(ENV_BQ_LOCATION) or "US").strip()
     conn = (connection or environ.get(ENV_BQ_CONNECTION) or DEFAULT_CONNECTION).strip()
 
-    tables: list[BigLakeTablePlan] = list(_bronze_table_plans(bronze_lake, config))
+    tables: list[BigLakeTablePlan] = list(
+        _bronze_table_plans(bronze_lake, config, layout=roots.layout)
+    )
     if include_ops and config is None:
         ops_plan = _ops_table_plan(ops_lake)
         if ops_plan is not None:

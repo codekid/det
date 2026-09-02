@@ -17,10 +17,12 @@ from det.runtime.config import (
 )
 from det.runtime.lake import (
     DEFAULT_LAKE_REL,
+    LakeRoots,
     clear_memory_lakes,
     is_split_lake_configured,
-    resolve_lake_roots,
     reset_lake_mode_warning_for_tests,
+    resolve_lake_roots,
+    validate_lake_roots,
 )
 from det.runtime.settings import DetSettings
 
@@ -168,3 +170,32 @@ def test_cli_override_wins_over_settings(tmp_path: Path) -> None:
         cli_lake_path_ops=str(tmp_path / "settings-ops"),
     )
     assert Path(str(roots.raw)).resolve() == cli_raw.resolve()
+
+
+class _Uri:
+    def __init__(self, spec: str) -> None:
+        self._spec = spec
+
+    def __str__(self) -> str:
+        return self._spec
+
+
+def test_validate_split_rejects_mixed_object_schemes() -> None:
+    roots = LakeRoots(
+        raw=_Uri("s3://acme-raw"),  # type: ignore[arg-type]
+        bronze=_Uri("gs://acme-bronze"),  # type: ignore[arg-type]
+        ops=_Uri("s3://acme-ops"),  # type: ignore[arg-type]
+        layout=2,
+    )
+    with pytest.raises(ValueError, match="URI kind"):
+        validate_lake_roots(roots, mode="cloud")
+
+
+def test_validate_split_allows_matching_s3_schemes() -> None:
+    roots = LakeRoots(
+        raw=_Uri("s3://acme-raw"),  # type: ignore[arg-type]
+        bronze=_Uri("s3://acme-bronze"),  # type: ignore[arg-type]
+        ops=_Uri("s3://acme-ops"),  # type: ignore[arg-type]
+        layout=2,
+    )
+    validate_lake_roots(roots, mode="cloud")

@@ -108,10 +108,9 @@ def _metadata_uri_for_table(table_dir: LakeRef) -> str:
 
 
 def _bronze_table_plans(
-    lake: LakeRef, pipeline: PipelineConfig | None
+    lake: LakeRef, pipeline: PipelineConfig | None, *, layout: int = 1
 ) -> list[IcebergRegisterTablePlan]:
-    # Layout 1: tables under lake/bronze/. Layout 2: lake *is* the bronze root.
-    bronze_root = lake / "bronze" if (lake / "bronze").exists() else lake
+    bronze_root = lake if layout >= 2 else lake / "bronze"
     if not bronze_root.exists():
         return []
 
@@ -235,7 +234,9 @@ def build_iceberg_register_plan(
     lake_uri = _lake_uri_str(bronze_lake)
     kind, rest_host, warehouse, glue_id = _require_register_catalog(environ, lake_uri)
 
-    tables: list[IcebergRegisterTablePlan] = list(_bronze_table_plans(bronze_lake, config))
+    tables: list[IcebergRegisterTablePlan] = list(
+        _bronze_table_plans(bronze_lake, config, layout=roots.layout)
+    )
     if include_ops and config is None:
         ops_plan = _ops_table_plan(ops_lake)
         if ops_plan is not None:

@@ -494,16 +494,17 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
         return findings
 
     settings = DetSettings.from_env(project_root=project_root)
+    spec = pick_lake_spec()
     if is_split_lake_configured(settings):
         raw, bronze, ops = split_lake_specs_from_settings(settings)
         missing = [
             name
-            for name, spec in (
+            for name, layer in (
                 (ENV_LAKE_PATH_RAW, raw),
                 (ENV_LAKE_PATH_BRONZE, bronze),
                 (ENV_LAKE_PATH_OPS, ops),
             )
-            if spec is None
+            if layer is None
         ]
         if missing:
             findings.append(
@@ -520,7 +521,7 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
             )
             return findings
         try:
-            resolve_lake_roots(settings, project_root=project_root)
+            roots = resolve_lake_roots(settings, project_root=project_root)
         except ValueError as exc:
             findings.append(
                 Finding(
@@ -532,6 +533,7 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
                 )
             )
             return findings
+        spec = str(roots.bronze)
         for path in discover_pipeline_files(project_root):
             try:
                 cfg = load_pipeline(path, project_root=project_root)
@@ -551,7 +553,6 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
                     )
                 )
     else:
-        spec = pick_lake_spec()
         try:
             validate_lake_mode(spec, mode)
         except ValueError as exc:
