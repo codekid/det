@@ -36,6 +36,9 @@ def migrate_bronze(
         help="Raw dataset lake id (defaults to pipeline {name}_v{wire_version})",
     ),
     lake_path: str | None = typer.Option(None, "--lake-path"),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw"),
+    lake_path_bronze: str | None = typer.Option(None, "--lake-path-bronze"),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops"),
     ingestion: str = typer.Option("thin", "--ingestion"),
     dry_run: bool = typer.Option(
         False,
@@ -136,6 +139,9 @@ def migrate_bronze(
                 all_raw=all_raw,
                 all_raw_runs=all_raw_runs,
                 lake_path=lake_path,
+                lake_path_raw=lake_path_raw,
+                lake_path_bronze=lake_path_bronze,
+                lake_path_ops=lake_path_ops,
                 ingestion=ingestion,
                 set_=set_,
             ),
@@ -146,7 +152,14 @@ def migrate_bronze(
     try:
         with _claimed_approval_work(claimed, approval):
             result = BronzeMigrator(
-                settings=_settings(root, lake_path=lake_path, lock_ttl_sec=lock_ttl_sec)
+                settings=_settings(
+                    root,
+                    lake_path=lake_path,
+                    lake_path_raw=lake_path_raw,
+                    lake_path_bronze=lake_path_bronze,
+                    lake_path_ops=lake_path_ops,
+                    lock_ttl_sec=lock_ttl_sec,
+                )
             ).migrate(
                 pipeline=resolved.path,
                 to_bronze=to_bronze,

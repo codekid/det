@@ -127,8 +127,10 @@ Greenfield: `det init-pipeline --name example_api.events --source-type example_a
 ## Destinations
 
 Lake root: `DET_LAKE_PATH` / `--lake-path` (default `./data/lake`). Same hive under
-one root (`raw/` + `bronze/` prefixes) — dual buckets are not supported. There is
-no `destination.type: s3`.
+one root (`raw/` + `bronze/` prefixes) for layout 1. Optional **layout 2** split
+roots: `DET_LAKE_PATH_RAW` / `_BRONZE` / `_OPS` (or `DetSettings.lake_path_*`) —
+arbitrary bucket URIs you choose; flattened `{provider}/{source}_vN` under each.
+There is no `destination.type: s3`. See [docs/lake-layout.md](docs/lake-layout.md).
 
 **`DET_LAKE_MODE`** (policy around the URI; unset → `local`):
 

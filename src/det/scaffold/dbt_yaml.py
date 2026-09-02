@@ -96,14 +96,19 @@ def _table_entry_yaml(
     )
     desc_indented = _yaml_block({"description": description}, indent=8)
 
-    # Match existing lake path Jinja; path is concrete per table (not {name}).
-    # Gate DuckDB meta with inline Jinja so the same sources.yml works for
-    # BigLake (dbt 1.12 rejects a second sources_bigquery.yml with same names).
-    lake_jinja = "{{ env_var('DET_LAKE_PATH', '../data/lake') }}"
+    # Layout 1: DET_LAKE_PATH/bronze/{provider}/{table}
+    # Layout 2: DET_LAKE_PATH_BRONZE/{provider}/{table} (flattened; no /bronze/).
+    # Inline env_var (not the det_lake_bronze_path macro): dbt does not expand
+    # project macros when rendering sources.yml meta.external_location.
+    bronze_root_jinja = (
+        "{{ env_var('DET_LAKE_PATH_BRONZE', "
+        "env_var('DET_LAKE_PATH', '../data/lake') ~ '/bronze') }}"
+    )
+    bronze_path = f"{bronze_root_jinja}/{provider}/{table}"
     if_not_bq = "{% if target.name != 'bigquery' %}"
     endif = "{% endif %}"
     if bronze_source == "iceberg":
-        loc = f"iceberg_scan('{lake_jinja}/bronze/{provider}/{table}')"
+        loc = f"iceberg_scan('{bronze_path}')"
         lines = [
             f"      - name: {table}",
             desc_indented,
@@ -115,7 +120,7 @@ def _table_entry_yaml(
         ]
         return "\n".join(lines)
     loc = (
-        f"read_json('{lake_jinja}/bronze/{provider}/{table}/**/data.jsonl', "
+        f"read_json('{bronze_path}/**/data.jsonl', "
         f"columns={columns_struct}, union_by_name=true, hive_partitioning=false)"
     )
     lines = [

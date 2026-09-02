@@ -163,14 +163,15 @@ class DetBackend:
         run_identity: tuple[str, str, str] | None = None,
         on_chunk: Callable[[], None] | None = None,
     ) -> LakeRef:
-        from det.destinations.models import bronze_dataset_dir, lake_root
+        from det.destinations.models import bronze_dataset_dir, lake_roots_for
         from det.ingestion.iceberg_writer import write_iceberg_table
 
         json_schema = load_json_schema(resolve_path(project_root, config.schema_path))
         schema, table = sql_names_for_config(config)
+        roots = lake_roots_for(project_root, destination=config.destination)
         written = write_iceberg_table(
             records,
-            lake=lake_root(config.destination, project_root),
+            lake=roots.bronze,
             table_location=bronze_dataset_dir(config, project_root),
             namespace=schema,
             table=table,

@@ -29,7 +29,7 @@ from det.runtime.check import (
     has_warnings,
 )
 from det.runtime.config import PipelineConfig, load_pipeline, load_pipeline_config
-from det.runtime.lake import LakeRef, open_lake
+from det.runtime.lake import LakeRef, LakeRoots, open_lake, resolve_lake_roots
 from det.runtime.layout import LAKE_LAYOUT
 from det.runtime.lease import (
     Lease,
@@ -59,7 +59,7 @@ from det.sources.base import (
     merge_source_config,
 )
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 __all__ = [
     "LAKE_LAYOUT",
@@ -77,6 +77,7 @@ __all__ = [
     "Finding",
     "Interval",
     "LakeRef",
+    "LakeRoots",
     "Lease",
     "LeaseFencedError",
     "LeaseHeldError",
@@ -111,6 +112,7 @@ __all__ = [
     "merge_source_config",
     "open_lake",
     "release_lock",
+    "resolve_lake_roots",
     "scrub_rendered",
     "scrub_secrets",
     "summarize_receipts",

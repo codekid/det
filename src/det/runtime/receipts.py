@@ -23,7 +23,6 @@ from pydantic import ValidationError as PydanticValidationError
 from det.logging import get_logger, scrub_secrets
 from det.runtime.coerce import CoerceError
 from det.runtime.lake import LakeRef
-from det.runtime.layout import LAKE_LAYOUT
 from det.runtime.lease import LeaseFencedError, LeaseHeldError, default_lock_owner
 from det.runtime.meta import to_interval_datetime, to_partition_value
 from det.runtime.receipt_types import ReceiptPayload
@@ -58,6 +57,7 @@ class ReceiptDraft:
         wire_version: int | None = None,
         destination: str | None = None,
         owner: str = "",
+        lake_layout: int | None = None,
     ) -> None:
         self.attempt_id = attempt_id
         self.started_at = started_at
@@ -69,6 +69,7 @@ class ReceiptDraft:
         self.wire_version = wire_version
         self.destination = destination
         self.owner = owner
+        self.lake_layout = lake_layout
         self.artifacts: int | None = None
         self.raw_bytes: int | None = None
         self.rows: int | None = None
@@ -182,7 +183,7 @@ def _payload(
     )
     body: ReceiptPayload = {
         "receipt_version": RECEIPT_VERSION,
-        "lake_layout": LAKE_LAYOUT,
+        "lake_layout": int(draft.lake_layout) if draft.lake_layout is not None else 1,
         "attempt_id": draft.attempt_id,
         "pipeline": draft.pipeline,
         "command": draft.command,
@@ -263,6 +264,7 @@ def record_attempt(
     extract_run_datetime: str | None = None,
     wire_version: int | None = None,
     destination: str | None = None,
+    lake_layout: int | None = None,
     env: Mapping[str, str] | None = None,
 ) -> Iterator[ReceiptDraft]:
     """Capture one extract/load attempt. Open this *outside* ``pipeline_lease``."""
@@ -277,6 +279,7 @@ def record_attempt(
         wire_version=wire_version,
         destination=destination,
         owner=default_lock_owner(env),
+        lake_layout=lake_layout,
     )
     error: BaseException | None = None
     try:

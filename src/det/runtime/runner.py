@@ -7,17 +7,17 @@ from typing import cast
 
 from det.destinations.models import (
     hive_partition_dir,
-    lake_root,
+    lake_roots_for,
     raw_dataset_dir,
 )
-from det.errors import DetConflictError, DetNotFoundError, reraise_as_plugin
+from det.errors import DetConflictError, DetContractError, DetNotFoundError, reraise_as_plugin
 from det.logging import bound_run_context, get_logger, sanitize_lake_uri, update_run_context
 from det.plugins import load_plugins
 from det.runtime.bronze_land import BronzeLandParams, land_bronze_partition
 from det.runtime.config import PipelineConfig, load_pipeline, resolve_path
 from det.runtime.dlt_hygiene import check_raw_hygiene
 from det.runtime.lake import LakeRef
-from det.runtime.layout import LAKE_LAYOUT
+from det.runtime.layout import LAKE_LAYOUT, lake_layout_of
 from det.runtime.lease import (
     LeaseFencedError,
     assert_lease_held,
@@ -48,6 +48,15 @@ from det.validation.jsonschema_validator import load_json_schema
 
 logger = get_logger(__name__)
 
+
+def assert_manifest_lake_layout(manifest: ManifestPayload) -> None:
+    """Refuse loads when manifest.lake_layout is newer than this DET install."""
+    layout = lake_layout_of(manifest)
+    if layout > LAKE_LAYOUT:
+        raise DetContractError(
+            f"manifest lake_layout={layout} newer than this DET install "
+            f"(supports up to {LAKE_LAYOUT}); upgrade DET or use a matching lake"
+        )
 
 @dataclass
 class ExtractResult:
@@ -84,8 +93,14 @@ class PipelineRunner:
         self.project_root = settings.project_root
         load_plugins()
 
+    def _lake_roots(self, destination):
+        return lake_roots_for(
+            self.project_root, destination=destination, settings=self.settings
+        )
+
     def _lake(self, destination):
-        return lake_root(destination, self.project_root, settings=self.settings)
+        """Ops root (receipts/locks). Prefer ``_lake_roots`` when layers may differ."""
+        return self._lake_roots(destination).ops
 
     def _lease_kwargs(
         self, lock_ttl_sec: int | None = None, config: PipelineConfig | None = None
@@ -140,10 +155,11 @@ class PipelineRunner:
         effective = merge_source_config(source.defaults(), config.source.overrides)
         start_iso, end_iso = resolve_interval(interval_start, interval_end)
         interval = Interval(start=start_iso, end=end_iso)
-        lake = self._lake(config.destination)
+        roots = self._lake_roots(config.destination)
+        lake = roots.ops
 
         raw_dir = hive_partition_dir(
-            raw_dataset_dir(config, self.project_root),
+            raw_dataset_dir(config, self.project_root, settings=self.settings),
             interval_start_datetime=start_iso,
             interval_end_datetime=end_iso,
             extract_run_datetime=extract_ts,
@@ -157,6 +173,7 @@ class PipelineRunner:
             extract_run_datetime=extract_ts,
             wire_version=config.wire_version,
             destination=config.destination.type,
+            lake_layout=roots.layout,
         ) as receipt:
             if is_committed_raw_dir(raw_dir):
                 raise DetConflictError(
@@ -219,7 +236,7 @@ class PipelineRunner:
                                 "interval_end": end_iso,
                                 "extract_run_datetime": extract_ts,
                                 "wire_version": config.wire_version,
-                                "lake_layout": LAKE_LAYOUT,
+                                "lake_layout": roots.layout,
                                 "artifacts": artifacts,
                             },
                         )
@@ -286,7 +303,8 @@ class PipelineRunner:
         source = get_source(config.source.type, project_root=self.project_root)
         effective = merge_source_config(source.defaults(), config.source.overrides)
         start_iso, end_iso = resolve_interval(interval_start, interval_end)
-        lake = self._lake(config.destination)
+        roots = self._lake_roots(config.destination)
+        lake = roots.ops
 
         with record_attempt(
             lake,
@@ -297,6 +315,7 @@ class PipelineRunner:
             extract_run_datetime=extract_run_datetime,
             wire_version=config.wire_version,
             destination=config.destination.type,
+            lake_layout=roots.layout,
         ) as receipt:
             with pipeline_lease(
                 lake,
@@ -324,6 +343,7 @@ class PipelineRunner:
                     )
                     logger.info("resolved raw partition", raw_dir=str(raw_dir))
                     manifest = read_manifest(raw_dir)
+                    assert_manifest_lake_layout(manifest)
                     check_raw_hygiene(raw_dir, manifest.get("artifacts"))
                     extract_ts = str(
                         manifest.get("extract_run_datetime") or extract_run_datetime

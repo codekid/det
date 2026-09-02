@@ -27,8 +27,9 @@ from det.logging import get_logger
 from det.runtime.approval import ApprovalPlan, make_plan
 from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
 from det.runtime.ids import parse_canonical_id, sql_schema_name
-from det.runtime.lake import LakeRef, open_lake, pick_lake_spec
+from det.runtime.lake import LakeRef, open_lake, resolve_lake_roots
 from det.runtime.receipts_materialize import OPS_NAMESPACE, OPS_TABLE, ops_run_receipts_location
+from det.runtime.settings import get_active_settings
 
 logger = get_logger(__name__)
 
@@ -107,9 +108,9 @@ def _metadata_uri_for_table(table_dir: LakeRef) -> str:
 
 
 def _bronze_table_plans(
-    lake: LakeRef, pipeline: PipelineConfig | None
+    lake: LakeRef, pipeline: PipelineConfig | None, *, layout: int = 1
 ) -> list[IcebergRegisterTablePlan]:
-    bronze_root = lake / "bronze"
+    bronze_root = lake if layout >= 2 else lake / "bronze"
     if not bronze_root.exists():
         return []
 
@@ -221,18 +222,23 @@ def build_iceberg_register_plan(
         else:
             config = load_pipeline_config(resolve_path(root, str(pipeline)))
 
-    spec = pick_lake_spec(
+    roots = resolve_lake_roots(
+        get_active_settings(),
+        project_root=root,
         cli_lake_path=lake_path,
         destination_path=config.destination.path if config is not None else None,
         env=environ,
     )
-    lake = open_lake(spec, root)
-    lake_uri = _lake_uri_str(lake)
+    bronze_lake = roots.bronze
+    ops_lake = roots.ops
+    lake_uri = _lake_uri_str(bronze_lake)
     kind, rest_host, warehouse, glue_id = _require_register_catalog(environ, lake_uri)
 
-    tables: list[IcebergRegisterTablePlan] = list(_bronze_table_plans(lake, config))
+    tables: list[IcebergRegisterTablePlan] = list(
+        _bronze_table_plans(bronze_lake, config, layout=roots.layout)
+    )
     if include_ops and config is None:
-        ops_plan = _ops_table_plan(lake)
+        ops_plan = _ops_table_plan(ops_lake)
         if ops_plan is not None:
             tables.append(ops_plan)
 
@@ -249,12 +255,21 @@ def build_iceberg_register_plan(
 def iceberg_register_write_argv(
     *,
     lake_path: str | None = None,
+    lake_path_raw: str | None = None,
+    lake_path_bronze: str | None = None,
+    lake_path_ops: str | None = None,
     pipeline: str | None = None,
     skip_ops: bool = False,
 ) -> list[str]:
     argv = ["iceberg-register", "--apply"]
     if lake_path:
         argv.extend(["--lake-path", lake_path])
+    if lake_path_raw:
+        argv.extend(["--lake-path-raw", lake_path_raw])
+    if lake_path_bronze:
+        argv.extend(["--lake-path-bronze", lake_path_bronze])
+    if lake_path_ops:
+        argv.extend(["--lake-path-ops", lake_path_ops])
     if pipeline:
         argv.extend(["--pipeline", pipeline])
     # Pipeline-scoped plans never include ops; keep argv in sync with that.

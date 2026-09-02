@@ -13,12 +13,60 @@ from det.runtime.ids import (
     sql_schema_name,
     validate_canonical_id,
 )
-from det.runtime.lake import LakeRef, open_lake, pick_lake_spec
+from det.runtime.lake import LakeRef, LakeRoots, resolve_lake_roots
 from det.runtime.meta import to_partition_value
 from det.runtime.secrets import DSN_KEYS, SecretsBackend, resolve_secret
 
 if TYPE_CHECKING:
     from det.runtime.settings import DetSettings
+
+
+def lake_roots_for(
+    project_root: Path,
+    *,
+    destination: DestinationConfig | None = None,
+    cli_lake_path: str | None = None,
+    cli_lake_path_raw: str | None = None,
+    cli_lake_path_bronze: str | None = None,
+    cli_lake_path_ops: str | None = None,
+    settings: DetSettings | None = None,
+) -> LakeRoots:
+    """Resolve process-wide lake roots (layout 1 unified or layout 2 split)."""
+    active = settings
+    if active is None:
+        from det.runtime.settings import get_active_settings
+
+        active = get_active_settings()
+    dest_path = None
+    if destination is not None and not _is_split(
+        active, cli_lake_path_raw, cli_lake_path_bronze, cli_lake_path_ops
+    ):
+        dest_path = destination.path
+    return resolve_lake_roots(
+        active,
+        project_root=active.project_root if active is not None else project_root,
+        cli_lake_path=cli_lake_path,
+        cli_lake_path_raw=cli_lake_path_raw,
+        cli_lake_path_bronze=cli_lake_path_bronze,
+        cli_lake_path_ops=cli_lake_path_ops,
+        destination_path=dest_path,
+    )
+
+
+def _is_split(
+    settings: DetSettings | None,
+    cli_raw: str | None,
+    cli_bronze: str | None,
+    cli_ops: str | None,
+) -> bool:
+    from det.runtime.lake import is_split_lake_configured
+
+    return is_split_lake_configured(
+        settings,
+        cli_lake_path_raw=cli_raw,
+        cli_lake_path_bronze=cli_bronze,
+        cli_lake_path_ops=cli_ops,
+    )
 
 
 def lake_root(
@@ -28,26 +76,18 @@ def lake_root(
     cli_lake_path: str | None = None,
     settings: DetSettings | None = None,
 ) -> LakeRef:
-    active = settings
-    if active is None:
-        from det.runtime.settings import get_active_settings
+    """
+    Unified lake root for receipts/locks (layout 1) or ops root (layout 2).
 
-        active = get_active_settings()
-    override = cli_lake_path
-    settings_lake: str | None = None
-    mode = None
-    if active is not None:
-        if override is None or not str(override).strip():
-            override = active.lake_override
-        settings_lake = active.lake_path
-        mode = active.lake_mode
-        project_root = active.project_root
-    spec = pick_lake_spec(
-        cli_lake_path=override,
-        destination_path=destination.path,
-        settings_lake_path=settings_lake,
+    Prefer :func:`lake_roots_for` when raw and bronze may differ.
+    """
+    roots = lake_roots_for(
+        project_root,
+        destination=destination,
+        cli_lake_path=cli_lake_path,
+        settings=settings,
     )
-    return open_lake(spec, project_root, lake_mode=mode)
+    return roots.ops
 
 
 def duckdb_connection_path(destination: DestinationConfig, project_root: Path) -> Path:
@@ -122,15 +162,28 @@ def _dataset_dir(
     config: PipelineConfig,
     project_root: Path,
     *,
+    layer: str,
     prefix: str,
     dataset: str | None = None,
     cli_lake_path: str | None = None,
+    settings: DetSettings | None = None,
 ) -> LakeRef:
-    root = lake_root(
-        config.destination, project_root, cli_lake_path=cli_lake_path
+    roots = lake_roots_for(
+        project_root,
+        destination=config.destination,
+        cli_lake_path=cli_lake_path,
+        settings=settings,
     )
+    if layer == "raw":
+        out = roots.raw
+    elif layer == "bronze":
+        out = roots.bronze
+    else:
+        raise ValueError(f"unknown lake layer {layer!r}")
+    # Layout 1: medallion prefix under unified root. Layout 2: flattened.
+    if roots.layout < 2:
+        out = out / prefix
     canonical = validate_canonical_id(dataset) if dataset else config.canonical_id
-    out = root / prefix
     for part in fs_dataset_parts(canonical):
         out = out / part
     return out
@@ -142,13 +195,16 @@ def bronze_dataset_dir(
     *,
     dataset: str | None = None,
     cli_lake_path: str | None = None,
+    settings: DetSettings | None = None,
 ) -> LakeRef:
     return _dataset_dir(
         config,
         project_root,
+        layer="bronze",
         prefix=config.medallion.bronze_prefix,
         dataset=dataset,
         cli_lake_path=cli_lake_path,
+        settings=settings,
     )
 
 
@@ -158,13 +214,16 @@ def raw_dataset_dir(
     *,
     dataset: str | None = None,
     cli_lake_path: str | None = None,
+    settings: DetSettings | None = None,
 ) -> LakeRef:
     return _dataset_dir(
         config,
         project_root,
+        layer="raw",
         prefix=config.medallion.raw_prefix,
         dataset=dataset,
         cli_lake_path=cli_lake_path,
+        settings=settings,
     )
 
 

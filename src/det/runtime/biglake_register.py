@@ -13,8 +13,9 @@ from det.logging import get_logger
 from det.runtime.approval import ApprovalPlan, make_plan
 from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
 from det.runtime.ids import parse_canonical_id, sql_schema_name
-from det.runtime.lake import LakeRef, open_lake, pick_lake_spec
+from det.runtime.lake import LakeRef, resolve_lake_roots
 from det.runtime.receipts_materialize import OPS_NAMESPACE, OPS_TABLE, ops_run_receipts_location
+from det.runtime.settings import get_active_settings
 
 logger = get_logger(__name__)
 
@@ -40,13 +41,17 @@ class BigLakeRegisterPlan:
     connection: str
     lake_uri: str
     tables: tuple[BigLakeTablePlan, ...]
+    bronze_uri: str | None = None
+    ops_uri: str | None = None
+    lake_layout: int = 1
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "project": self.project,
             "location": self.location,
             "connection": self.connection,
             "lake_uri": self.lake_uri,
+            "lake_layout": self.lake_layout,
             "tables": [
                 {
                     "bq_dataset": t.bq_dataset,
@@ -58,6 +63,11 @@ class BigLakeRegisterPlan:
                 for t in self.tables
             ],
         }
+        if self.bronze_uri:
+            out["bronze_uri"] = self.bronze_uri
+        if self.ops_uri:
+            out["ops_uri"] = self.ops_uri
+        return out
 
 
 def _lake_uri_str(lake: LakeRef) -> str:
@@ -80,8 +90,10 @@ def _metadata_uri_for_table(table_dir: LakeRef) -> str:
     return str(candidates[-1])
 
 
-def _bronze_table_plans(lake: LakeRef, pipeline: PipelineConfig | None) -> list[BigLakeTablePlan]:
-    bronze_root = lake / "bronze"
+def _bronze_table_plans(
+    lake: LakeRef, pipeline: PipelineConfig | None, *, layout: int = 1
+) -> list[BigLakeTablePlan]:
+    bronze_root = lake if layout >= 2 else lake / "bronze"
     if not bronze_root.exists():
         return []
 
@@ -162,17 +174,23 @@ def build_biglake_register_plan(
         else:
             config = load_pipeline_config(resolve_path(root, str(pipeline)))
 
-    spec = pick_lake_spec(
+    roots = resolve_lake_roots(
+        get_active_settings(),
+        project_root=root,
         cli_lake_path=lake_path,
         destination_path=config.destination.path if config is not None else None,
         env=environ,
     )
-    lake = open_lake(spec, root)
-    lake_uri = _lake_uri_str(lake)
-    if not lake_uri.startswith("gs://"):
+    bronze_lake = roots.bronze
+    ops_lake = roots.ops
+    lake_uri = _lake_uri_str(bronze_lake)
+    if not lake_uri.startswith("gs://") and not _lake_uri_str(ops_lake).startswith("gs://"):
         raise ValueError(
-            f"BigLake registration requires a gs:// lake (got {lake_uri!r})"
+            f"BigLake registration requires a gs:// lake "
+            f"(got bronze={lake_uri!r}, ops={_lake_uri_str(ops_lake)!r})"
         )
+    if not lake_uri.startswith("gs://"):
+        lake_uri = _lake_uri_str(ops_lake)
 
     gcp_project = (project or environ.get(ENV_GCP_PROJECT) or "").strip()
     if not gcp_project:
@@ -183,9 +201,11 @@ def build_biglake_register_plan(
     bq_location = (location or environ.get(ENV_BQ_LOCATION) or "US").strip()
     conn = (connection or environ.get(ENV_BQ_CONNECTION) or DEFAULT_CONNECTION).strip()
 
-    tables: list[BigLakeTablePlan] = list(_bronze_table_plans(lake, config))
+    tables: list[BigLakeTablePlan] = list(
+        _bronze_table_plans(bronze_lake, config, layout=roots.layout)
+    )
     if include_ops and config is None:
-        ops_plan = _ops_table_plan(lake)
+        ops_plan = _ops_table_plan(ops_lake)
         if ops_plan is not None:
             tables.append(ops_plan)
 
@@ -195,6 +215,9 @@ def build_biglake_register_plan(
         connection=conn,
         lake_uri=lake_uri,
         tables=tuple(tables),
+        bronze_uri=_lake_uri_str(bronze_lake),
+        ops_uri=_lake_uri_str(ops_lake),
+        lake_layout=roots.layout,
     )
 
 
@@ -235,13 +258,60 @@ def _lookup_connection_sa(project: str, location: str, connection: str) -> str |
 
 def build_iam_hint(plan: BigLakeRegisterPlan) -> dict[str, Any]:
     """Structured IAM prerequisites for dry-run / MCP (never grants IAM)."""
-    bucket = _lake_bucket(plan.lake_uri)
     connection_sa = _lookup_connection_sa(plan.project, plan.location, plan.connection)
     hint: dict[str, Any] = {
-        "bucket": bucket,
         "connection": plan.connection,
         "lake_uri": plan.lake_uri,
+        "lake_layout": plan.lake_layout,
     }
+    if plan.lake_layout >= 2 and plan.bronze_uri and plan.ops_uri:
+        bronze_bucket = (
+            _lake_bucket(plan.bronze_uri)
+            if plan.bronze_uri.startswith("gs://")
+            else None
+        )
+        ops_bucket = (
+            _lake_bucket(plan.ops_uri) if plan.ops_uri.startswith("gs://") else None
+        )
+        hint["bronze_uri"] = plan.bronze_uri
+        hint["ops_uri"] = plan.ops_uri
+        hint["buckets"] = {
+            "bronze": bronze_bucket,
+            "ops": ops_bucket,
+        }
+        if connection_sa and bronze_bucket:
+            hint["connection_sa"] = connection_sa
+            cmds = [
+                (
+                    f'gcloud storage buckets add-iam-policy-binding "gs://{bronze_bucket}" '
+                    f'--member="serviceAccount:{connection_sa}" '
+                    f'--role="roles/storage.objectViewer"'
+                )
+            ]
+            if ops_bucket and ops_bucket != bronze_bucket:
+                cmds.append(
+                    f'gcloud storage buckets add-iam-policy-binding "gs://{ops_bucket}" '
+                    f'--member="serviceAccount:{connection_sa}" '
+                    f'--role="roles/storage.objectViewer"'
+                )
+            hint["gcloud_commands"] = cmds
+            hint["gcloud_command"] = cmds[0]
+            hint["note"] = (
+                "Layout 2: grant objectViewer on bronze and ops buckets to the "
+                "BigLake connection SA. Extract/load SAs use separate raw/bronze/ops grants "
+                "(see docs/gcp-biglake.md)."
+            )
+        else:
+            hint["note"] = (
+                "Connection SA not resolved (connection missing, no ADC, or offline). "
+                "Create the connection with bq mk --connection, then grant "
+                "roles/storage.objectViewer on the bronze and ops buckets to the "
+                "connection SA. See docs/gcp-biglake.md."
+            )
+        return hint
+
+    bucket = _lake_bucket(plan.lake_uri)
+    hint["bucket"] = bucket
     if connection_sa:
         hint["connection_sa"] = connection_sa
         hint["gcloud_command"] = (
@@ -263,12 +333,26 @@ def format_iam_hint(plan: BigLakeRegisterPlan) -> str:
     """Human-readable IAM hint block for CLI dry-run."""
     hint = build_iam_hint(plan)
     lines = ["IAM hint:"]
-    lines.append(f"  bucket=gs://{hint['bucket']}")
+    if hint.get("lake_layout", 1) >= 2:
+        lines.append(f"  layout={hint['lake_layout']}")
+        if hint.get("bronze_uri"):
+            lines.append(f"  bronze_uri={hint['bronze_uri']}")
+        if hint.get("ops_uri"):
+            lines.append(f"  ops_uri={hint['ops_uri']}")
+        buckets = hint.get("buckets") or {}
+        if buckets.get("bronze"):
+            lines.append(f"  bronze_bucket=gs://{buckets['bronze']}")
+        if buckets.get("ops"):
+            lines.append(f"  ops_bucket=gs://{buckets['ops']}")
+    else:
+        lines.append(f"  bucket=gs://{hint['bucket']}")
     lines.append(f"  connection={hint['connection']}")
     if "connection_sa" in hint:
         lines.append(f"  connection_sa={hint['connection_sa']}")
-        lines.append(f"  gcloud={hint['gcloud_command']}")
-    else:
+        for cmd in hint.get("gcloud_commands") or [hint.get("gcloud_command")]:
+            if cmd:
+                lines.append(f"  gcloud={cmd}")
+    if "note" in hint:
         lines.append(f"  note={hint['note']}")
     return "\n".join(lines)
 
@@ -290,6 +374,9 @@ def external_table_ddl(plan: BigLakeRegisterPlan, table: BigLakeTablePlan) -> st
 def biglake_register_write_argv(
     *,
     lake_path: str | None = None,
+    lake_path_raw: str | None = None,
+    lake_path_bronze: str | None = None,
+    lake_path_ops: str | None = None,
     pipeline: str | None = None,
     project: str | None = None,
     location: str | None = None,
@@ -299,6 +386,12 @@ def biglake_register_write_argv(
     argv = ["biglake-register", "--apply"]
     if lake_path:
         argv.extend(["--lake-path", lake_path])
+    if lake_path_raw:
+        argv.extend(["--lake-path-raw", lake_path_raw])
+    if lake_path_bronze:
+        argv.extend(["--lake-path-bronze", lake_path_bronze])
+    if lake_path_ops:
+        argv.extend(["--lake-path-ops", lake_path_ops])
     if pipeline:
         argv.extend(["--pipeline", pipeline])
     if project:

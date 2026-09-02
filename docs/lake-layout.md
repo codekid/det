@@ -9,29 +9,36 @@ contract documented here.
 | **`wire_version`** | Dataset era for one pipeline (`{name}_vN`) | True wire/parse breaks; rebuild raw with `det migrate` | Pipeline YAML, manifest, receipt |
 | **`receipt_version`** | JSON shape under `{lake}/runs/` | Receipt schema breaking changes | Run receipt JSON only |
 
-Package semver (`det` `0.3.1` in `pyproject.toml`) is **not** lake layout. A DET
+Package semver (`det` `0.4.0` in `pyproject.toml`) is **not** lake layout. A DET
 release can ship without changing `LAKE_LAYOUT`.
 
-Code constant: `det.runtime.layout.LAKE_LAYOUT` (currently **1**). Writers stamp
-`lake_layout` on new extract manifests and run receipts. Readers treat a missing or
-invalid value as **1** (`lake_layout_of`).
+Code constant: `det.runtime.layout.LAKE_LAYOUT` (currently **2**). Writers stamp
+the active layout on new extract manifests and run receipts (1 for a unified
+root, 2 when split roots are configured). Readers treat a missing or invalid
+value as **1** (`lake_layout_of`).
 
 ---
 
 ## Layout 1 — stable contract
 
-Layout **1** is what DET writes today. These names and paths are compatibility
-promises until **`lake_layout: 2`** is published with a changelog entry below.
+Layout **1** is the default when only `DET_LAKE_PATH` is set. These names and
+paths remain compatibility promises for unified lakes.
 
 ### Lake root
 
-- Single root: `DET_LAKE_PATH` / `--lake-path` / rare `destination.path`.
-- `DET_LAKE_MODE` (`local`|`cloud`, default `local`) only guards URI shape; it does
-  **not** bump `lake_layout`. Still one root with `raw/` + `bronze/` under that URI.
+- **Layout 1 (default):** single root via `DET_LAKE_PATH` / `--lake-path` / rare
+  `destination.path`. `DET_LAKE_MODE` (`local`|`cloud`, default `local`) only
+  guards URI shape; it does **not** bump `lake_layout`. Still one root with
+  `raw/` + `bronze/` under that URI.
+- **Layout 2 (split):** set all three opaque URIs — `DET_LAKE_PATH_RAW`,
+  `DET_LAKE_PATH_BRONZE`, `DET_LAKE_PATH_OPS` (or `DetSettings.lake_path_*` /
+  `--lake-path-*`). Embedders choose arbitrary bucket names; DET never assigns
+  them. Dataset paths are flattened (no medallion prefix). `destination.path` is
+  ignored in split mode.
 - Object storage uses the same keys under `s3://…` or `gs://…` (no
-  `destination.type: s3`). Dual raw/bronze buckets are not supported.
-  Custom endpoints (`AWS_ENDPOINT_URL`, e.g. MinIO) are mapped into Iceberg
-  FileIO properties (`s3.endpoint`, path-style) as well as s3fs.
+  `destination.type: s3`). Custom endpoints (`AWS_ENDPOINT_URL`, e.g. MinIO) are
+  mapped into Iceberg FileIO properties (`s3.endpoint`, path-style) as well as
+  s3fs.
 
 ### Dataset id (filesystem + Iceberg table path)
 
@@ -143,12 +150,36 @@ Requires a new **`LAKE_LAYOUT`**, changelog entry, and an explicit migration or
 - Changing `{medallion}_{provider}` / dbt slug rules.
 - Moving `runs/` or `locks/` path schemes.
 
-There is **no layout migrator** in v1. A layout break means a new lake prefix or
-full re-extract.
+---
+
+## Layout 2 — split roots (published)
+
+Layout **2** is opt-in when any of `DET_LAKE_PATH_RAW` / `_BRONZE` / `_OPS` is set
+(all three required). Writers stamp `lake_layout: 2` on manifests and receipts.
+
+```text
+{DET_LAKE_PATH_RAW}/{provider}/{source}_vN/…          # flattened (no raw/)
+{DET_LAKE_PATH_BRONZE}/{provider}/{source}_vN/…       # Iceberg / JSONL
+{DET_LAKE_PATH_OPS}/runs/…  locks/…  ops/run_receipts/
+```
+
+Hive keys, SQL names, and DET meta columns are unchanged from layout 1. Cutover
+is a new set of buckets (or prefixes) + re-extract — no in-place layout migrator.
+
+Production load refuses manifests with `lake_layout` greater than this install’s
+`LAKE_LAYOUT`. Missing `lake_layout` still means layout 1.
 
 ---
 
 ## Changelog
+
+### Layout 2 — published 2026-09-02
+
+- Split lake roots: `DET_LAKE_PATH_{RAW,BRONZE,OPS}` / `DetSettings.lake_path_*`.
+- Flattened dataset paths under each layer root (no `raw/` / `bronze/` segment).
+- Ops siblings (`runs/`, `locks/`, `ops/`) live on the ops root only.
+- Global config only (no per-pipeline lake paths in split mode).
+- Load fails closed when `manifest.lake_layout > LAKE_LAYOUT`.
 
 ### Layout 1 — published 2026-08-17
 

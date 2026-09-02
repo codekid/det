@@ -830,6 +830,30 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("--lake-path", "/tmp/lake"),
                 ),
+                "lake_path_raw": (
+                    extract_write_argv(
+                        "noaa.storm_events",
+                        "2026-08-06",
+                        lake_path_raw="/tmp/raw",
+                    ),
+                    ("--lake-path-raw", "/tmp/raw"),
+                ),
+                "lake_path_bronze": (
+                    extract_write_argv(
+                        "noaa.storm_events",
+                        "2026-08-06",
+                        lake_path_bronze="/tmp/bronze",
+                    ),
+                    ("--lake-path-bronze", "/tmp/bronze"),
+                ),
+                "lake_path_ops": (
+                    extract_write_argv(
+                        "noaa.storm_events",
+                        "2026-08-06",
+                        lake_path_ops="/tmp/ops",
+                    ),
+                    ("--lake-path-ops", "/tmp/ops"),
+                ),
                 "set_": (
                     extract_write_argv(
                         "noaa.storm_events", "2026-08-06", set_=["destination.path=/x"]
@@ -868,6 +892,24 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("--lake-path",),
                 ),
+                "lake_path_raw": (
+                    load_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_path_raw="/tmp/raw"
+                    ),
+                    ("--lake-path-raw",),
+                ),
+                "lake_path_bronze": (
+                    load_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_path_bronze="/tmp/bronze"
+                    ),
+                    ("--lake-path-bronze",),
+                ),
+                "lake_path_ops": (
+                    load_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_path_ops="/tmp/ops"
+                    ),
+                    ("--lake-path-ops",),
+                ),
                 "set_": (
                     load_write_argv(
                         "noaa.storm_events", "2026-08-06", set_=["x=y"]
@@ -897,6 +939,24 @@ def test_bound_params_encoded_in_write_argv_builders():
                         "noaa.storm_events", "2026-08-06", lake_path="/tmp/lake"
                     ),
                     ("--lake-path",),
+                ),
+                "lake_path_raw": (
+                    run_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_path_raw="/tmp/raw"
+                    ),
+                    ("--lake-path-raw",),
+                ),
+                "lake_path_bronze": (
+                    run_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_path_bronze="/tmp/bronze"
+                    ),
+                    ("--lake-path-bronze",),
+                ),
+                "lake_path_ops": (
+                    run_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_path_ops="/tmp/ops"
+                    ),
+                    ("--lake-path-ops",),
                 ),
                 "set_": (
                     run_write_argv(
@@ -1053,6 +1113,39 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("--lake-path",),
                 ),
+                "lake_path_raw": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v1",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "identity",
+                        "2026-08-06",
+                        lake_path_raw="/tmp/raw",
+                    ),
+                    ("--lake-path-raw",),
+                ),
+                "lake_path_bronze": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v1",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "identity",
+                        "2026-08-06",
+                        lake_path_bronze="/tmp/bronze",
+                    ),
+                    ("--lake-path-bronze",),
+                ),
+                "lake_path_ops": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v1",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "identity",
+                        "2026-08-06",
+                        lake_path_ops="/tmp/ops",
+                    ),
+                    ("--lake-path-ops",),
+                ),
                 "set_": (
                     migrate_write_argv(
                         "example_api.events",
@@ -1117,6 +1210,18 @@ def test_bound_params_encoded_in_write_argv_builders():
                 "lake_path": (
                     dbt_write_argv("noaa.storm_events", lake_path="/tmp/lake"),
                     ("--lake-path",),
+                ),
+                "lake_path_raw": (
+                    dbt_write_argv("noaa.storm_events", lake_path_raw="/tmp/raw"),
+                    ("--lake-path-raw",),
+                ),
+                "lake_path_bronze": (
+                    dbt_write_argv("noaa.storm_events", lake_path_bronze="/tmp/bronze"),
+                    ("--lake-path-bronze",),
+                ),
+                "lake_path_ops": (
+                    dbt_write_argv("noaa.storm_events", lake_path_ops="/tmp/ops"),
+                    ("--lake-path-ops",),
                 ),
                 "set_": (
                     dbt_write_argv("noaa.storm_events", set_=["x=y"]),
@@ -1194,6 +1299,18 @@ def test_bound_params_encoded_in_write_argv_builders():
                     biglake_register_write_argv(lake_path="gs://bucket/lake"),
                     ("--lake-path", "gs://bucket/lake"),
                 ),
+                "lake_path_raw": (
+                    biglake_register_write_argv(lake_path_raw="gs://raw"),
+                    ("--lake-path-raw",),
+                ),
+                "lake_path_bronze": (
+                    biglake_register_write_argv(lake_path_bronze="gs://bronze"),
+                    ("--lake-path-bronze",),
+                ),
+                "lake_path_ops": (
+                    biglake_register_write_argv(lake_path_ops="gs://ops"),
+                    ("--lake-path-ops",),
+                ),
                 "pipeline": (
                     biglake_register_write_argv(pipeline="noaa.storm_events"),
                     ("--pipeline", "noaa.storm_events"),
@@ -1224,6 +1341,18 @@ def test_bound_params_encoded_in_write_argv_builders():
                 "lake_path": (
                     iceberg_register_write_argv(lake_path="s3://bucket/lake"),
                     ("--lake-path", "s3://bucket/lake"),
+                ),
+                "lake_path_raw": (
+                    iceberg_register_write_argv(lake_path_raw="s3://raw"),
+                    ("--lake-path-raw",),
+                ),
+                "lake_path_bronze": (
+                    iceberg_register_write_argv(lake_path_bronze="s3://bronze"),
+                    ("--lake-path-bronze",),
+                ),
+                "lake_path_ops": (
+                    iceberg_register_write_argv(lake_path_ops="s3://ops"),
+                    ("--lake-path-ops",),
                 ),
                 "pipeline": (
                     iceberg_register_write_argv(pipeline="noaa.storm_events"),
@@ -1265,6 +1394,24 @@ def test_bound_params_encoded_in_write_argv_builders():
                         "noaa.storm_events", "2026-08-06", lake_path="/tmp/lake"
                     ),
                     ("--lake-path",),
+                ),
+                "lake_path_raw": (
+                    lock_release_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_path_raw="/tmp/raw"
+                    ),
+                    ("--lake-path-raw",),
+                ),
+                "lake_path_bronze": (
+                    lock_release_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_path_bronze="/tmp/bronze"
+                    ),
+                    ("--lake-path-bronze",),
+                ),
+                "lake_path_ops": (
+                    lock_release_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_path_ops="/tmp/ops"
+                    ),
+                    ("--lake-path-ops",),
                 ),
             }
         else:

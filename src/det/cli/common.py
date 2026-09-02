@@ -49,6 +49,9 @@ def _settings(
     project_root: Path | None,
     *,
     lake_path: str | None = None,
+    lake_path_raw: str | None = None,
+    lake_path_bronze: str | None = None,
+    lake_path_ops: str | None = None,
     lock_ttl_sec: int | None = None,
 ):
     """Build DetSettings from env, then apply CLI flag overrides."""
@@ -58,12 +61,27 @@ def _settings(
     overrides: dict = {}
     if lake_path is not None:
         overrides["lake_override"] = lake_path
+    if lake_path_raw is not None:
+        overrides["lake_override_raw"] = lake_path_raw
+    if lake_path_bronze is not None:
+        overrides["lake_override_bronze"] = lake_path_bronze
+    if lake_path_ops is not None:
+        overrides["lake_override_ops"] = lake_path_ops
     if lock_ttl_sec is not None:
         overrides["lock_ttl_sec"] = lock_ttl_sec
     if overrides:
         settings = settings.with_overrides(**overrides)
     return settings
 
+
+_LAKE_LAYER_PARAMS = frozenset(
+    {"lake_path", "lake_path_raw", "lake_path_bronze", "lake_path_ops"}
+)
+
+_LAKE_PATH_HELP = "Unified lake root (layout 1). Ignored when split roots are set."
+_LAKE_PATH_RAW_HELP = "Raw layer root URI (layout 2; requires bronze + ops)."
+_LAKE_PATH_BRONZE_HELP = "Bronze layer root URI (layout 2; requires raw + ops)."
+_LAKE_PATH_OPS_HELP = "Ops layer root URI for runs/locks (layout 2; requires raw + bronze)."
 
 def _resolve_pipeline(ref: str, root: Path):
     """Resolve pipeline ref; log and echo the resolved path for auditability."""
@@ -97,18 +115,22 @@ def _analytics_exclude(select: list[str] | None) -> list[str] | None:
 # Params each command's *_write_argv builder encodes, so they are covered by
 # plan_digest. Keep in lockstep with det.runtime.approval builders.
 _BOUND_PARAMS: dict[str, frozenset[str]] = {
-    "extract": frozenset({"pipeline", "interval_start", "interval_end", "lake_path", "set_"}),
+    "extract": frozenset(
+        {"pipeline", "interval_start", "interval_end", *_LAKE_LAYER_PARAMS, "set_"}
+    ),
     "load": frozenset(
         {
             "pipeline",
             "interval_start",
             "interval_end",
             "extract_run_datetime",
-            "lake_path",
+            *_LAKE_LAYER_PARAMS,
             "set_",
         }
     ),
-    "run": frozenset({"pipeline", "interval_start", "interval_end", "lake_path", "set_"}),
+    "run": frozenset(
+        {"pipeline", "interval_start", "interval_end", *_LAKE_LAYER_PARAMS, "set_"}
+    ),
     "migrate": frozenset(
         {
             "pipeline",
@@ -123,13 +145,21 @@ _BOUND_PARAMS: dict[str, frozenset[str]] = {
             "all_raw",
             "all_raw_runs",
             "ingestion",
-            "lake_path",
+            *_LAKE_LAYER_PARAMS,
             "set_",
         }
     ),
     "prune": frozenset({"pipeline", "interval_start", "interval_end", "keep", "apply", "set_"}),
     "dbt": frozenset(
-        {"pipeline", "select", "command", "full_refresh", "target", "lake_path", "set_"}
+        {
+            "pipeline",
+            "select",
+            "command",
+            "full_refresh",
+            "target",
+            *_LAKE_LAYER_PARAMS,
+            "set_",
+        }
     ),
     "scaffold-dbt": frozenset({"pipeline", "force", "set_"}),
     "scaffold-ops": frozenset({"force"}),
@@ -145,11 +175,26 @@ _BOUND_PARAMS: dict[str, frozenset[str]] = {
         }
     ),
     "biglake-register": frozenset(
-        {"lake_path", "pipeline", "project", "location", "connection", "skip_ops", "apply"}
+        {
+            *_LAKE_LAYER_PARAMS,
+            "pipeline",
+            "project",
+            "location",
+            "connection",
+            "skip_ops",
+            "apply",
+        }
     ),
-    "iceberg-register": frozenset({"lake_path", "pipeline", "skip_ops", "apply"}),
+    "iceberg-register": frozenset({*_LAKE_LAYER_PARAMS, "pipeline", "skip_ops", "apply"}),
     "lock-release": frozenset(
-        {"pipeline", "interval_start", "interval_end", "dataset_id", "force", "lake_path"}
+        {
+            "pipeline",
+            "interval_start",
+            "interval_end",
+            "dataset_id",
+            "force",
+            *_LAKE_LAYER_PARAMS,
+        }
     ),
 }
 

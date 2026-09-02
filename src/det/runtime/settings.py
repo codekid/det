@@ -152,8 +152,15 @@ class DetSettings:
     lock_pg_dsn_env: str
     lock_pg_schema: str
     lock_pg_table: str
-    # CLI ``--lake-path`` (wins over destination.path). Embedders usually set lake_path.
+    # Layout 1 unified root. CLI ``--lake-path`` wins via lake_override.
     lake_override: str | None = None
+    # Layout 2 split roots (opaque URIs; embedders choose bucket names).
+    lake_path_raw: str | None = None
+    lake_path_bronze: str | None = None
+    lake_path_ops: str | None = None
+    lake_override_raw: str | None = None
+    lake_override_bronze: str | None = None
+    lake_override_ops: str | None = None
     _secret_cache: _SecretCache = field(default_factory=_SecretCache, compare=False, repr=False)
 
     @classmethod
@@ -174,6 +181,9 @@ class DetSettings:
         environ = os.environ if env is None else env
         root = resolve_project_root(project_root)
         lake_raw = (environ.get("DET_LAKE_PATH") or "").strip() or None
+        lake_path_raw = (environ.get("DET_LAKE_PATH_RAW") or "").strip() or None
+        lake_path_bronze = (environ.get("DET_LAKE_PATH_BRONZE") or "").strip() or None
+        lake_path_ops = (environ.get("DET_LAKE_PATH_OPS") or "").strip() or None
         backend = resolve_secrets_backend(environ)
         ttl = cache_ttl_sec(environ)
         secrets_path = (
@@ -215,6 +225,12 @@ class DetSettings:
             lock_pg_table=(environ.get("DET_LOCK_PG_TABLE") or "").strip()
             or DEFAULT_LOCK_PG_TABLE,
             lake_override=None,
+            lake_path_raw=lake_path_raw,
+            lake_path_bronze=lake_path_bronze,
+            lake_path_ops=lake_path_ops,
+            lake_override_raw=None,
+            lake_override_bronze=None,
+            lake_override_ops=None,
             _secret_cache=cache,
         )
 
@@ -223,6 +239,12 @@ class DetSettings:
         *,
         lake_path: Any = _MISSING,
         lake_override: Any = _MISSING,
+        lake_path_raw: Any = _MISSING,
+        lake_path_bronze: Any = _MISSING,
+        lake_path_ops: Any = _MISSING,
+        lake_override_raw: Any = _MISSING,
+        lake_override_bronze: Any = _MISSING,
+        lake_override_ops: Any = _MISSING,
         lake_mode: Any = _MISSING,
         locks_enabled: Any = _MISSING,
         lock_ttl_sec: Any = _MISSING,
@@ -243,6 +265,18 @@ class DetSettings:
             kwargs["lake_path"] = lake_path
         if lake_override is not _MISSING:
             kwargs["lake_override"] = lake_override
+        if lake_path_raw is not _MISSING:
+            kwargs["lake_path_raw"] = lake_path_raw
+        if lake_path_bronze is not _MISSING:
+            kwargs["lake_path_bronze"] = lake_path_bronze
+        if lake_path_ops is not _MISSING:
+            kwargs["lake_path_ops"] = lake_path_ops
+        if lake_override_raw is not _MISSING:
+            kwargs["lake_override_raw"] = lake_override_raw
+        if lake_override_bronze is not _MISSING:
+            kwargs["lake_override_bronze"] = lake_override_bronze
+        if lake_override_ops is not _MISSING:
+            kwargs["lake_override_ops"] = lake_override_ops
         if lake_mode is not _MISSING:
             kwargs["lake_mode"] = lake_mode
         if locks_enabled is not _MISSING:
