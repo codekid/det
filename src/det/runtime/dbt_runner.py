@@ -12,7 +12,14 @@ from typing import Literal
 from det.logging import bound_run_context, get_logger, sanitize_lake_uri
 from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
 from det.runtime.ids import dbt_model_slug, sql_names_for_config
-from det.runtime.lake import open_lake, pick_lake_spec
+from det.runtime.lake import (
+    is_object_lake_spec,
+    is_split_lake_configured,
+    open_lake,
+    pick_lake_spec,
+    split_lake_specs_from_settings,
+)
+from det.runtime.settings import get_active_settings
 
 logger = get_logger(__name__)
 
@@ -234,14 +241,50 @@ def run_dbt(
         else dbt_dir
     )
 
-    spec = pick_lake_spec(
-        cli_lake_path=str(lake_path).strip() if lake_path is not None else None,
-        destination_path=config.destination.path if config is not None else None,
-        env=env,
-    )
-    lake = open_lake(spec, root)
-    lake_uri = str(lake)
-    env["DET_LAKE_PATH"] = lake_uri
+    spec_cli = str(lake_path).strip() if lake_path is not None else None
+    active = get_active_settings()
+
+    def _uri(spec: str) -> str:
+        text = spec.strip()
+        if is_object_lake_spec(text) or text.startswith("memory://"):
+            return text.rstrip("/")
+        return str(open_lake(text, root, env=env))
+
+    if is_split_lake_configured(active, env=env):
+        raw_s, bronze_s, ops_s = split_lake_specs_from_settings(active, env=env)
+        missing = [
+            n
+            for n, s in (
+                ("DET_LAKE_PATH_RAW", raw_s),
+                ("DET_LAKE_PATH_BRONZE", bronze_s),
+                ("DET_LAKE_PATH_OPS", ops_s),
+            )
+            if s is None
+        ]
+        if missing:
+            raise ValueError(
+                "split lake mode requires all three layer roots; "
+                f"missing {', '.join(missing)}"
+            )
+        env["DET_LAKE_PATH_RAW"] = _uri(raw_s)  # type: ignore[arg-type]
+        env["DET_LAKE_PATH_BRONZE"] = _uri(bronze_s)  # type: ignore[arg-type]
+        env["DET_LAKE_PATH_OPS"] = _uri(ops_s)  # type: ignore[arg-type]
+        lake_uri = env["DET_LAKE_PATH_BRONZE"]
+        env["DET_LAKE_PATH"] = lake_uri
+    else:
+        override = spec_cli
+        settings_lake = active.lake_path if active is not None else None
+        if active is not None and (override is None or not str(override).strip()):
+            override = active.lake_override
+        dest_path = config.destination.path if config is not None else None
+        spec = pick_lake_spec(
+            cli_lake_path=override,
+            destination_path=dest_path,
+            settings_lake_path=settings_lake,
+            env=env,
+        )
+        lake_uri = _uri(spec)
+        env["DET_LAKE_PATH"] = lake_uri
     # MinIO/S3 lakes use DuckDB iceberg_scan + httpfs. GCS lakes keep bronze on
     # gs:// Iceberg; prod analytics is BigQuery (DET_DBT_TARGET=bigquery) — never
     # auto-select duckdb_s3 for gs://.

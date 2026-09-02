@@ -21,11 +21,11 @@ Package version is **not** lake layout. A DET release can change Python helpers
 without bumping `LAKE_LAYOUT`. Bumping `wire_version` in YAML does **not** require
 a DET major.
 
-**Planned:** refuse loads when `manifest.lake_layout` is greater than this
-install’s `LAKE_LAYOUT` (fail closed on newer lakes).
-
-Layout 2 (if ever published) is a data-contract break: new lake prefix or
-wipe + re-extract; there is no layout migrator in v1.
+**Implemented:** refuse loads when `manifest.lake_layout` is greater than this
+install’s `LAKE_LAYOUT` (`DetContractError`). Missing `lake_layout` still means
+layout 1. Layout 2 split roots: `DetSettings.lake_path_raw` / `_bronze` / `_ops`
+or `DET_LAKE_PATH_*` — see [lake-layout.md](lake-layout.md). Cutover is new
+buckets (or prefixes) + re-extract; there is no layout migrator.
 
 ---
 
@@ -36,7 +36,9 @@ wipe + re-extract; there is no layout migrator in v1.
 | Name | Role |
 | --- | --- |
 | `__version__` | Package version string |
-| `LAKE_LAYOUT` | Current on-disk contract integer |
+| `LAKE_LAYOUT` | Max on-disk contract integer this install supports |
+| `LakeRoots` | Resolved raw / bronze / ops roots (`layout` 1 or 2) |
+| `resolve_lake_roots` | Process-wide lake root resolver |
 
 ### Runners and results
 

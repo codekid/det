@@ -547,12 +547,14 @@ def init_pipeline_dry_run(
 
 
 def lake_path_for_pipeline(pipeline: str, *, root: Path | None = None) -> str:
+    """Display path for the lake (ops root in layout 2; unified root in layout 1)."""
     _prepare_tool()
-    from det.destinations.models import lake_root
+    from det.destinations.models import lake_roots_for
 
     base = _root(root)
     config, _ = _load_pipeline(pipeline, base)
-    return _rel(lake_root(config.destination, base), base)
+    roots = lake_roots_for(base, destination=config.destination)
+    return _rel(roots.ops, base)
 
 
 def diff_partitions(

@@ -231,7 +231,8 @@ def test_scaffold_creates_and_skips_without_force(tmp_path: Path):
     assert "storm_events_v1" in sources_text
     assert not (models / "sources_bigquery.yml").exists()
     # Jinja must survive YAML round-trip for dbt.
-    assert 'env_var("DET_LAKE_PATH"' in sources_text or "env_var('DET_LAKE_PATH'" in sources_text
+    assert "DET_LAKE_PATH" in sources_text
+    assert "det_lake_bronze_path" in sources_text or "DET_LAKE_PATH_BRONZE" in sources_text or "/bronze/" in sources_text or "~ '/bronze'" in sources_text
 
     second = scaffold_dbt(config, project_root=tmp_path, dbt_models_dir=models)
     seed_actions = [a for a in second.actions if a.path.name == "ops_slo_expected.csv"]
@@ -571,7 +572,8 @@ destination:
     assert "iceberg_scan(" in sources_text
     assert "**/data.jsonl" not in sources_text
     assert "storm_events_v1" in sources_text
-    assert 'env_var("DET_LAKE_PATH"' in sources_text or "env_var('DET_LAKE_PATH'" in sources_text
+    assert "DET_LAKE_PATH" in sources_text
+    assert "det_lake_bronze_path" in sources_text or "DET_LAKE_PATH_BRONZE" in sources_text or "/bronze/" in sources_text or "~ '/bronze'" in sources_text
 
 
 def test_scaffold_silver_omits_bigquery_layout_when_unset(tmp_path: Path):

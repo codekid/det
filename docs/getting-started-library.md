@@ -112,8 +112,21 @@ except DetError:
     raise
 ```
 
+```python
+settings = DetSettings.from_env(project_root=".").with_overrides(
+    lake_path_raw="s3://acme-ingest-prod",
+    lake_path_bronze="s3://acme-curated-prod",
+    lake_path_ops="s3://acme-platform-ops",
+)
+PipelineRunner(settings=settings).run("myco.feed", interval_start="2026-01-01")
+```
+
 Interval: start inclusive, end exclusive (default start + 1 day). Canonical
 pipeline ids work on the runner (same as the CLI).
+
+Split roots are process-wide (all pipelines). Omit them to keep layout 1
+(`DET_LAKE_PATH` / `lake_path`). Bucket names are yours — DET never assigns them.
+See [lake-layout.md](lake-layout.md) layout 2.
 
 Custom secrets (no process-env mutation):
 

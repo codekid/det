@@ -8,7 +8,7 @@ from typing import Any
 from det.destinations.models import (
     bronze_dataset_dir,
     hive_partition_dir,
-    lake_root,
+    lake_roots_for,
     raw_dataset_dir,
 )
 from det.logging import bound_run_context, get_logger, sanitize_lake_uri
@@ -388,13 +388,19 @@ class BronzeMigrator:
             extract_run_datetime=job_ts,
             destination=config.destination.type,
             lake=sanitize_lake_uri(
-                str(lake_root(config.destination, self.project_root, settings=ctx_settings))
+                str(
+                    lake_roots_for(
+                        self.project_root,
+                        destination=config.destination,
+                        settings=ctx_settings,
+                    ).ops
+                )
             ),
         ):
             raw_name = validate_canonical_id(from_raw or config.bronze_dataset())
             to_bronze_id = validate_canonical_id(to_bronze)
             raw_dataset = raw_dataset_dir(
-                config, self.project_root, dataset=raw_name
+                config, self.project_root, dataset=raw_name, settings=ctx_settings
             )
             source_parts = _raw_partitions_for_migrate(
                 raw_dataset,
@@ -505,9 +511,13 @@ class BronzeMigrator:
                 from det.runtime.ids import sql_names_for_config
 
                 sql_schema, sql_table = sql_names_for_config(to_config)
-                migrate_lake = lake_root(
-                    to_config.destination, self.project_root, settings=ctx_settings
+                migrate_roots = lake_roots_for(
+                    self.project_root,
+                    destination=to_config.destination,
+                    settings=ctx_settings,
                 )
+                migrate_ops = migrate_roots.ops
+                migrate_bronze = migrate_roots.bronze
                 lease_opts = resolve_lease_options(
                     settings=ctx_settings,
                     pipeline=config,
@@ -520,7 +530,7 @@ class BronzeMigrator:
                 written = 0
 
                 with dataset_exclusive_lock(
-                    migrate_lake,
+                    migrate_ops,
                     to_bronze_id,
                     command="migrate",
                     ttl_sec=ctx_settings.effective_lock_ttl(lock_ttl_sec),
@@ -540,7 +550,7 @@ class BronzeMigrator:
                         all_raw_runs=all_raw_runs,
                     )
                     purge_iceberg_table(
-                        lake=migrate_lake,
+                        lake=migrate_bronze,
                         table_location=bronze_loc,
                         namespace=sql_schema,
                         table=sql_table,
@@ -552,7 +562,7 @@ class BronzeMigrator:
                         end_iso = str(manifest.get("interval_end") or window_end)
                         start_iso, end_iso = resolve_interval(start_iso, end_iso)
                         with pipeline_lease(
-                            migrate_lake,
+                            migrate_ops,
                             pipeline=config.name,
                             interval_start=start_iso,
                             interval_end=end_iso,
@@ -604,9 +614,11 @@ class BronzeMigrator:
             backend = get_ingestion(ingestion_library)
             total_rows = 0
             written = 0
-            migrate_lake = lake_root(
-                config.destination, self.project_root, settings=ctx_settings
-            )
+            migrate_lake = lake_roots_for(
+                self.project_root,
+                destination=config.destination,
+                settings=ctx_settings,
+            ).ops
             lease_opts = resolve_lease_options(
                 settings=ctx_settings,
                 pipeline=config,

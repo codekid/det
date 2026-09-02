@@ -6,7 +6,6 @@ from pathlib import Path
 from det.destinations.models import (
     bronze_dataset_dir,
     duckdb_connection_path,
-    lake_root,
     postgres_dsn,
 )
 from det.ingestion.sql_replace import delete_extract_run_sql
@@ -66,8 +65,19 @@ class BronzePruner:
         self.settings = settings
         self.project_root = settings.project_root
 
+    def _lake_roots(self, dest):
+        from det.destinations.models import lake_roots_for
+
+        return lake_roots_for(
+            self.project_root, destination=dest, settings=self.settings
+        )
+
     def _lake(self, dest):
-        return lake_root(dest, self.project_root, settings=self.settings)
+        """Ops root for leases / log display."""
+        return self._lake_roots(dest).ops
+
+    def _bronze_lake(self, dest):
+        return self._lake_roots(dest).bronze
 
     def _config(self, pipeline: PipelineConfig | Path | str) -> PipelineConfig:
         return load_pipeline(pipeline, project_root=self.project_root)
@@ -454,7 +464,7 @@ class BronzePruner:
 
         schema, table = sql_names_for_config(config)
         ice = load_iceberg_table(
-            lake=self._lake(config.destination),
+            lake=self._bronze_lake(config.destination),
             namespace=schema,
             table=table,
             table_location=bronze_dataset_dir(config, self.project_root),
@@ -471,7 +481,7 @@ class BronzePruner:
 
         schema, table = sql_names_for_config(config)
         ice = load_iceberg_table(
-            lake=self._lake(config.destination),
+            lake=self._bronze_lake(config.destination),
             namespace=schema,
             table=table,
             table_location=bronze_dataset_dir(config, self.project_root),

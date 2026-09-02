@@ -7,6 +7,10 @@ import typer
 from det.cli.app import app
 from det.cli.common import (
     _APPROVAL_HELP,
+    _LAKE_PATH_BRONZE_HELP,
+    _LAKE_PATH_HELP,
+    _LAKE_PATH_OPS_HELP,
+    _LAKE_PATH_RAW_HELP,
     _PIPELINE_HELP,
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
@@ -16,6 +20,7 @@ from det.cli.common import (
     _project_root,
     _resolve_interval,
     _resolve_pipeline,
+    _settings,
 )
 from det.cli.render_runs import _print_run_list, _print_run_summary
 
@@ -160,7 +165,16 @@ def biglake_register_cmd(
         "-p",
         help="Register one pipeline bronze table only (default: all bronze + ops)",
     ),
-    lake_path: str | None = typer.Option(None, "--lake-path"),
+    lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
+    lake_path_raw: str | None = typer.Option(
+        None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP
+    ),
+    lake_path_bronze: str | None = typer.Option(
+        None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
+    ),
+    lake_path_ops: str | None = typer.Option(
+        None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
+    ),
     project: str | None = typer.Option(None, "--project", help="GCP project (DET_GCP_PROJECT)"),
     location: str | None = typer.Option(None, "--location", help="BQ location (DET_BQ_LOCATION)"),
     connection: str | None = typer.Option(
@@ -182,6 +196,7 @@ def biglake_register_cmd(
         build_biglake_register_plan,
         format_dry_run,
     )
+    from det.runtime.settings import use_settings
 
     if dry_run == apply:
         raise typer.BadParameter(
@@ -194,8 +209,18 @@ def biglake_register_cmd(
     if pipeline is not None:
         pipe_path = _resolve_pipeline(pipeline, root).path
 
+    settings = _settings(
+        root,
+        lake_path=lake_path,
+        lake_path_raw=lake_path_raw,
+        lake_path_bronze=lake_path_bronze,
+        lake_path_ops=lake_path_ops,
+    )
     argv = biglake_register_write_argv(
         lake_path=lake_path,
+        lake_path_raw=lake_path_raw,
+        lake_path_bronze=lake_path_bronze,
+        lake_path_ops=lake_path_ops,
         pipeline=pipeline,
         project=project,
         location=location,
@@ -203,15 +228,16 @@ def biglake_register_cmd(
         skip_ops=skip_ops or pipeline is not None,
     )
     try:
-        plan = build_biglake_register_plan(
-            project_root=root,
-            lake_path=lake_path,
-            pipeline=pipe_path,
-            project=project,
-            location=location,
-            connection=connection,
-            include_ops=not skip_ops and pipeline is None,
-        )
+        with use_settings(settings):
+            plan = build_biglake_register_plan(
+                project_root=root,
+                lake_path=lake_path,
+                pipeline=pipe_path,
+                project=project,
+                location=location,
+                connection=connection,
+                include_ops=not skip_ops and pipeline is None,
+            )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
@@ -221,7 +247,7 @@ def biglake_register_cmd(
 
     claimed = _gate_approval(root, "biglake-register", argv, approval, require_approval, ctx=ctx)
     try:
-        with _claimed_approval_work(claimed, approval):
+        with _claimed_approval_work(claimed, approval), use_settings(settings):
             result = apply_biglake_register(plan)
     except RuntimeError as exc:
         typer.echo(str(exc), err=True)
@@ -243,7 +269,16 @@ def iceberg_register_cmd(
         "-p",
         help="Register one pipeline bronze table only (default: all bronze + ops)",
     ),
-    lake_path: str | None = typer.Option(None, "--lake-path"),
+    lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
+    lake_path_raw: str | None = typer.Option(
+        None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP
+    ),
+    lake_path_bronze: str | None = typer.Option(
+        None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
+    ),
+    lake_path_ops: str | None = typer.Option(
+        None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
+    ),
     skip_ops: bool = typer.Option(False, "--skip-ops", help="Do not register ops.run_receipts"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview registration plan only"),
     apply: bool = typer.Option(False, "--apply", help="Register tables into REST/Glue catalog"),
@@ -259,6 +294,7 @@ def iceberg_register_cmd(
         iceberg_register_write_argv,
         with_catalog_target_argv,
     )
+    from det.runtime.settings import use_settings
 
     if dry_run == apply:
         raise typer.BadParameter(
@@ -271,19 +307,30 @@ def iceberg_register_cmd(
     if pipeline is not None:
         pipe_path = _resolve_pipeline(pipeline, root).path
 
+    settings = _settings(
+        root,
+        lake_path=lake_path,
+        lake_path_raw=lake_path_raw,
+        lake_path_bronze=lake_path_bronze,
+        lake_path_ops=lake_path_ops,
+    )
     try:
-        plan = build_iceberg_register_plan(
-            project_root=root,
-            lake_path=lake_path,
-            pipeline=pipe_path,
-            include_ops=not skip_ops and pipeline is None,
-        )
+        with use_settings(settings):
+            plan = build_iceberg_register_plan(
+                project_root=root,
+                lake_path=lake_path,
+                pipeline=pipe_path,
+                include_ops=not skip_ops and pipeline is None,
+            )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
     argv = with_catalog_target_argv(
         iceberg_register_write_argv(
             lake_path=lake_path,
+            lake_path_raw=lake_path_raw,
+            lake_path_bronze=lake_path_bronze,
+            lake_path_ops=lake_path_ops,
             pipeline=pipeline,
             skip_ops=skip_ops,
         ),
@@ -296,7 +343,7 @@ def iceberg_register_cmd(
 
     claimed = _gate_approval(root, "iceberg-register", argv, approval, require_approval, ctx=ctx)
     try:
-        with _claimed_approval_work(claimed, approval):
+        with _claimed_approval_work(claimed, approval), use_settings(settings):
             result = apply_iceberg_register(plan, project_root=root)
     except Exception as exc:
         typer.echo(str(exc), err=True)
@@ -380,7 +427,16 @@ def lock_release(
         help="Bronze dataset id (e.g. example_api.events_v1) for dataset RW lock",
     ),
     force: bool = typer.Option(False, "--force", help="Required to delete a live lease"),
-    lake_path: str | None = typer.Option(None, "--lake-path"),
+    lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
+    lake_path_raw: str | None = typer.Option(
+        None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP
+    ),
+    lake_path_bronze: str | None = typer.Option(
+        None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
+    ),
+    lake_path_ops: str | None = typer.Option(
+        None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
+    ),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
@@ -395,7 +451,6 @@ def lock_release(
         dataset_lock_path,
         force_release_dataset_lock,
     )
-    from det.runtime.settings import DetSettings
 
     if not force:
         raise typer.BadParameter("--force is required to delete a lock", param_hint="--force")
@@ -430,9 +485,13 @@ def lock_release(
     if interval_start is not None:
         start_iso, end_iso = _resolve_interval(interval_start, interval_end)
     config = load_pipeline_config(resolved.path)
-    settings = DetSettings.from_env(project_root=root)
-    if lake_path is not None:
-        settings = settings.with_overrides(lake_override=lake_path)
+    settings = _settings(
+        root,
+        lake_path=lake_path,
+        lake_path_raw=lake_path_raw,
+        lake_path_bronze=lake_path_bronze,
+        lake_path_ops=lake_path_ops,
+    )
     options = resolve_lease_options(settings=settings, pipeline=config)
     lake = lake_root(config.destination, root, cli_lake_path=lake_path, settings=settings)
     claimed = _gate_approval(
@@ -443,6 +502,9 @@ def lock_release(
             start_iso,
             end_iso,
             lake_path=lake_path,
+            lake_path_raw=lake_path_raw,
+            lake_path_bronze=lake_path_bronze,
+            lake_path_ops=lake_path_ops,
             dataset_id=dataset_id,
         ),
         approval,

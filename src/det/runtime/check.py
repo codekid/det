@@ -462,12 +462,21 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
         catalog_kind_from_env,
     )
     from det.runtime.approval import require_approvals_enabled
+    from det.runtime.config import load_pipeline
     from det.runtime.full_validate import ENV_ALLOW_FULL_VALIDATE, full_validate_allowed
     from det.runtime.lake import (
+        ENV_LAKE_PATH_BRONZE,
+        ENV_LAKE_PATH_OPS,
+        ENV_LAKE_PATH_RAW,
+        is_split_lake_configured,
         lake_mode_from_env,
         pick_lake_spec,
+        resolve_lake_roots,
+        split_lake_specs_from_settings,
         validate_lake_mode,
     )
+    from det.runtime.pipelines import discover_pipeline_files
+    from det.runtime.settings import DetSettings
 
     findings: list[Finding] = []
     try:
@@ -484,20 +493,78 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
         )
         return findings
 
-    spec = pick_lake_spec()
-    try:
-        validate_lake_mode(spec, mode)
-    except ValueError as exc:
-        findings.append(
-            Finding(
-                severity="error",
-                code="lake_mode_mismatch",
-                pipeline="*",
-                path=spec,
-                detail=str(exc),
+    settings = DetSettings.from_env(project_root=project_root)
+    if is_split_lake_configured(settings):
+        raw, bronze, ops = split_lake_specs_from_settings(settings)
+        missing = [
+            name
+            for name, spec in (
+                (ENV_LAKE_PATH_RAW, raw),
+                (ENV_LAKE_PATH_BRONZE, bronze),
+                (ENV_LAKE_PATH_OPS, ops),
             )
-        )
-        return findings
+            if spec is None
+        ]
+        if missing:
+            findings.append(
+                Finding(
+                    severity="error",
+                    code="lake_split_incomplete",
+                    pipeline="*",
+                    path=None,
+                    detail=(
+                        "split lake mode requires all three layer roots "
+                        f"(raw, bronze, ops); missing {', '.join(missing)}"
+                    ),
+                )
+            )
+            return findings
+        try:
+            resolve_lake_roots(settings, project_root=project_root)
+        except ValueError as exc:
+            findings.append(
+                Finding(
+                    severity="error",
+                    code="lake_split_invalid",
+                    pipeline="*",
+                    path=None,
+                    detail=str(exc),
+                )
+            )
+            return findings
+        for path in discover_pipeline_files(project_root):
+            try:
+                cfg = load_pipeline(path, project_root=project_root)
+            except Exception:  # noqa: S112 — other check paths report invalid YAML
+                continue
+            if (cfg.destination.path or "").strip():
+                findings.append(
+                    Finding(
+                        severity="warning",
+                        code="lake_split_destination_path_ignored",
+                        pipeline=cfg.name,
+                        path=str(path),
+                        detail=(
+                            "destination.path is ignored in split lake mode; "
+                            "use DET_LAKE_PATH_RAW / _BRONZE / _OPS (or DetSettings)"
+                        ),
+                    )
+                )
+    else:
+        spec = pick_lake_spec()
+        try:
+            validate_lake_mode(spec, mode)
+        except ValueError as exc:
+            findings.append(
+                Finding(
+                    severity="error",
+                    code="lake_mode_mismatch",
+                    pipeline="*",
+                    path=spec,
+                    detail=str(exc),
+                )
+            )
+            return findings
 
     try:
         kind = catalog_kind_from_env()
@@ -545,7 +612,7 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
                 "bronze commits go through a managed Iceberg catalog. "
                 "Multi-writer safety is whatever that catalog provides; "
                 "DuckDB path iceberg_scan still works when table files stay "
-                "under {{lake}}/bronze/… (see docs/iceberg-catalog.md)."
+                "under the bronze lake root (see docs/iceberg-catalog.md)."
             )
         findings.append(
             Finding(

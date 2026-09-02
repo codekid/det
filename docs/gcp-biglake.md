@@ -79,11 +79,23 @@ bq show --connection --location="$DET_BQ_LOCATION" \
 
 ```bash
 export DET_GCS_BUCKET=your-bucket   # from DET_LAKE_PATH=gs://BUCKET/det-lake
+# Layout 2: grant objectViewer on the bronze bucket (and ops bucket for ops tables),
+# not on the raw ingest bucket.
 
 gcloud storage buckets add-iam-policy-binding "gs://${DET_GCS_BUCKET}" \
   --member="serviceAccount:CONNECTION_SA_EMAIL" \
   --role="roles/storage.objectViewer"
 ```
+
+### IAM sketch (layout 2 split buckets)
+
+| Role | Raw bucket | Bronze bucket | Ops bucket |
+|------|------------|---------------|------------|
+| Extract SA | objectCreator (or Admin) | — | objectCreator (run receipts) |
+| Load SA | objectViewer | objectAdmin | objectCreator |
+| BigLake connection SA | — | objectViewer | objectViewer (ops table) |
+
+Layout 1 can approximate this with prefix-conditioned IAM on one bucket.
 
 Run `det biglake-register --dry-run` before `--apply` — it prints an IAM hint
 (with copy-paste `gcloud` when the connection already exists).

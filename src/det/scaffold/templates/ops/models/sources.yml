@@ -14,7 +14,7 @@ sources:
           `{lake}/runs/*.json`; this table is a replace-by-attempt_date projection.
         meta:
           formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
-          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH') }}/ops/run_receipts'){% endif %}"
+          external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH_OPS', env_var('DET_LAKE_PATH')) }}/ops/run_receipts'){% endif %}"
         columns:
           - name: receipt_version
             description: Receipt schema version from the JSON body

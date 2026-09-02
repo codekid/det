@@ -7,6 +7,10 @@ import typer
 from det.cli.app import app
 from det.cli.common import (
     _APPROVAL_HELP,
+    _LAKE_PATH_BRONZE_HELP,
+    _LAKE_PATH_HELP,
+    _LAKE_PATH_OPS_HELP,
+    _LAKE_PATH_RAW_HELP,
     _PIPELINE_HELP,
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
@@ -16,6 +20,7 @@ from det.cli.common import (
     _gate_approval,
     _project_root,
     _resolve_pipeline,
+    _settings,
 )
 
 
@@ -54,7 +59,16 @@ def dbt_cmd(
     lake_path: str | None = typer.Option(
         None,
         "--lake-path",
-        help="Lake root URI or path (default: DET_LAKE_PATH or ./data/lake)",
+        help=_LAKE_PATH_HELP,
+    ),
+    lake_path_raw: str | None = typer.Option(
+        None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP
+    ),
+    lake_path_bronze: str | None = typer.Option(
+        None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
+    ),
+    lake_path_ops: str | None = typer.Option(
+        None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
     ),
     dry_run: bool = typer.Option(
         False,
@@ -69,6 +83,7 @@ def dbt_cmd(
     """Run dbt (build/run/test) for local testing. Requires the optional [dbt] extra."""
     from det.runtime.approval import dbt_write_argv
     from det.runtime.dbt_runner import DbtNotInstalledError, run_dbt
+    from det.runtime.settings import use_settings
 
     if command not in {"build", "run", "test"}:
         raise typer.BadParameter(
@@ -78,6 +93,13 @@ def dbt_cmd(
 
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root) if pipeline is not None else None
+    settings = _settings(
+        root,
+        lake_path=lake_path,
+        lake_path_raw=lake_path_raw,
+        lake_path_bronze=lake_path_bronze,
+        lake_path_ops=lake_path_ops,
+    )
     claimed = False
     if not dry_run:
         claimed = _gate_approval(
@@ -90,6 +112,9 @@ def dbt_cmd(
                 full_refresh=full_refresh,
                 target=target,
                 lake_path=lake_path,
+                lake_path_raw=lake_path_raw,
+                lake_path_bronze=lake_path_bronze,
+                lake_path_ops=lake_path_ops,
                 set_=set_ or None,
             ),
             approval,
@@ -101,7 +126,7 @@ def dbt_cmd(
         pipe = resolved.path
 
     try:
-        with _claimed_approval_work(claimed, approval):
+        with _claimed_approval_work(claimed, approval), use_settings(settings):
             if resolved is not None:
                 from det.runtime.config import load_pipeline_config
                 from det.scaffold.view_warn import emit_view_size_warnings

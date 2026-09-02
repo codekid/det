@@ -22,7 +22,9 @@ def test_lock_aliases_match_low_level() -> None:
 
 def test_version_and_lake_layout() -> None:
     assert isinstance(det.__version__, str) and det.__version__
-    assert det.LAKE_LAYOUT == 1
+    assert det.LAKE_LAYOUT == 2
+    assert "LakeRoots" in det.__all__
+    assert "resolve_lake_roots" in det.__all__
 
 
 def test_load_pipeline_exported() -> None:
