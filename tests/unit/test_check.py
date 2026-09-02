@@ -385,6 +385,23 @@ def test_iceberg_glue_requires_s3_uses_destination_path(
     assert any(f.pipeline == "example_api.events" for f in glue)
 
 
+def test_iceberg_glue_split_checks_bronze_not_destination_path(
+    tmp_path: Path, monkeypatch
+):
+    """Layout 2: glue probes bronze root, not pipeline destination.path."""
+    _write_pipeline(tmp_path)
+    monkeypatch.setenv("DET_ICEBERG_CATALOG", "glue")
+    monkeypatch.delenv("DET_LAKE_MODE", raising=False)
+    monkeypatch.setenv("DET_LAKE_PATH_RAW", str(tmp_path / "r"))
+    monkeypatch.setenv("DET_LAKE_PATH_BRONZE", str(tmp_path / "b"))
+    monkeypatch.setenv("DET_LAKE_PATH_OPS", str(tmp_path / "o"))
+    findings = check_project(tmp_path)
+    glue = [f for f in findings if f.code == "iceberg_glue_requires_s3"]
+    assert glue
+    assert any(f.pipeline == "*" for f in glue)
+    assert not any(f.pipeline == "example_api.events" for f in glue)
+
+
 def test_iceberg_rest_ok_with_uri(tmp_path: Path, monkeypatch):
     _write_pipeline(tmp_path)
     monkeypatch.setenv("DET_LAKE_MODE", "cloud")

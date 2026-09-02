@@ -661,7 +661,13 @@ def _iceberg_glue_lake_findings(project_root: Path) -> list[Finding]:
     import os
 
     from det.runtime.iceberg_register import _lake_uri_str, _require_register_catalog
-    from det.runtime.lake import open_lake, pick_lake_spec
+    from det.runtime.lake import (
+        is_split_lake_configured,
+        open_lake,
+        pick_lake_spec,
+        resolve_lake_roots,
+    )
+    from det.runtime.settings import DetSettings
 
     root = project_root.resolve()
     environ = dict(os.environ)
@@ -696,7 +702,18 @@ def _iceberg_glue_lake_findings(project_root: Path) -> list[Finding]:
                 )
             )
 
-    # Same precedence as iceberg-register: destination.path then DET_LAKE_PATH.
+    settings = DetSettings.from_env(project_root=root)
+    if is_split_lake_configured(settings, env=environ):
+        try:
+            roots = resolve_lake_roots(
+                settings, project_root=root, env=environ
+            )
+        except ValueError:
+            return findings
+        _check("*", str(roots.bronze))
+        return findings
+
+    # Layout 1: same precedence as iceberg-register (destination.path then DET_LAKE_PATH).
     _check("*", pick_lake_spec(env=environ))
     for path in discover_pipeline_files(root):
         try:

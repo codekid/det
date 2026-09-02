@@ -96,11 +96,11 @@ def validate_lake_mode(spec: str, mode: LakeMode) -> None:
     if text.startswith("memory://"):
         raise ValueError(
             f"DET_LAKE_MODE=cloud forbids memory:// lakes (got {text!r}); "
-            f"use s3:// or gs://, or set {ENV_LAKE_MODE}=local"
+            f"use s3://, gs://, or gcs://, or set {ENV_LAKE_MODE}=local"
         )
     if not is_object_lake_spec(text):
         raise ValueError(
-            f"DET_LAKE_MODE=cloud requires an s3:// or gs:// lake "
+            f"DET_LAKE_MODE=cloud requires an s3://, gs://, or gcs:// lake "
             f"(got {text!r}); set {ENV_LAKE_MODE}=local for filesystem lakes"
         )
 
