@@ -94,7 +94,8 @@ _DLT_LANDING_MARKERS: tuple[str, ...] = ("dlt.pipeline", "pipeline.run")
 
 # Affirmative full-refresh invent: hyphen or underscore forms, optional leading --.
 _FULL_REFRESH_TOKEN = re.compile(r"(?:--)?full[-_]refresh", re.IGNORECASE)
-# Drop "do not use --full-refresh" / "not full_refresh" style guidance before matching.
+# Drop same-clause "do not use --full-refresh" guidance before matching.
+# Do not let the bridge cross newlines or sentence/clause enders (.!?;).
 _NEGATED_FULL_REFRESH = re.compile(
     r"(?:"
     r"do\s+not|don't|dont|never|avoid|"
@@ -103,7 +104,7 @@ _NEGATED_FULL_REFRESH = re.compile(
     r"rather\s+than|"
     r"instead\s+of"
     r")"
-    r"[\s\w\"'`./:-]{0,48}"
+    r"[^\n.!?;]{0,48}"
     r"(?:--)?full[-_]refresh",
     re.IGNORECASE,
 )
