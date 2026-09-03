@@ -156,6 +156,7 @@ _BOUND_PARAMS: dict[str, frozenset[str]] = {
             "select",
             "command",
             "full_refresh",
+            "catchup",
             "target",
             *_LAKE_LAYER_PARAMS,
             "set_",
@@ -193,6 +194,17 @@ _BOUND_PARAMS: dict[str, frozenset[str]] = {
             "interval_end",
             "dataset_id",
             "force",
+            *_LAKE_LAYER_PARAMS,
+        }
+    ),
+    "silver-catchup-plan": frozenset(
+        {
+            "pipeline",
+            "all_pipelines",
+            "interval_start",
+            "interval_end",
+            "limit",
+            "apply",
             *_LAKE_LAYER_PARAMS,
         }
     ),

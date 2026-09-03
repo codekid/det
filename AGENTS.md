@@ -33,7 +33,7 @@ inclusive, `-e` exclusive (default start + 1 day). Lake hive/SQL contract:
   flag that changes what or where data is written is in `plan_digest`, and an
   unrecognized flag is rejected (`approval_unbound_flag`) rather than escaping
   it. So **re-approve when you change any flag**, including `--lake-path`,
-  `--set`, `--full-refresh`, `--target`, and `--ingestion`. Pipeline refs and
+  `--set`, `--full-refresh`, `--catchup`, `--target`, and `--ingestion`. Pipeline refs and
   intervals are canonicalized, so `noaa/storm_events` and `noaa.storm_events`,
   or `-s 2026-08-06` and `-s 2026-08-06T00:00:00+00:00`, share one digest.
 - A crashed run leaves its approval `claimed`, and a claim never expires, so it
@@ -55,7 +55,8 @@ inclusive, `-e` exclusive (default start + 1 day). Lake hive/SQL contract:
 | dbt catalog (physical models) | MCP `list_models` / `describe_model` |
 | Gold / fleet metrics | MCP `cube_meta` / `cube_load` (`make cube-up`) |
 | Silver or ops row detail | MCP `query_analytics` (`warehouse=analytics` or `ops`) |
-| Draft schema / mapper / migrate / prune / dbt | MCP `*_dry_run` (`approval_plan`) then `det approve` then CLI `--approval` |
+| Draft schema / mapper / migrate / prune / dbt / silver catch-up | MCP `*_dry_run` (`approval_plan`) then `det approve` then CLI `--approval` |
+| Bronze↔silver catch-up | MCP `diff_bronze_silver` / `silver_catchup_dry_run` → approve → `det silver-catchup-plan --apply` → later `det dbt --catchup --approval` ([docs/silver-catchup.md](docs/silver-catchup.md)) |
 | Ops dbt models for embedders | After `runs-materialize`: MCP `scaffold_ops_dry_run` → show plan, wait for confirm → `det approve`; later turn `det scaffold-ops --approval <id>` |
 | Extract, load, run, apply prune, write migrate | CLI / Airflow after `det approve` (and `--approval` when required) |
 

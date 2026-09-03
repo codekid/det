@@ -46,6 +46,14 @@ def dbt_cmd(
         help="dbt subcommand: build | run | test",
     ),
     full_refresh: bool = typer.Option(False, "--full-refresh"),
+    catchup: bool = typer.Option(
+        False,
+        "--catchup",
+        help=(
+            "Heal from ops/silver_catchup/manifest.json (one build; injects "
+            "det_catchup_by_pipeline vars; selects listed silver models)"
+        ),
+    ),
     project_dir: Path | None = typer.Option(
         None,
         "--project-dir",
@@ -110,6 +118,7 @@ def dbt_cmd(
                 command=command,
                 select=select or None,
                 full_refresh=full_refresh,
+                catchup=catchup,
                 target=target,
                 lake_path=lake_path,
                 lake_path_raw=lake_path_raw,
@@ -147,6 +156,7 @@ def dbt_cmd(
                 exclude=_analytics_exclude(select or None),
                 target=target,
                 full_refresh=full_refresh,
+                catchup=catchup,
                 lake_path=lake_path,
                 pipeline=pipe,
                 pipeline_overrides=set_ or None,

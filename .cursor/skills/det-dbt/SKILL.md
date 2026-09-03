@@ -231,6 +231,22 @@ not a DET destination — there is no `destination.type: bigquery`.
 - This run (did extract/load break?): still `list_runs` / `summarize_runs`.
   Do not run `det dbt` against a DuckDB file Cube has open.
 
+## Catch-up (watermark holes)
+
+Incremental silver can miss a bronze extract-run whose stamp is **behind**
+`max(silver.watermark)` (cross-interval overlap). Heal with the catch-up path —
+not `--full-refresh` by default:
+
+1. MCP `diff_bronze_silver` / `det silver-catchup-diff`
+2. MCP `silver_catchup_dry_run` → approve → `det silver-catchup-plan --apply`
+3. Later: `det dbt --catchup` (reads `ops/silver_catchup/manifest.json`, one
+   process, `det_catchup_by_pipeline` vars). Scaffolded incremental models apply
+   only rows that are missing or **younger** than silver for the unique_key.
+   Incremental scaffold also sets `tags=["det_catchup"]` (discoverability only;
+   heal `--select` stays manifest-driven, not `tag:det_catchup`).
+
+Details: [docs/silver-catchup.md](../../docs/silver-catchup.md).
+
 ## Hard rules
 
 - MCP `dbt_dry_run` / `scaffold_dbt_dry_run` never write or run mutating dbt builds.

@@ -128,11 +128,17 @@ def test_in_tree_storm_events_silver_is_incremental(project_root):
         project_root / "dbt/models/silver/silver_noaa__storm_events.sql"
     ).read_text(encoding="utf-8")
     assert 'materialized="incremental"' in silver
-    assert "is_incremental()" in silver
-    assert "__extract_run_datetime >" in silver
+    assert "det_silver_incremental_filter" in silver
+    assert "det_silver_catchup_guard" in silver
+    assert 'tags=["det_catchup"]' in silver
     assert 'unique_key=["__row_hash"]' in silver
     assert "delete+insert" in silver
     assert "incremental_strategy=" in silver
+    macro = (
+        project_root / "dbt/macros/det_silver_incremental_filter.sql"
+    ).read_text(encoding="utf-8")
+    assert "is_incremental()" in macro
+    assert "__extract_run_datetime" in macro or "watermark" in macro
 
 
 def test_bigquery_silver_config_defaults_granularity_day():

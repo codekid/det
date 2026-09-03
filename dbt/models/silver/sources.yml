@@ -17,10 +17,6 @@ sources:
           formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
           external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH_BRONZE', env_var('DET_LAKE_PATH', '../data/lake') ~ '/bronze') }}/example_api/events_v1'){% endif %}"
         columns:
-        - name: __row_hash
-          description: DET content hash used for silver dedupe.
-          tests:
-          - not_null
         - name: id
           description: Upstream event id (stable primary key).
           tests:
@@ -29,31 +25,66 @@ sources:
           description: Event timestamp as sent by the API (ISO-8601 string).
           tests:
           - not_null
-        - name: severity
-          description: Legacy severity label (pre-v2 wire name).
+        - name: debug_info
+          description: Internal debug payload; not for analytics.
         - name: level
           description: Current wire severity field.
+        - name: severity
+          description: Legacy severity label (pre-v2 wire name).
         - name: severity_level
           description: Alternate historical severity field.
         - name: state
           description: Two-letter state code when provided.
         - name: status
           description: Upstream status code or label.
-        - name: debug_info
-          description: Internal debug payload; not for analytics.
+        - name: __row_hash
+          description: DET content hash used for silver dedupe.
+          tests:
+          - not_null
+        - name: __bronze_loaded_at
+          description: When the row was written to bronze (UTC).
+        - name: __data_interval_date
+          description: Calendar date of the interval start.
+        - name: __extract_run_datetime
+          description: Extract run timestamp (UTC).
+        - name: __filename
+          description: Source artifact filename when extract recorded one.
+        - name: __interval_end_datetime
+          description: Pipeline interval end (UTC).
+        - name: __interval_start_datetime
+          description: Pipeline interval start (UTC).
       - name: orders_v1
         description: DET bronze example_api.orders_v1
         meta:
           formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
           external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH_BRONZE', env_var('DET_LAKE_PATH', '../data/lake') ~ '/bronze') }}/example_api/orders_v1'){% endif %}"
         columns:
+        - name: id
+          tests:
+          - not_null
+        - name: currency
+        - name: customer
+        - name: discount_codes
+        - name: email
+        - name: line_items
+        - name: shipping_address
+        - name: status
         - name: __row_hash
           description: DET content hash used for silver dedupe.
           tests:
           - not_null
-        - name: id
-          tests:
-          - not_null
+        - name: __bronze_loaded_at
+          description: When the row was written to bronze (UTC).
+        - name: __data_interval_date
+          description: Calendar date of the interval start.
+        - name: __extract_run_datetime
+          description: Extract run timestamp (UTC).
+        - name: __filename
+          description: Source artifact filename when extract recorded one.
+        - name: __interval_end_datetime
+          description: Pipeline interval end (UTC).
+        - name: __interval_start_datetime
+          description: Pipeline interval start (UTC).
   - name: bronze_noaa
     description: >
       DET bronze for provider feeds under this SQL schema / lake prefix.
@@ -70,10 +101,6 @@ sources:
           formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
           external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH_BRONZE', env_var('DET_LAKE_PATH', '../data/lake') ~ '/bronze') }}/noaa/storm_events_v1'){% endif %}"
         columns:
-        - name: __row_hash
-          description: DET content hash used for silver dedupe.
-          tests:
-          - not_null
         - name: begin_day
           description: Day of the month the event began (DD).
           tests:
@@ -82,150 +109,176 @@ sources:
           description: Time of day the event began (hhmm, 24-hour).
           tests:
           - not_null
+        - name: episode_id
+          description: NWS-assigned id for the storm episode; an episode may contain multiple events.
         - name: event_id
           description: NWS-assigned id for each individual storm event within an episode; primary key linking details, locations, and fatalities.
           tests:
           - not_null
+        - name: begin_azimuth
+          description: 16-point compass direction from begin_location.
+        - name: begin_date_time
+          description: Event begin datetime (MM/DD/YYYY hh:mm:ss, usually LST).
+        - name: begin_lat
+          description: Latitude in decimal degrees of the begin point of the event/path.
+        - name: begin_location
+          description: City/town/village used as the begin range/azimuth reference.
+        - name: begin_lon
+          description: Longitude in decimal degrees of the begin point of the event/path.
+        - name: begin_range
+          description: Distance in miles (to the tenth) to begin_location.
         - name: begin_yearmonth
           description: Year and month the event began (YYYYMM).
-        - name: end_yearmonth
-          description: Year and month the event ended (YYYYMM).
-        - name: end_day
-          description: Day of the month the event ended (DD).
-        - name: end_time
-          description: Time of day the event ended (hhmm, 24-hour).
-        - name: episode_id
-          description: NWS-assigned id for the storm episode; an episode may contain multiple events.
-        - name: state
-          description: State name where the event occurred (spelled out, ALL CAPS).
-        - name: state_fips
-          description: State FIPS code assigned by NIST.
-        - name: year
-          description: Four-digit year for the event in this record.
-        - name: month_name
-          description: Month name for the event (spelled out, not abbreviated).
-        - name: event_type
-          description: Meteorological event name permitted in Storm Data (NWS Directive 10-1605 Section 2.1.1); spelled out, not abbreviated.
-        - name: cz_type
-          description: Whether the event happened in a County/Parish (C), NWS Public Forecast Zone (Z), or Marine (M).
+        - name: category
+          description: Event category (rarely populated in NCEI bulk exports).
         - name: cz_fips
           description: County FIPS number (NIST) or NWS Forecast Zone number.
         - name: cz_name
           description: County/Parish, Zone, or Marine name for cz_fips.
-        - name: wfo
-          description: NWS Forecast Office County Warning Area (CWA) where the event occurred.
-        - name: begin_date_time
-          description: Event begin datetime (MM/DD/YYYY hh:mm:ss, usually LST).
         - name: cz_timezone
           description: Time zone for the County/Parish, Zone, or Marine name (e.g. EST-5, CST-6).
-        - name: end_date_time
-          description: Event end datetime (MM/DD/YYYY hh:mm:ss, usually LST).
-        - name: injuries_direct
-          description: Number of injuries directly caused by the weather event.
-        - name: injuries_indirect
-          description: Number of injuries indirectly caused by the weather event.
+        - name: cz_type
+          description: Whether the event happened in a County/Parish (C), NWS Public Forecast Zone (Z), or Marine (M).
+        - name: damage_crops
+          description: Estimated crop damage (e.g. 10.00K = $10,000; 10.00M = $10,000,000).
+        - name: damage_property
+          description: Estimated property damage (e.g. 10.00K = $10,000; 10.00M = $10,000,000).
+        - name: data_source
+          description: Source system indicator on the bulk CSV row (e.g. CSV / PDC).
         - name: deaths_direct
           description: Number of deaths directly caused by the weather event.
         - name: deaths_indirect
           description: Number of deaths indirectly caused by the weather event.
-        - name: damage_property
-          description: Estimated property damage (e.g. 10.00K = $10,000; 10.00M = $10,000,000).
-        - name: damage_crops
-          description: Estimated crop damage (e.g. 10.00K = $10,000; 10.00M = $10,000,000).
-        - name: source
-          description: Source reporting the weather event (unrestricted free text).
-        - name: magnitude
-          description: Measured extent for magnitude_type — wind speeds in knots or hail size in inches (to the hundredth).
-        - name: magnitude_type
-          description: EG = estimated gust; ES = estimated sustained; MS = measured sustained; MG = measured gust (no magnitude for hail).
-        - name: flood_cause
-          description: Reported or estimated cause of the flood.
-        - name: category
-          description: Event category (rarely populated in NCEI bulk exports).
-        - name: tor_f_scale
-          description: Enhanced Fujita scale for tornado damage (EF0–EF5); highest value recorded for the event.
-        - name: tor_length
-          description: Length of the tornado or segment on the ground (miles to the tenth).
-        - name: tor_width
-          description: Width of the tornado or segment on the ground (whole yards).
-        - name: tor_other_wfo
-          description: Subsequent WFO when a tornado segment continues into another forecast office.
-        - name: tor_other_cz_state
-          description: Two-letter state id for the continuing tornado segment in another county/zone.
-        - name: tor_other_cz_fips
-          description: FIPS of the county entered by the continuing tornado segment.
-        - name: tor_other_cz_name
-          description: County/zone name for the continuing tornado segment (ALL CAPS).
-        - name: begin_range
-          description: Distance in miles (to the tenth) to begin_location.
-        - name: begin_azimuth
-          description: 16-point compass direction from begin_location.
-        - name: begin_location
-          description: City/town/village used as the begin range/azimuth reference.
-        - name: end_range
-          description: Distance in miles (to the tenth) to end_location.
         - name: end_azimuth
           description: 16-point compass direction from end_location.
-        - name: end_location
-          description: City/town/village used as the end range/azimuth reference.
-        - name: begin_lat
-          description: Latitude in decimal degrees of the begin point of the event/path.
-        - name: begin_lon
-          description: Longitude in decimal degrees of the begin point of the event/path.
+        - name: end_date_time
+          description: Event end datetime (MM/DD/YYYY hh:mm:ss, usually LST).
+        - name: end_day
+          description: Day of the month the event ended (DD).
         - name: end_lat
           description: Latitude in decimal degrees of the end point of the event/path.
+        - name: end_location
+          description: City/town/village used as the end range/azimuth reference.
         - name: end_lon
           description: Longitude in decimal degrees of the end point of the event/path.
+        - name: end_range
+          description: Distance in miles (to the tenth) to end_location.
+        - name: end_time
+          description: Time of day the event ended (hhmm, 24-hour).
+        - name: end_yearmonth
+          description: Year and month the event ended (YYYYMM).
         - name: episode_narrative
           description: NWS narrative of the general nature and overall activity of the episode.
         - name: event_narrative
           description: NWS narrative with descriptive details of the individual event.
-        - name: data_source
-          description: Source system indicator on the bulk CSV row (e.g. CSV / PDC).
+        - name: event_type
+          description: Meteorological event name permitted in Storm Data (NWS Directive 10-1605 Section 2.1.1); spelled out, not abbreviated.
+        - name: flood_cause
+          description: Reported or estimated cause of the flood.
+        - name: injuries_direct
+          description: Number of injuries directly caused by the weather event.
+        - name: injuries_indirect
+          description: Number of injuries indirectly caused by the weather event.
+        - name: magnitude
+          description: Measured extent for magnitude_type — wind speeds in knots or hail size in inches (to the hundredth).
+        - name: magnitude_type
+          description: EG = estimated gust; ES = estimated sustained; MS = measured sustained; MG = measured gust (no magnitude for hail).
+        - name: month_name
+          description: Month name for the event (spelled out, not abbreviated).
+        - name: source
+          description: Source reporting the weather event (unrestricted free text).
+        - name: state
+          description: State name where the event occurred (spelled out, ALL CAPS).
+        - name: state_fips
+          description: State FIPS code assigned by NIST.
+        - name: tor_f_scale
+          description: Enhanced Fujita scale for tornado damage (EF0–EF5); highest value recorded for the event.
+        - name: tor_length
+          description: Length of the tornado or segment on the ground (miles to the tenth).
+        - name: tor_other_cz_fips
+          description: FIPS of the county entered by the continuing tornado segment.
+        - name: tor_other_cz_name
+          description: County/zone name for the continuing tornado segment (ALL CAPS).
+        - name: tor_other_cz_state
+          description: Two-letter state id for the continuing tornado segment in another county/zone.
+        - name: tor_other_wfo
+          description: Subsequent WFO when a tornado segment continues into another forecast office.
+        - name: tor_width
+          description: Width of the tornado or segment on the ground (whole yards).
+        - name: wfo
+          description: NWS Forecast Office County Warning Area (CWA) where the event occurred.
+        - name: year
+          description: Four-digit year for the event in this record.
+        - name: __row_hash
+          description: DET content hash used for silver dedupe.
+          tests:
+          - not_null
+        - name: __bronze_loaded_at
+          description: When the row was written to bronze (UTC).
+        - name: __data_interval_date
+          description: Calendar date of the interval start.
+        - name: __extract_run_datetime
+          description: Extract run timestamp (UTC).
+        - name: __filename
+          description: Source artifact filename when extract recorded one.
+        - name: __interval_end_datetime
+          description: Pipeline interval end (UTC).
+        - name: __interval_start_datetime
+          description: Pipeline interval start (UTC).
       - name: fatalities_v1
         description: 'NOAA Storm Events fatalities (StormEvents_fatalities CSV). Bronze contract: snake_case names and typed values. DET coerces source strings to these types before validation. Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.'
         meta:
           formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
           external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH_BRONZE', env_var('DET_LAKE_PATH', '../data/lake') ~ '/bronze') }}/noaa/fatalities_v1'){% endif %}"
         columns:
-        - name: __row_hash
-          description: DET content hash used for silver dedupe.
+        - name: event_id
+          description: NWS-assigned id for each individual storm event within an episode; primary key linking details, locations, and fatalities.
           tests:
           - not_null
         - name: fatality_id
           description: NWS-assigned id for the individual fatality.
           tests:
           - not_null
-        - name: event_id
-          description: NWS-assigned id for each individual storm event within an episode; primary key linking details, locations, and fatalities.
-          tests:
-          - not_null
-        - name: fat_yearmonth
-          description: Year and month of the fatality (YYYYMM).
         - name: fat_day
           description: Day of the month of the fatality (DD).
         - name: fat_time
           description: Time of day of the fatality (hhmm).
-        - name: fatality_type
-          description: D = direct fatality; I = indirect fatality (NWS Directive 10-1605 Section 2.6).
-        - name: fatality_date
-          description: Fatality datetime (MM/DD/YYYY hh:mm; time is usually 00:00).
+        - name: fat_yearmonth
+          description: Year and month of the fatality (YYYYMM).
         - name: fatality_age
           description: Age in years of the fatality (null if unknown).
-        - name: fatality_sex
-          description: Gender of the fatality (M/F; null if unknown).
+        - name: fatality_date
+          description: Fatality datetime (MM/DD/YYYY hh:mm; time is usually 00:00).
         - name: fatality_location
           description: Direct fatality location code or label (e.g. UT under tree, VE vehicle, OU outside/open areas, MH mobile/trailer home).
+        - name: fatality_sex
+          description: Gender of the fatality (M/F; null if unknown).
+        - name: fatality_type
+          description: D = direct fatality; I = indirect fatality (NWS Directive 10-1605 Section 2.6).
+        - name: __row_hash
+          description: DET content hash used for silver dedupe.
+          tests:
+          - not_null
+        - name: __bronze_loaded_at
+          description: When the row was written to bronze (UTC).
+        - name: __data_interval_date
+          description: Calendar date of the interval start.
+        - name: __extract_run_datetime
+          description: Extract run timestamp (UTC).
+        - name: __filename
+          description: Source artifact filename when extract recorded one.
+        - name: __interval_end_datetime
+          description: Pipeline interval end (UTC).
+        - name: __interval_start_datetime
+          description: Pipeline interval start (UTC).
       - name: locations_v1
         description: 'NOAA Storm Events locations (StormEvents_locations CSV). Bronze contract: snake_case names and typed values. DET coerces source strings to these types before validation. Field meanings from NCEI Storm-Data-Bulk-csv-Format.pdf.'
         meta:
           formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
           external_location: "{% if target.name != 'bigquery' %}iceberg_scan('{{ env_var('DET_LAKE_PATH_BRONZE', env_var('DET_LAKE_PATH', '../data/lake') ~ '/bronze') }}/noaa/locations_v1'){% endif %}"
         columns:
-        - name: __row_hash
-          description: DET content hash used for silver dedupe.
-          tests:
-          - not_null
+        - name: episode_id
+          description: NWS-assigned id for the storm episode; an episode may contain multiple events.
         - name: event_id
           description: NWS-assigned id for each individual storm event within an episode; primary key linking details, locations, and fatalities.
           tests:
@@ -234,24 +287,38 @@ sources:
           description: NWS-assigned sequence number for specific locations within the same storm event; each index has a corresponding lat/lon point.
           tests:
           - not_null
-        - name: yearmonth
-          description: Year and month for the location row (YYYYMM).
-        - name: episode_id
-          description: NWS-assigned id for the storm episode; an episode may contain multiple events.
-        - name: range
-          description: Distance (to the tenth of a mile) to the geographical center or primary post office of the referenced village/city.
         - name: azimuth
           description: 16-point compass direction from the documented reference location.
-        - name: location
-          description: City/town/village from which range and azimuth are determined.
-        - name: latitude
-          description: Latitude where the event occurred (negative in the southern hemisphere).
-        - name: longitude
-          description: Longitude where the event occurred (negative in the western hemisphere).
         - name: lat2
           description: Scaled integer encoding of latitude from the bulk CSV (LAT2).
+        - name: latitude
+          description: Latitude where the event occurred (negative in the southern hemisphere).
+        - name: location
+          description: City/town/village from which range and azimuth are determined.
         - name: lon2
           description: Scaled integer encoding of longitude from the bulk CSV (LON2).
+        - name: longitude
+          description: Longitude where the event occurred (negative in the western hemisphere).
+        - name: range
+          description: Distance (to the tenth of a mile) to the geographical center or primary post office of the referenced village/city.
+        - name: yearmonth
+          description: Year and month for the location row (YYYYMM).
+        - name: __row_hash
+          description: DET content hash used for silver dedupe.
+          tests:
+          - not_null
+        - name: __bronze_loaded_at
+          description: When the row was written to bronze (UTC).
+        - name: __data_interval_date
+          description: Calendar date of the interval start.
+        - name: __extract_run_datetime
+          description: Extract run timestamp (UTC).
+        - name: __filename
+          description: Source artifact filename when extract recorded one.
+        - name: __interval_end_datetime
+          description: Pipeline interval end (UTC).
+        - name: __interval_start_datetime
+          description: Pipeline interval start (UTC).
   - name: bronze_openlibrary
     description: >
       DET bronze for provider feeds under this SQL schema / lake prefix.
@@ -267,15 +334,42 @@ sources:
         description: DET bronze openlibrary.subjects_v1
         meta:
           formatter: "{% if target.name != 'bigquery' %}template{% endif %}"
-          external_location: "{% if target.name != 'bigquery' %}read_json('{{ env_var('DET_LAKE_PATH_BRONZE', env_var('DET_LAKE_PATH', '../data/lake') ~ '/bronze') }}/openlibrary/subjects_v1/**/data.jsonl', columns={'key': 'VARCHAR', 'subject_key': 'VARCHAR', 'title': 'VARCHAR', 'edition_count': 'INTEGER', 'cover_id': 'INTEGER', 'cover_edition_key': 'VARCHAR', 'first_publish_year': 'INTEGER', 'has_fulltext': 'BOOLEAN', 'public_scan': 'BOOLEAN', 'printdisabled': 'BOOLEAN', 'ia': 'VARCHAR', 'lending_edition': 'VARCHAR', 'lending_identifier': 'VARCHAR', 'authors': 'JSON', 'subject': 'JSON', 'ia_collection': 'JSON', 'availability': 'JSON', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'}, union_by_name=true, hive_partitioning=false){% endif %}"
+          external_location: "{% if target.name != 'bigquery' %}read_json('{{ env_var('DET_LAKE_PATH_BRONZE', env_var('DET_LAKE_PATH', '../data/lake') ~ '/bronze') }}/openlibrary/subjects_v1/**/data.jsonl', columns={'key': 'VARCHAR', 'subject_key': 'VARCHAR', 'title': 'VARCHAR', 'edition_count': 'BIGINT', 'cover_id': 'BIGINT', 'cover_edition_key': 'VARCHAR', 'first_publish_year': 'BIGINT', 'has_fulltext': 'BOOLEAN', 'public_scan': 'BOOLEAN', 'printdisabled': 'BOOLEAN', 'ia': 'VARCHAR', 'lending_edition': 'VARCHAR', 'lending_identifier': 'VARCHAR', 'authors': 'JSON', 'subject': 'JSON', 'ia_collection': 'JSON', 'availability': 'JSON', '__row_hash': 'VARCHAR', '__filename': 'VARCHAR', '__extract_run_datetime': 'TIMESTAMP', '__bronze_loaded_at': 'TIMESTAMP', '__interval_start_datetime': 'TIMESTAMP', '__interval_end_datetime': 'TIMESTAMP', '__data_interval_date': 'DATE'}, union_by_name=true, hive_partitioning=false){% endif %}"
         columns:
-        - name: __row_hash
-          description: DET content hash used for silver dedupe.
-          tests:
-          - not_null
+        - name: cover_edition_key
+        - name: cover_id
         - name: key
           tests:
           - not_null
         - name: subject_key
           tests:
           - not_null
+        - name: authors
+        - name: availability
+        - name: edition_count
+        - name: first_publish_year
+        - name: has_fulltext
+        - name: ia
+        - name: ia_collection
+        - name: lending_edition
+        - name: lending_identifier
+        - name: printdisabled
+        - name: public_scan
+        - name: subject
+        - name: title
+        - name: __row_hash
+          description: DET content hash used for silver dedupe.
+          tests:
+          - not_null
+        - name: __bronze_loaded_at
+          description: When the row was written to bronze (UTC).
+        - name: __data_interval_date
+          description: Calendar date of the interval start.
+        - name: __extract_run_datetime
+          description: Extract run timestamp (UTC).
+        - name: __filename
+          description: Source artifact filename when extract recorded one.
+        - name: __interval_end_datetime
+          description: Pipeline interval end (UTC).
+        - name: __interval_start_datetime
+          description: Pipeline interval start (UTC).

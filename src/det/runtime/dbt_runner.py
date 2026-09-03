@@ -197,6 +197,7 @@ def run_dbt(
     exclude: Sequence[str] | None = None,
     target: str | None = None,
     full_refresh: bool = False,
+    catchup: bool = False,
     lake_path: str | Path | None = None,
     pipeline: PipelineConfig | Path | str | None = None,
     pipeline_overrides: Sequence[str] | None = None,
@@ -208,11 +209,40 @@ def run_dbt(
 
     Sets DET_LAKE_PATH from --lake-path, destination.path, existing env, or
     ``./data/lake``. Requires the optional `[dbt]` extra.
+
+    When ``catchup=True``, loads ``ops/silver_catchup/manifest.json``, injects
+    ``det_catchup_by_pipeline`` vars, and defaults ``--select`` to silver models
+    listed in the manifest (unless ``select`` is already set).
     """
+    import json
+
     root = project_root.resolve()
     dbt_dir = resolve_dbt_project_dir(root, project_dir)
     if not (dbt_dir / "dbt_project.yml").exists():
         raise FileNotFoundError(f"No dbt_project.yml under {dbt_dir}")
+
+    catchup_extra: list[str] = []
+    catchup_select: list[str] | None = None
+    if catchup:
+        from det.runtime.silver_catchup import (
+            catchup_select_from_manifest,
+            catchup_vars_from_manifest,
+            read_catchup_manifest,
+        )
+
+        payload = read_catchup_manifest(project_root=root)
+        if payload is None or not (payload.get("runs") or []):
+            raise FileNotFoundError(
+                "catch-up requires ops/silver_catchup/manifest.json with runs; "
+                "run det silver-catchup-plan --apply first"
+            )
+        vars_map = catchup_vars_from_manifest(payload)
+        catchup_extra = ["--vars", json.dumps(vars_map, separators=(",", ":"))]
+        catchup_select = catchup_select_from_manifest(payload, project_root=root)
+        if not catchup_select:
+            raise FileNotFoundError(
+                "catch-up manifest has runs but no resolvable silver models"
+            )
 
     config: PipelineConfig | None = None
     if pipeline is not None:
@@ -224,10 +254,14 @@ def run_dbt(
             )
 
     resolved_select = list(select) if select else None
+    if resolved_select is None and catchup_select is not None:
+        resolved_select = catchup_select
     if resolved_select is None and config is not None:
         resolved_select = default_select_for_pipeline(config)
 
     resolved_exclude = list(exclude) if exclude is not None else None
+    merged_extra = list(extra_args or ())
+    merged_extra.extend(catchup_extra)
     env = os.environ.copy()
     env_target = (env.get("DET_DBT_TARGET") or "").strip() or None
     if target is not None:
@@ -327,7 +361,7 @@ def run_dbt(
         exclude=resolved_exclude,
         target=resolved_target,
         full_refresh=full_refresh,
-        extra_args=extra_args,
+        extra_args=merged_extra,
         dbt_executable=dbt_bin or "dbt",
     )
     resolved_lake = env.get("DET_LAKE_PATH")

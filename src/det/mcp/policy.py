@@ -27,6 +27,8 @@ ALLOWED_MCP_TOOLS: frozenset[str] = frozenset(
         "scaffold_ops_dry_run",
         "init_pipeline_dry_run",
         "diff_partitions",
+        "diff_bronze_silver",
+        "silver_catchup_dry_run",
         "sample_raw",
         "validate_sample",
         "sample_bronze",
@@ -69,6 +71,7 @@ WRITING_CLI_COMMANDS: frozenset[str] = frozenset(
         "biglake-register",
         "iceberg-register",
         "lock-release",
+        "silver-catchup-plan",
     }
 )
 
@@ -83,6 +86,7 @@ SCENARIO_REQUIRED_MCP: dict[str, tuple[str, ...]] = {
     "fleet_metrics": ("cube_load", "cube_meta"),
     "gold_metrics": ("cube_load", "cube_meta"),
     "new_source": ("list_sources",),
+    "silver_catchup": ("diff_bronze_silver", "silver_catchup_dry_run"),
 }
 
 _DLT_LANDING_MARKERS: tuple[str, ...] = ("dlt.pipeline", "pipeline.run")
@@ -178,6 +182,8 @@ def is_writing_cli(argv: Sequence[str]) -> bool:
         return "--dry-run" not in cmd
     if name == "prune":
         return "--apply" in cmd
+    if name == "silver-catchup-plan":
+        return "--apply" in cmd
     if name in {"init-pipeline", "scaffold-dbt", "scaffold-ops"}:
         return "--dry-run" not in cmd
     return True
@@ -216,6 +222,7 @@ def score_trace(
     violations.extend(_score_metrics_without_cube(trace))
     violations.extend(_score_dlt_landing(trace))
     violations.extend(_score_full_validate_gating(trace))
+    violations.extend(_score_silver_catchup_full_refresh(trace))
     return violations
 
 
@@ -375,6 +382,29 @@ def _score_dlt_landing(trace: Trace) -> list[Violation]:
                     code="dlt_landing",
                     turn=turn_i,
                     detail="assistant text suggests dlt.pipeline / pipeline.run for landing",
+                )
+            )
+    return found
+
+
+def _score_silver_catchup_full_refresh(trace: Trace) -> list[Violation]:
+    """Catch-up scenario must not invent --full-refresh as the default heal."""
+    if trace.scenario != "silver_catchup":
+        return []
+    found: list[Violation] = []
+    for turn_i, _ev_i, event in _iter_events(trace):
+        if event.type != "assistant_text" or not event.text:
+            continue
+        text = event.text.lower()
+        if "full-refresh" in text or "full_refresh" in text:
+            found.append(
+                Violation(
+                    code="invent_full_refresh",
+                    turn=turn_i,
+                    detail=(
+                        "silver catch-up should use manifest + det dbt --catchup, "
+                        "not --full-refresh as the default heal"
+                    ),
                 )
             )
     return found
