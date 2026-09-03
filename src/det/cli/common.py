@@ -220,6 +220,7 @@ _NEUTRAL_PARAMS: frozenset[str] = frozenset(
         "lock_ttl_sec",
         "dry_run",
         "json",
+        "as_json",  # Typer param name for --json on inspect/ops/catch-up
         "json_out",
         "verbose",
         "validate_limit",
