@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 from datetime import date, datetime
 from decimal import Decimal
@@ -14,6 +13,7 @@ from det.mcp.errors import sanitize_detail
 from det.mcp.inspect import clamp_sample_limit
 from det.optional_deps import require_duckdb
 from det.runtime.lake import relpath as lake_relpath
+from det.runtime.warehouse_paths import analytics_duckdb_path, ops_duckdb_path
 
 Warehouse = Literal["analytics", "ops"]
 
@@ -59,20 +59,6 @@ _QUALIFIED = re.compile(
 
 def _root(root: Path | None = None) -> Path:
     return root.resolve() if root is not None else project_root()
-
-
-def analytics_duckdb_path(root: Path) -> Path:
-    raw = os.environ.get("DET_ANALYTICS_DUCKDB", "").strip()
-    if raw:
-        return Path(raw).expanduser().resolve()
-    return (root / "data" / "analytics.duckdb").resolve()
-
-
-def ops_duckdb_path(root: Path) -> Path:
-    raw = os.environ.get("DET_OPS_DUCKDB", "").strip()
-    if raw:
-        return Path(raw).expanduser().resolve()
-    return (root / "data" / "det_ops.duckdb").resolve()
 
 
 def warehouse_path(warehouse: Warehouse, root: Path) -> Path:

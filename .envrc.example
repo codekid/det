@@ -32,6 +32,10 @@ export DET_LAKE_PATH="$PWD/data/lake"
 export DET_ANALYTICS_DUCKDB="$PWD/data/analytics.duckdb"
 export DET_OPS_DUCKDB="$PWD/data/det_ops.duckdb"
 
+# Discover in-tree demo sources (noaa, example_api, openlibrary). Bare library
+# installs leave this unset so list_sources() stays empty of demos.
+export DET_DISCOVER_EXAMPLES=1
+
 # --- Optional destinations -------------------------------------------------
 # export DET_POSTGRES_DSN="postgresql://det:det@localhost:5432/det"
 

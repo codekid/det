@@ -152,6 +152,20 @@ def test_init_source_refuses_in_tree_name(tmp_path: Path) -> None:
         init_source(name="example_api.events", project_root=tmp_path, skip_pipeline=True)
 
 
+def test_discover_examples_gated(monkeypatch: pytest.MonkeyPatch) -> None:
+    from det.runtime.discovery import discovered_source_ids
+
+    monkeypatch.delenv("DET_DISCOVER_EXAMPLES", raising=False)
+    ids_off = discovered_source_ids()
+    assert "noaa.storm_events" not in ids_off
+    assert "example_api.events" not in ids_off
+
+    monkeypatch.setenv("DET_DISCOVER_EXAMPLES", "1")
+    ids_on = discovered_source_ids()
+    assert "noaa.storm_events" in ids_on
+    assert "example_api.events" in ids_on
+
+
 def test_runner_uses_project_source(tmp_path: Path) -> None:
     clear_registries()
     init_source(

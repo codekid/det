@@ -6,6 +6,10 @@ Public re-exports preserve ``from det.mcp.inspect import X`` and
 
 from __future__ import annotations
 
+from det.runtime.bronze_runs import (
+    _list_bronze_iceberg_runs,
+    _list_bronze_sql_runs,
+)
 from det.runtime.manifest import read_manifest as read_raw_manifest
 
 from ._common import (
@@ -32,8 +36,6 @@ from ._common import (
 )
 from ._diagnose import diagnose_pipeline
 from ._partitions import (
-    _list_bronze_iceberg_runs,
-    _list_bronze_sql_runs,
     _raw_run_dir,
     diff_partitions,
     list_bronze_runs,

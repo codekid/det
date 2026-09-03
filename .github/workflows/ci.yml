@@ -41,6 +41,7 @@ jobs:
       DET_LAKE_PATH: ${{ github.workspace }}/data/lake
       DET_ANALYTICS_DUCKDB: ${{ github.workspace }}/data/analytics.duckdb
       DET_OPS_DUCKDB: ${{ github.workspace }}/data/det_ops.duckdb
+      DET_DISCOVER_EXAMPLES: "1"
       # MinIO soak (tests/integration/test_minio_iceberg_soak.py); main suite stays local.
       AWS_ENDPOINT_URL: http://127.0.0.1:9000
       AWS_ACCESS_KEY_ID: minioadmin

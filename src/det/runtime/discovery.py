@@ -30,6 +30,9 @@ SOURCES_GROUP = "det.sources"
 MAPPERS_GROUP = "det.mappers"
 _PLUGIN_METHODS = ("defaults", "extract_to_raw", "records_from_raw")
 _PROJECT_MODULE_PREFIX = "_det_project_sources"
+# In-tree demo providers — discovered only when DET_DISCOVER_EXAMPLES is truthy.
+_EXAMPLE_PROVIDERS = frozenset({"noaa", "example_api", "openlibrary"})
+_ENV_DISCOVER_EXAMPLES = "DET_DISCOVER_EXAMPLES"
 
 
 class PluginLoadError(DetPluginError):
@@ -38,6 +41,15 @@ class PluginLoadError(DetPluginError):
     def __init__(self, message: str, *, module: str | None = None) -> None:
         super().__init__(message, plugin=module)
         self.module = module
+
+
+def discover_examples_enabled(environ: dict[str, str] | None = None) -> bool:
+    """Return True when in-tree demo sources (NOAA, example_api, …) should be listed."""
+    import os
+
+    env = environ if environ is not None else os.environ
+    raw = (env.get(_ENV_DISCOVER_EXAMPLES) or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _entry_points(group: str) -> importlib.metadata.EntryPoints:
@@ -62,11 +74,23 @@ def project_sources_dir(project_root: Path) -> Path:
     return Path(project_root).resolve() / "sources"
 
 
-def iter_in_tree_source_specs() -> Iterator[tuple[str, str]]:
-    """Yield ``(plugin_id, module_name)`` for ``det.sources.<provider>.<leaf>`` modules."""
+def iter_in_tree_source_specs(
+    *,
+    include_examples: bool | None = None,
+) -> Iterator[tuple[str, str]]:
+    """Yield ``(plugin_id, module_name)`` for ``det.sources.<provider>.<leaf>`` modules.
+
+    Demo providers (``noaa``, ``example_api``, ``openlibrary``) are skipped unless
+    ``include_examples`` is true. When ``include_examples`` is ``None``, use
+    ``DET_DISCOVER_EXAMPLES`` (``1`` / ``true`` / ``yes`` / ``on``).
+    """
+    if include_examples is None:
+        include_examples = discover_examples_enabled()
     prefix = sources_pkg.__name__
     for _finder, provider, ispkg in pkgutil.iter_modules(sources_pkg.__path__):
         if not ispkg or provider.startswith("_"):
+            continue
+        if provider in _EXAMPLE_PROVIDERS and not include_examples:
             continue
         search_paths = [
             str(Path(base) / provider)
@@ -81,9 +105,14 @@ def iter_in_tree_source_specs() -> Iterator[tuple[str, str]]:
             yield f"{provider}.{leaf}", f"{prefix}.{provider}.{leaf}"
 
 
-def in_tree_source_map() -> dict[str, str]:
-    """plugin_id → module_name for in-tree plugins."""
-    return dict(iter_in_tree_source_specs())
+def in_tree_source_map(*, include_examples: bool | None = None) -> dict[str, str]:
+    """plugin_id → module_name for in-tree plugins (respects example discovery gate)."""
+    return dict(iter_in_tree_source_specs(include_examples=include_examples))
+
+
+def in_tree_reserved_source_map() -> dict[str, str]:
+    """All in-tree plugins including demos — for init / name collision checks."""
+    return in_tree_source_map(include_examples=True)
 
 
 def iter_project_source_specs(
@@ -160,21 +189,22 @@ def discovered_source_ids(project_root: Path | None = None) -> list[str]:
     """In-tree + project-local + entry-point ids. Does not import plugin modules."""
     root = resolve_discovery_root(project_root)
     in_tree = in_tree_source_map()
+    reserved = in_tree_reserved_source_map()
     project = project_source_map(root)
     ids = set(in_tree)
     for plugin_id, path in project.items():
-        if plugin_id in in_tree:
+        if plugin_id in reserved:
             raise PluginLoadError(
                 f"project source {plugin_id!r} at {path} collides with in-tree "
-                f"{in_tree[plugin_id]}",
+                f"{reserved[plugin_id]}",
                 module=str(path),
             )
         ids.add(plugin_id)
     for ep in _entry_points(SOURCES_GROUP):
-        if ep.name in in_tree:
+        if ep.name in reserved:
             raise PluginLoadError(
-                f"entry point source {ep.name!r} collides with in-tree {in_tree[ep.name]}",
-                module=in_tree[ep.name],
+                f"entry point source {ep.name!r} collides with in-tree {reserved[ep.name]}",
+                module=reserved[ep.name],
             )
         if ep.name in project:
             raise PluginLoadError(
@@ -281,18 +311,19 @@ def load_source(
     """Import the plugin module (project, in-tree, or entry point) and return factory."""
     root = resolve_discovery_root(project_root)
     in_tree = in_tree_source_map()
+    reserved = in_tree_reserved_source_map()
     project = project_source_map(root)
     ep_by_name = {ep.name: ep for ep in _entry_points(SOURCES_GROUP)}
 
-    if plugin_id in in_tree and plugin_id in project:
+    if plugin_id in reserved and plugin_id in project:
         raise PluginLoadError(
-            f"project source {plugin_id!r} collides with in-tree {in_tree[plugin_id]}",
+            f"project source {plugin_id!r} collides with in-tree {reserved[plugin_id]}",
             module=str(project[plugin_id]),
         )
-    if plugin_id in ep_by_name and plugin_id in in_tree:
+    if plugin_id in ep_by_name and plugin_id in reserved:
         raise PluginLoadError(
-            f"entry point source {plugin_id!r} collides with in-tree {in_tree[plugin_id]}",
-            module=in_tree[plugin_id],
+            f"entry point source {plugin_id!r} collides with in-tree {reserved[plugin_id]}",
+            module=reserved[plugin_id],
         )
     if plugin_id in ep_by_name and plugin_id in project:
         raise PluginLoadError(

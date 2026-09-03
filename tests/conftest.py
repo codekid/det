@@ -12,6 +12,12 @@ from det.plugins import load_plugins
 from det.runtime.secrets import clear_secret_cache
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _discover_example_sources():
+    """Operator monorepo tests need in-tree NOAA / example_api / openlibrary plugins."""
+    os.environ["DET_DISCOVER_EXAMPLES"] = "1"
+
+
 @pytest.fixture(scope="session")
 def project_root() -> Path:
     return Path(__file__).resolve().parents[1]

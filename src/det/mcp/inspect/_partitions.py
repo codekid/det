@@ -5,38 +5,27 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from det.destinations.models import (
-    bronze_dataset_dir,
-    duckdb_connection_path,
-    postgres_dsn,
-    raw_dataset_dir,
-)
-from det.mcp.errors import sanitize_detail
-from det.optional_deps import require_duckdb
+from det.destinations.models import bronze_dataset_dir, raw_dataset_dir
+from det.runtime.bronze_runs import list_bronze_runs
 from det.runtime.config import PipelineConfig
 from det.runtime.ids import sql_names_for_config
 from det.runtime.lake import LakeRef
+from det.runtime.limits import DEFAULT_LIST_LIMIT, clamp_list_limit
 from det.runtime.manifest import is_committed_raw_dir
 from det.runtime.meta import (
     from_partition_value,
-    identity_iso,
-    resolve_interval,
     to_interval_datetime,
 )
-from det.runtime.secrets import SecretError
 
 from ._common import (
-    DEFAULT_LIST_LIMIT,
     _assert_under_raw,
     _load_pipeline,
     _parse_hive_key,
-    _quote_ident,
     _rel,
     _resolve_lake_run_path,
     _root,
     _run_dict,
     _run_key,
-    clamp_list_limit,
     walk_hive_runs,
 )
 
@@ -58,217 +47,6 @@ def _raw_run_dir(run: dict[str, Any], root: Path) -> Path | LakeRef:
     if not path:
         raise FileNotFoundError("resolved run has no path")
     return _resolve_lake_run_path(str(path), root=root)
-
-
-def _list_bronze_sql_runs(
-    config: PipelineConfig,
-    *,
-    root: Path,
-    limit: int,
-    interval_start: str | None = None,
-    interval_end: str | None = None,
-) -> tuple[list[dict[str, Any]], str | None]:
-    """Distinct bronze extract-run keys from DuckDB or Postgres. Returns (runs, note)."""
-    dest = config.destination
-    window: tuple[str, str] | None = None
-    if interval_start is not None:
-        window = resolve_interval(interval_start, interval_end)
-
-    schema, table = sql_names_for_config(config)
-    qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
-
-    if dest.type == "duckdb":
-        db_path = duckdb_connection_path(dest, root)
-        if not db_path.exists():
-            return [], f"DuckDB file not found: {_rel(db_path, root)}"
-        duckdb = require_duckdb()
-        con = duckdb.connect(str(db_path), read_only=True)
-        try:
-            exists = con.execute(
-                """
-                select count(*) from information_schema.tables
-                where table_schema = ? and table_name = ?
-                """,
-                [schema, table],
-            ).fetchone()
-            if not exists or exists[0] == 0:
-                return [], f"table not found: {schema}.{table}"
-            if window is None:
-                rows = con.execute(
-                    f"""
-                    select distinct
-                        __interval_start_datetime,
-                        __interval_end_datetime,
-                        __extract_run_datetime
-                    from {qualified}
-                    order by 1, 2, 3
-                    limit ?
-                    """,
-                    [limit],
-                ).fetchall()
-            else:
-                rows = con.execute(
-                    f"""
-                    select distinct
-                        __interval_start_datetime,
-                        __interval_end_datetime,
-                        __extract_run_datetime
-                    from {qualified}
-                    where __interval_start_datetime >= ?
-                      and __interval_start_datetime < ?
-                    order by 1, 2, 3
-                    limit ?
-                    """,
-                    [window[0], window[1], limit],
-                ).fetchall()
-        finally:
-            con.close()
-        return [
-            _run_dict(
-                interval_start=identity_iso(r[0]),
-                interval_end=identity_iso(r[1]),
-                extract_run_datetime=identity_iso(r[2]),
-            )
-            for r in rows
-        ], None
-
-    if dest.type == "postgres":
-        try:
-            import psycopg
-        except ImportError:
-            return [], (
-                'Postgres inspect requires the optional extra: pip install -e ".[postgres]"'
-            )
-        try:
-            dsn = postgres_dsn(dest, backend="env")
-        except (SecretError, ValueError) as exc:
-            return [], sanitize_detail(exc)
-        _ro = "-c default_transaction_read_only=on"
-        with psycopg.connect(dsn, options=_ro) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    select count(*) from information_schema.tables
-                    where table_schema = %s and table_name = %s
-                    """,
-                    (schema, table),
-                )
-                exists = cur.fetchone()
-                if not exists or exists[0] == 0:
-                    return [], f"table not found: {schema}.{table}"
-                if window is None:
-                    query = f"""
-                        select distinct
-                            __interval_start_datetime,
-                            __interval_end_datetime,
-                            __extract_run_datetime
-                        from {qualified}
-                        order by 1, 2, 3
-                        limit %s
-                        """
-                    cur.execute(query, (limit,))  # pyright: ignore[reportArgumentType]
-                else:
-                    query = f"""
-                        select distinct
-                            __interval_start_datetime,
-                            __interval_end_datetime,
-                            __extract_run_datetime
-                        from {qualified}
-                        where __interval_start_datetime >= %s
-                          and __interval_start_datetime < %s
-                        order by 1, 2, 3
-                        limit %s
-                        """
-                    cur.execute(query, (window[0], window[1], limit))  # pyright: ignore[reportArgumentType]
-                rows = cur.fetchall()
-        return [
-            _run_dict(
-                interval_start=identity_iso(r[0]),
-                interval_end=identity_iso(r[1]),
-                extract_run_datetime=identity_iso(r[2]),
-            )
-            for r in rows
-        ], None
-
-    return [], f"unsupported destination.type={dest.type!r}"
-
-
-def _list_bronze_iceberg_runs(
-    config: PipelineConfig,
-    *,
-    root: Path,
-    limit: int,
-    interval_start: str | None = None,
-    interval_end: str | None = None,
-) -> tuple[list[dict[str, Any]], str | None]:
-    from det.destinations.models import lake_root
-    from det.ingestion.iceberg_writer import list_iceberg_extract_runs, load_iceberg_table
-
-    schema, table = sql_names_for_config(config)
-    window: tuple[str, str] | None = None
-    if interval_start is not None:
-        window = resolve_interval(interval_start, interval_end)
-    try:
-        ice = load_iceberg_table(
-            lake=lake_root(config.destination, root),
-            namespace=schema,
-            table=table,
-            table_location=bronze_dataset_dir(config, root),
-        )
-    except ImportError as exc:
-        return [], str(exc)
-    if ice is None:
-        return [], f"Iceberg table not found: {schema}.{table}"
-    rows = list_iceberg_extract_runs(
-        ice,
-        window_start=window[0] if window else None,
-        window_end=window[1] if window else None,
-        limit=limit,
-    )
-    return [
-        _run_dict(
-            interval_start=start,
-            interval_end=end,
-            extract_run_datetime=run,
-        )
-        for start, end, run in rows
-    ], None
-
-
-def list_bronze_runs(
-    config: PipelineConfig,
-    *,
-    root: Path,
-    limit: int,
-    interval_start: str | None = None,
-    interval_end: str | None = None,
-) -> tuple[list[dict[str, Any]], str | None]:
-    dest = config.destination
-    if dest.type == "filesystem":
-        runs = walk_hive_runs(
-            bronze_dataset_dir(config, root),
-            root=root,
-            limit=limit,
-            interval_start=interval_start,
-            interval_end=interval_end,
-            normalize_iso=True,
-        )
-        return runs, None
-    if dest.type == "iceberg":
-        return _list_bronze_iceberg_runs(
-            config,
-            root=root,
-            limit=limit,
-            interval_start=interval_start,
-            interval_end=interval_end,
-        )
-    return _list_bronze_sql_runs(
-        config,
-        root=root,
-        limit=limit,
-        interval_start=interval_start,
-        interval_end=interval_end,
-    )
 
 
 def diff_partitions(

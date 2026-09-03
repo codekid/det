@@ -6,6 +6,19 @@ from dataclasses import dataclass
 from typing import Any
 
 from det.runtime.config import FlattenConfig, _require_dbt_col_id
+from det.runtime.schema_shapes import is_array_prop, is_object_prop, is_scalar_prop
+
+# Re-export classifiers so existing ``from det.scaffold.flatten import is_*`` keeps working.
+__all__ = [
+    "FlattenLeaf",
+    "is_array_prop",
+    "is_object_prop",
+    "is_scalar_prop",
+    "iter_relation_paths",
+    "path_parts_to_column",
+    "plan_flatten",
+    "relation_item_schema",
+]
 
 
 @dataclass(frozen=True)
@@ -21,40 +34,6 @@ class FlattenLeaf:
 
 def path_parts_to_column(parts: tuple[str, ...]) -> str:
     return "__".join(parts)
-
-
-def _allowed_types(prop: dict[str, Any]) -> set[str]:
-    raw = prop.get("type")
-    if isinstance(raw, str):
-        return {raw}
-    if isinstance(raw, list):
-        return {t for t in raw if isinstance(t, str)}
-    return set()
-
-
-def is_object_prop(prop: dict[str, Any]) -> bool:
-    allowed = _allowed_types(prop)
-    if "object" in allowed:
-        return True
-    if "properties" in prop and "array" not in allowed:
-        return True
-    return False
-
-
-def is_array_prop(prop: dict[str, Any]) -> bool:
-    allowed = _allowed_types(prop)
-    if "array" in allowed:
-        return True
-    return "items" in prop and "object" not in allowed
-
-
-def is_scalar_prop(prop: dict[str, Any]) -> bool:
-    if is_array_prop(prop) or is_object_prop(prop):
-        return False
-    allowed = _allowed_types(prop)
-    if not allowed:
-        return "properties" not in prop and "items" not in prop
-    return bool(allowed & {"string", "integer", "number", "boolean", "null"})
 
 
 def _object_properties(prop: dict[str, Any]) -> dict[str, Any]:

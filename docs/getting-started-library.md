@@ -66,10 +66,14 @@ det init-source -n myco.feed --project-root .
 
 Discovery order (ids must not collide):
 
-1. In-tree examples shipped with DET (`det.sources.*`) — needs `det[examples]` to
-   *import* HTTP-heavy demos; discovery of ids still sees them when installed
+1. In-tree demo sources (`det.sources.noaa|example_api|openlibrary`) — **off by
+   default**. Set `DET_DISCOVER_EXAMPLES=1` (this monorepo’s `.envrc` / CI does)
+   to list them. HTTP-heavy demos still need `det[examples]` to *import*.
 2. `{project_root}/sources/<provider>/<source>.py` (`cls.name` == `provider.source`)
 3. Entry points `det.sources` / `det.mappers` for installable shared plugins
+
+Bare `det-elt` installs do not advertise NOAA / example plugins unless you opt in.
+Project-local `sources/` and entry points always work.
 
 Implement `defaults`, `extract_to_raw`, `records_from_raw` (see
 `det.sources.base.SourcePlugin`). Optional migrate mapper: `@mapper("…")` in the

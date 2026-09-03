@@ -6,6 +6,18 @@ and may move in any release unless a submodule is listed below as stable.
 Embedder quickstart: [getting-started-library.md](getting-started-library.md).
 Lake paths and `__*` meta: [lake-layout.md](lake-layout.md).
 
+## Product surfaces (one package)
+
+| Surface | What | Import rule |
+| --- | --- | --- |
+| **Kernel** | Lake, runner, schema validate, writers, `schema_shapes`, `bronze_runs` | Must not import `det.mcp` or `det.scaffold.dbt*` |
+| **Analytics adapter** | `det.scaffold` (codegen), `dbt_runner`, silver catch-up | Reads bronze contract; used by CLI/MCP |
+| **Operator app** | This repo’s `configs/`, `dbt/`, `cube/`, Airflow | Not SemVer |
+| **Agent OS** | `det.mcp`, skills, trajectory evals | Client of kernel + adapter |
+
+In-tree demos (`noaa`, `example_api`, `openlibrary`) list only when
+`DET_DISCOVER_EXAMPLES=1`.
+
 ---
 
 ## Versioning axes
@@ -237,12 +249,12 @@ pytest; not imported by the core helpers).
 | --- | --- |
 | CLI (`det.cli`) | Operator front-door |
 | MCP (`det.mcp.*`) | Agent inspect / dry-run |
-| Scaffold / `dbt_runner` | Product integrations; relation `grain` / path-qualified spine is operator dbt contract (see det-dbt skill), not `lake_layout` |
+| Scaffold / `dbt_runner` / catch-up | Analytics adapter (not SemVer); CLI/MCP call `check_project_with_dbt` for scaffold drift |
 | Approvals | CLI / agent only — library callers are trusted (`PipelineRunner` / migrator / pruner apply have no approval hook). Audit / intent-binding, not authorization |
 | `record_attempt` / receipt writes | Runner-internal |
 | `runs-materialize` | Ops product path |
 | `read_lock` / `force_release_lock` | Prefer `inspect_lease` / `release_lock` |
-| In-tree example sources | Content demos, not SemVer surface |
+| In-tree example sources | Content demos behind `DET_DISCOVER_EXAMPLES`; not SemVer surface |
 | `get_source` / `get_mapper` | Advanced; prefer discovery lists + runners |
 
 ---
