@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from det.runtime.check import check_pipeline_config, check_project, has_errors, has_warnings
@@ -435,16 +436,14 @@ def test_full_validate_gated_skipped_when_env_set(tmp_path: Path, monkeypatch) -
     assert not any(f.code == "full_validate_gated" for f in findings)
 
 
-def test_ingestion_library_dlt_deprecated_warning(tmp_path: Path):
+def test_ingestion_library_dlt_rejected(tmp_path: Path):
+    from pydantic import ValidationError
+
+    from det.runtime.config import load_pipeline_config
+
     path = _write_pipeline(tmp_path)
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     data["ingestion"] = {"library": "dlt"}
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
-    findings = check_pipeline_config(path, project_root=tmp_path)
-    assert not has_errors(findings)
-    deprecated = [f for f in findings if f.code == "ingestion_library_dlt_deprecated"]
-    assert len(deprecated) == 1
-    assert deprecated[0].detail == (
-        "ingestion.library: dlt is deprecated; use ingestion.library: det instead "
-        "(the dlt alias will be removed in a future release)"
-    )
+    with pytest.raises(ValidationError, match=r"ingestion\.library 'dlt' was removed"):
+        load_pipeline_config(path)

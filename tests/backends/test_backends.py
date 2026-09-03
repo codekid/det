@@ -119,7 +119,6 @@ def test_no_backend_lets_dlt_manage_state_or_unnest(tmp_path: Path):
     for library, backend in (
         ("thin", ThinBackend()),
         ("det", DetBackend()),
-        ("dlt", DetBackend()),  # deprecated alias
     ):
         config = _config(tmp_path, library)
         partition = tmp_path / library / "__interval_start_datetime=20260806T000000Z"

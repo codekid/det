@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from det.errors import DetNotFoundError, DetPluginError
 from det.ingestion.base import IngestionBackend
-from det.logging import get_logger
 from det.runtime.discovery import (
     PluginLoadError,
     discovered_source_ids,
@@ -23,10 +21,6 @@ _SOURCE_REGISTRY: dict[tuple[str, str], Callable[[], SourcePlugin]] = {}
 _INGESTION_REGISTRY: dict[str, Callable[[], IngestionBackend]] = {}
 _MAPPER_REGISTRY: dict[tuple[str, str], Callable[[dict[str, Any]], dict[str, Any]]] = {}
 _MAPPERS_SCANNED: set[str] = set()
-_DLT_INGESTION_WARNED = False
-_DLT_INGESTION_WARN_LOCK = threading.Lock()
-
-logger = get_logger(__name__)
 
 
 def _root_key(project_root: Path | None) -> str:
@@ -131,15 +125,6 @@ def get_source(name: str, *, project_root: Path | None = None) -> SourcePlugin:
 
 
 def get_ingestion(name: str) -> IngestionBackend:
-    global _DLT_INGESTION_WARNED
-    if name == "dlt":
-        with _DLT_INGESTION_WARN_LOCK:
-            if not _DLT_INGESTION_WARNED:
-                logger.warning(
-                    "ingestion.library dlt is deprecated; use det instead "
-                    "(the dlt alias will be removed in a future release)"
-                )
-                _DLT_INGESTION_WARNED = True
     try:
         return _INGESTION_REGISTRY[name]()
     except KeyError as exc:

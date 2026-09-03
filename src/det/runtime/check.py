@@ -167,19 +167,6 @@ def check_pipeline_config(
             config_rel=_rel(config_path, root),
         )
     )
-    if config.ingestion.library == "dlt":
-        findings.append(
-            Finding(
-                severity="warning",
-                code="ingestion_library_dlt_deprecated",
-                pipeline=pipeline_id,
-                path=_rel(config_path, root),
-                detail=(
-                    "ingestion.library: dlt is deprecated; use ingestion.library: det instead "
-                    "(the dlt alias will be removed in a future release)"
-                ),
-            )
-        )
     findings.extend(_dlt_lake_findings(config, project_root=root, pipeline_id=pipeline_id))
 
     dbt_root = root / "dbt"
