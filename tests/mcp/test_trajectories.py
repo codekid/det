@@ -53,6 +53,10 @@ def test_trajectory_fixtures_cover_plan_ids():
         "silver_catchup_diff_dry_run_stop",
         "silver_catchup_chain_apply",
         "silver_catchup_full_refresh_invent",
+        "silver_catchup_full_refresh_negated_ok",
+        "silver_catchup_diff_only_then_apply",
+        "silver_catchup_dry_run_only_then_apply",
+        "silver_catchup_apply_after_yes",
     ):
         assert expected in names
 

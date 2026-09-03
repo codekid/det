@@ -1,0 +1,30 @@
+{
+  "id": "silver_catchup_diff_only_then_apply",
+  "scenario": "silver_catchup",
+  "expect": ["missing_inspect"],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "diff_bronze_silver",
+          "arguments": {"pipeline": "noaa.storm_events"}
+        }
+      ]
+    },
+    {
+      "events": [
+        {
+          "type": "cli",
+          "argv": [
+            "det",
+            "silver-catchup-plan",
+            "-p",
+            "noaa.storm_events",
+            "--apply"
+          ]
+        }
+      ]
+    }
+  ]
+}

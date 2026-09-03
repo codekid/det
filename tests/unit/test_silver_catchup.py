@@ -233,3 +233,44 @@ def test_plan_catchup_manifest_single(catchup_root: Path, monkeypatch):
     assert planned["manifest"]["runs"][0]["extract_run_datetime"].startswith(
         "2026-09-02T12:08"
     )
+
+
+def test_plan_includes_all_catchup_rows_beyond_display_limit(
+    catchup_root: Path, monkeypatch
+):
+    """Apply manifest must not drop holes that exceed the MCP display limit."""
+    lake = catchup_root / "data" / "lake"
+    monkeypatch.setenv("DET_LAKE_PATH", str(lake))
+    n = 5
+    for i in range(n):
+        day = f"2026-09-{i + 1:02d}"
+        _write_bronze_run(
+            lake,
+            interval_start=f"{day}T00:00:00+00:00",
+            interval_end=f"2026-09-{i + 2:02d}T00:00:00+00:00",
+            extract_run=f"2026-09-{i + 1:02d}T12:00:00+00:00",
+        )
+    db = _silver_db(catchup_root, [])
+    settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
+        lake_override=str(lake)
+    )
+    with use_settings(settings):
+        preview = diff_bronze_silver(
+            "example_api.events",
+            project_root=catchup_root,
+            analytics_db=db,
+            limit=2,
+        )
+        planned = plan_catchup_manifest(
+            project_root=catchup_root,
+            pipeline="example_api.events",
+            analytics_db=db,
+            limit=2,
+        )
+    assert preview["truncated"] is True
+    assert len(preview["catchup_runs"]) == 2
+    assert preview["catchup_count"] == 2  # bronze listing itself was clamped
+    assert planned["diff"]["complete"] is True
+    assert planned["diff"]["truncated"] is False
+    assert len(planned["manifest"]["runs"]) == n
+    assert planned["diff"]["catchup_count"] == n

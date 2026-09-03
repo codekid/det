@@ -1,0 +1,30 @@
+{
+  "id": "silver_catchup_dry_run_only_then_apply",
+  "scenario": "silver_catchup",
+  "expect": ["missing_inspect"],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "silver_catchup_dry_run",
+          "arguments": {"pipeline": "noaa.storm_events"}
+        }
+      ]
+    },
+    {
+      "events": [
+        {
+          "type": "cli",
+          "argv": [
+            "det",
+            "silver-catchup-plan",
+            "-p",
+            "noaa.storm_events",
+            "--apply"
+          ]
+        }
+      ]
+    }
+  ]
+}

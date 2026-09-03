@@ -383,3 +383,57 @@ def test_run_dbt_stores_streamed_output(tmp_path: Path):
 
     assert result.returncode == 1
     assert result.output == "Compilation Error\n"
+
+
+def test_run_dbt_catchup_reads_manifest_from_resolved_lake(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """--lake-path must drive catch-up manifest reads, not the default lake."""
+    monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    monkeypatch.delenv("DET_LAKE_PATH_RAW", raising=False)
+    monkeypatch.delenv("DET_LAKE_PATH_BRONZE", raising=False)
+    monkeypatch.delenv("DET_LAKE_PATH_OPS", raising=False)
+    dbt_dir = tmp_path / "dbt"
+    dbt_dir.mkdir()
+    (dbt_dir / "dbt_project.yml").write_text("name: x\n", encoding="utf-8")
+    other = tmp_path / "other_lake"
+    (other / "ops" / "silver_catchup").mkdir(parents=True)
+    manifest = {
+        "version": 1,
+        "runs": [
+            {
+                "pipeline": "noaa.storm_events",
+                "extract_run_datetime": "2026-08-06T12:00:00+00:00",
+            }
+        ],
+    }
+    (other / "ops" / "silver_catchup" / "manifest.json").write_text(
+        __import__("json").dumps(manifest), encoding="utf-8"
+    )
+
+    seen: dict[str, object] = {}
+
+    def _fake_read(*, project_root, settings=None, lake_path=None):
+        seen["lake_path"] = lake_path
+        return manifest
+
+    with (
+        patch(
+            "det.runtime.silver_catchup.read_catchup_manifest",
+            side_effect=_fake_read,
+        ),
+        patch(
+            "det.runtime.silver_catchup.catchup_select_from_manifest",
+            return_value=["silver_noaa__storm_events"],
+        ),
+    ):
+        result = run_dbt(
+            project_root=tmp_path,
+            catchup=True,
+            lake_path=other,
+            dry_run=True,
+        )
+
+    assert seen["lake_path"] == str(other.resolve())
+    assert "--vars" in result.command
+    assert "silver_noaa__storm_events" in result.select

@@ -210,7 +210,8 @@ def run_dbt(
     Sets DET_LAKE_PATH from --lake-path, destination.path, existing env, or
     ``./data/lake``. Requires the optional `[dbt]` extra.
 
-    When ``catchup=True``, loads ``ops/silver_catchup/manifest.json``, injects
+    When ``catchup=True``, loads ``ops/silver_catchup/manifest.json`` from the
+    same lake (ops root when split) used for this run, injects
     ``det_catchup_by_pipeline`` vars, and defaults ``--select`` to silver models
     listed in the manifest (unless ``select`` is already set).
     """
@@ -221,29 +222,6 @@ def run_dbt(
     if not (dbt_dir / "dbt_project.yml").exists():
         raise FileNotFoundError(f"No dbt_project.yml under {dbt_dir}")
 
-    catchup_extra: list[str] = []
-    catchup_select: list[str] | None = None
-    if catchup:
-        from det.runtime.silver_catchup import (
-            catchup_select_from_manifest,
-            catchup_vars_from_manifest,
-            read_catchup_manifest,
-        )
-
-        payload = read_catchup_manifest(project_root=root)
-        if payload is None or not (payload.get("runs") or []):
-            raise FileNotFoundError(
-                "catch-up requires ops/silver_catchup/manifest.json with runs; "
-                "run det silver-catchup-plan --apply first"
-            )
-        vars_map = catchup_vars_from_manifest(payload)
-        catchup_extra = ["--vars", json.dumps(vars_map, separators=(",", ":"))]
-        catchup_select = catchup_select_from_manifest(payload, project_root=root)
-        if not catchup_select:
-            raise FileNotFoundError(
-                "catch-up manifest has runs but no resolvable silver models"
-            )
-
     config: PipelineConfig | None = None
     if pipeline is not None:
         if isinstance(pipeline, PipelineConfig):
@@ -253,22 +231,7 @@ def run_dbt(
                 resolve_path(root, str(pipeline)), overrides=pipeline_overrides
             )
 
-    resolved_select = list(select) if select else None
-    if resolved_select is None and catchup_select is not None:
-        resolved_select = catchup_select
-    if resolved_select is None and config is not None:
-        resolved_select = default_select_for_pipeline(config)
-
-    resolved_exclude = list(exclude) if exclude is not None else None
-    merged_extra = list(extra_args or ())
-    merged_extra.extend(catchup_extra)
     env = os.environ.copy()
-    env_target = (env.get("DET_DBT_TARGET") or "").strip() or None
-    if target is not None:
-        resolved_target = target
-    else:
-        resolved_target = ops_dbt_target(resolved_select, env_target) or env_target
-
     profiles = (
         resolve_dbt_project_dir(root, profiles_dir)
         if profiles_dir is not None
@@ -305,6 +268,7 @@ def run_dbt(
         env["DET_LAKE_PATH_OPS"] = _uri(ops_s)  # type: ignore[arg-type]
         lake_uri = env["DET_LAKE_PATH_BRONZE"]
         env["DET_LAKE_PATH"] = lake_uri
+        catchup_lake = env["DET_LAKE_PATH_OPS"]
     else:
         override = spec_cli
         settings_lake = active.lake_path if active is not None else None
@@ -319,6 +283,46 @@ def run_dbt(
         )
         lake_uri = _uri(spec)
         env["DET_LAKE_PATH"] = lake_uri
+        catchup_lake = lake_uri
+
+    catchup_extra: list[str] = []
+    catchup_select: list[str] | None = None
+    if catchup:
+        from det.runtime.silver_catchup import (
+            catchup_select_from_manifest,
+            catchup_vars_from_manifest,
+            read_catchup_manifest,
+        )
+
+        payload = read_catchup_manifest(project_root=root, lake_path=catchup_lake)
+        if payload is None or not (payload.get("runs") or []):
+            raise FileNotFoundError(
+                "catch-up requires ops/silver_catchup/manifest.json with runs; "
+                "run det silver-catchup-plan --apply first"
+            )
+        vars_map = catchup_vars_from_manifest(payload)
+        catchup_extra = ["--vars", json.dumps(vars_map, separators=(",", ":"))]
+        catchup_select = catchup_select_from_manifest(payload, project_root=root)
+        if not catchup_select:
+            raise FileNotFoundError(
+                "catch-up manifest has runs but no resolvable silver models"
+            )
+
+    resolved_select = list(select) if select else None
+    if resolved_select is None and catchup_select is not None:
+        resolved_select = catchup_select
+    if resolved_select is None and config is not None:
+        resolved_select = default_select_for_pipeline(config)
+
+    resolved_exclude = list(exclude) if exclude is not None else None
+    merged_extra = list(extra_args or ())
+    merged_extra.extend(catchup_extra)
+    env_target = (env.get("DET_DBT_TARGET") or "").strip() or None
+    if target is not None:
+        resolved_target = target
+    else:
+        resolved_target = ops_dbt_target(resolved_select, env_target) or env_target
+
     # MinIO/S3 lakes use DuckDB iceberg_scan + httpfs. GCS lakes keep bronze on
     # gs:// Iceberg; prod analytics is BigQuery (DET_DBT_TARGET=bigquery) — never
     # auto-select duckdb_s3 for gs://.

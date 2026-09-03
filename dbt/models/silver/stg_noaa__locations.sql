@@ -17,7 +17,7 @@ select
 {{ det_as_integer('location_index') }} as location_index,
 {{ det_as_integer('lon2') }} as lon2,
 {{ det_as_double('longitude') }} as longitude,
-{{ det_as_double('range') }} as range,
+{{ det_as_double('range') }} as {{ adapter.quote('range') }},
 {{ det_as_integer('yearmonth') }} as yearmonth,
 __row_hash,
 __bronze_loaded_at,

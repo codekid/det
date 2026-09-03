@@ -61,8 +61,12 @@ When bronze has data but incremental silver appears behind (watermark hole):
    silver stays deduped).
 2. MCP `silver_catchup_dry_run` → show manifest + `approval_plan` → **stop**.
 3. After confirm: `det approve` then later
-   `det silver-catchup-plan --apply --approval …`.
-4. Later turn: `det dbt --catchup --approval …` (one build; not `--full-refresh`).
+   `det silver-catchup-plan --apply --approval <manifest_id>` (this approval is
+   only for the manifest write).
+4. MCP `dbt_dry_run` with `catchup=True` → show its separate `approval_plan` →
+   **stop**. After confirm: `det approve` then later
+   `det dbt --catchup --approval <dbt_id>` (distinct id; one build; not
+   `--full-refresh`).
 5. Re-diff to verify `catchup_count=0`.
 
 See [docs/silver-catchup.md](../../docs/silver-catchup.md).

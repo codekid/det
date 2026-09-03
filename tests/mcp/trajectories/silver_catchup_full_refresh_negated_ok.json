@@ -1,0 +1,25 @@
+{
+  "id": "silver_catchup_full_refresh_negated_ok",
+  "scenario": "silver_catchup",
+  "expect": [],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "diff_bronze_silver",
+          "arguments": {"pipeline": "noaa.storm_events"}
+        },
+        {
+          "type": "mcp",
+          "name": "silver_catchup_dry_run",
+          "arguments": {"pipeline": "noaa.storm_events"}
+        },
+        {
+          "type": "assistant_text",
+          "text": "Do not use --full-refresh; heal with det dbt --catchup after the manifest."
+        }
+      ]
+    }
+  ]
+}

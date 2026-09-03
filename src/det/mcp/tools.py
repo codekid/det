@@ -62,6 +62,12 @@ def _canonical_id(pipeline: str, root: Path) -> str:
     return resolve_pipeline_ref(pipeline, project_root=root).canonical_id
 
 
+def _require_catchup_scope(*, pipeline: str | None, all_pipelines: bool) -> None:
+    """Require exactly one of ``pipeline`` or ``all_pipelines=True`` (CLI parity)."""
+    if all_pipelines == (pipeline is not None):
+        raise ValueError("exactly one of pipeline / all_pipelines=True is required")
+
+
 def _load_pipeline(pipeline: str, root: Path):
     from det.runtime.config import load_pipeline_config
     from det.runtime.pipelines import resolve_pipeline_ref
@@ -594,6 +600,7 @@ def diff_bronze_silver(
     from det.runtime.silver_catchup import diff_bronze_silver as _diff
     from det.runtime.silver_catchup import diff_bronze_silver_fleet
 
+    _require_catchup_scope(pipeline=pipeline, all_pipelines=all_pipelines)
     base = _root(root)
     if all_pipelines:
         return diff_bronze_silver_fleet(
@@ -602,10 +609,9 @@ def diff_bronze_silver(
             interval_end=interval_end,
             limit=limit,
         )
-    if pipeline is None:
-        raise ValueError("pipeline is required unless all_pipelines=True")
+    # Exactly-one scope is enforced above; pipeline is set when not fleet-wide.
     return _diff(
-        pipeline,
+        pipeline,  # type: ignore[arg-type]
         project_root=base,
         interval_start=interval_start,
         interval_end=interval_end,
@@ -627,9 +633,8 @@ def silver_catchup_dry_run(
     from det.runtime.approval import silver_catchup_plan_write_argv
     from det.runtime.silver_catchup import plan_catchup_manifest
 
+    _require_catchup_scope(pipeline=pipeline, all_pipelines=all_pipelines)
     base = _root(root)
-    if not all_pipelines and pipeline is None:
-        raise ValueError("pipeline is required unless all_pipelines=True")
     pipe_id = _canonical_id(pipeline, base) if pipeline is not None else None
     planned = plan_catchup_manifest(
         project_root=base,

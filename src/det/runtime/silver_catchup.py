@@ -31,6 +31,8 @@ logger = get_logger(__name__)
 CATCHUP_DIR = ("ops", "silver_catchup")
 CATCHUP_MANIFEST_NAME = "manifest.json"
 MANIFEST_VERSION = 1
+# Safety cap when building an apply manifest (display diffs stay at DEFAULT_LIST_LIMIT).
+_APPLY_BRONZE_CAP = 100_000
 
 
 def silver_relation(config: PipelineConfig) -> tuple[str, str]:
@@ -148,8 +150,13 @@ def diff_bronze_silver(
     limit: int = DEFAULT_LIST_LIMIT,
     analytics_db: Path | None = None,
     detected_at: str | None = None,
+    complete: bool = False,
 ) -> dict[str, Any]:
-    """Compare latest bronze extract-run per interval to silver coverage."""
+    """Compare latest bronze extract-run per interval to silver coverage.
+
+    When ``complete=True`` (manifest plan/apply), list bronze without the MCP
+    display clamp and return every catch-up row. Raises if the safety cap is hit.
+    """
     root = project_root.resolve()
     if isinstance(pipeline, PipelineConfig):
         config = pipeline
@@ -157,7 +164,10 @@ def diff_bronze_silver(
         resolved = resolve_pipeline_ref(pipeline, project_root=root)
         config = load_pipeline_config(resolved.path)
 
-    capped = clamp_list_limit(limit)
+    if complete:
+        capped = _APPLY_BRONZE_CAP
+    else:
+        capped = clamp_list_limit(limit)
     bronze_runs, bronze_note = list_bronze_runs(
         config,
         root=root,
@@ -165,6 +175,11 @@ def diff_bronze_silver(
         interval_start=interval_start,
         interval_end=interval_end,
     )
+    if complete and len(bronze_runs) >= _APPLY_BRONZE_CAP:
+        raise ValueError(
+            "catch-up apply found too many bronze runs "
+            f"(>={_APPLY_BRONZE_CAP}); narrow -s/-e or raise the apply cap"
+        )
     silver_runs, silver_note = list_silver_extract_runs(
         config, project_root=root, analytics_db=analytics_db
     )
@@ -216,24 +231,35 @@ def diff_bronze_silver(
             )
 
     schema, table = silver_relation(config)
+    if complete:
+        catchup_out = catchup
+        ok_out = ok_intervals
+        stale_out = stale_siblings
+        truncated = False
+    else:
+        catchup_out = catchup[:capped]
+        ok_out = ok_intervals[:capped]
+        stale_out = stale_siblings[:capped]
+        truncated = (
+            len(catchup) > capped
+            or len(ok_intervals) > capped
+            or len(stale_siblings) > capped
+            or len(bronze_runs) >= capped
+        )
     out: dict[str, Any] = {
         "pipeline": config.name,
         "materialized": config.dbt.silver.materialized,
         "silver_schema": schema,
         "silver_table": table,
-        "limit": capped,
-        "catchup_runs": catchup[:capped],
-        "ok_intervals": ok_intervals[:capped],
-        "stale_siblings_ignored": stale_siblings[:capped],
+        "limit": capped if not complete else len(bronze_runs),
+        "complete": complete,
+        "catchup_runs": catchup_out,
+        "ok_intervals": ok_out,
+        "stale_siblings_ignored": stale_out,
         "catchup_count": len(catchup),
         "ok_count": len(ok_intervals),
         "stale_siblings_count": len(stale_siblings),
-        "truncated": (
-            len(catchup) > capped
-            or len(ok_intervals) > capped
-            or len(stale_siblings) > capped
-            or len(bronze_runs) >= capped
-        ),
+        "truncated": truncated,
     }
     notes = [n for n in (bronze_note, silver_note) if n]
     if notes:
@@ -250,6 +276,7 @@ def diff_bronze_silver_fleet(
     limit: int = DEFAULT_LIST_LIMIT,
     analytics_db: Path | None = None,
     detected_at: str | None = None,
+    complete: bool = False,
 ) -> dict[str, Any]:
     """Run :func:`diff_bronze_silver` for many pipelines; aggregate catch-up rows."""
     root = project_root.resolve()
@@ -266,6 +293,7 @@ def diff_bronze_silver_fleet(
             limit=limit,
             analytics_db=analytics_db,
             detected_at=stamp,
+            complete=complete,
         )
         per_pipeline.append(one)
         catchup_all.extend(one.get("catchup_runs") or [])
@@ -276,6 +304,7 @@ def diff_bronze_silver_fleet(
         "catchup_count": len(catchup_all),
         "results": per_pipeline,
         "detected_at": stamp,
+        "complete": complete,
     }
 
 
@@ -389,7 +418,12 @@ def plan_catchup_manifest(
     limit: int = DEFAULT_LIST_LIMIT,
     analytics_db: Path | None = None,
 ) -> dict[str, Any]:
-    """Build a replaceable catch-up manifest payload (does not write)."""
+    """Build a replaceable catch-up manifest payload (does not write).
+
+    Always diffs with ``complete=True`` so apply never persists a truncated
+    catch-up set. ``limit`` remains for CLI/approval argv parity only.
+    """
+    _ = limit
     root = project_root.resolve()
     rel = "/".join((*CATCHUP_DIR, CATCHUP_MANIFEST_NAME))
     if all_pipelines:
@@ -397,9 +431,13 @@ def plan_catchup_manifest(
             project_root=root,
             interval_start=interval_start,
             interval_end=interval_end,
-            limit=limit,
             analytics_db=analytics_db,
+            complete=True,
         )
+        if any(r.get("truncated") for r in (fleet.get("results") or [])):
+            raise ValueError(
+                "catch-up plan is truncated; refuse to build an incomplete apply manifest"
+            )
         payload = manifest_payload_from_catchup(fleet.get("catchup_runs") or [])
         return {
             "dry_run": True,
@@ -414,9 +452,13 @@ def plan_catchup_manifest(
         project_root=root,
         interval_start=interval_start,
         interval_end=interval_end,
-        limit=limit,
         analytics_db=analytics_db,
+        complete=True,
     )
+    if one.get("truncated"):
+        raise ValueError(
+            "catch-up plan is truncated; refuse to build an incomplete apply manifest"
+        )
     payload = manifest_payload_from_catchup(one.get("catchup_runs") or [])
     return {
         "dry_run": True,

@@ -11,6 +11,7 @@ from det.mcp.tools import (
     biglake_register_dry_run,
     check,
     describe_pipeline,
+    diff_bronze_silver,
     init_pipeline_dry_run,
     list_approvals,
     list_bronze_partitions,
@@ -21,6 +22,7 @@ from det.mcp.tools import (
     prune_dry_run,
     read_manifest,
     scaffold_dbt_dry_run,
+    silver_catchup_dry_run,
     summarize_runs,
 )
 from det.runtime.biglake_register import BigLakeRegisterPlan, BigLakeTablePlan
@@ -336,6 +338,17 @@ def test_list_approvals_can_surface_a_claimed_record(tmp_path: Path):
 def test_list_approvals_rejects_unknown_status(tmp_path: Path):
     with pytest.raises(ValueError, match="status must be one of"):
         list_approvals("bogus", root=tmp_path)
+
+
+def test_catchup_tools_reject_both_pipeline_and_all_pipelines(tmp_path: Path):
+    with pytest.raises(ValueError, match="exactly one of pipeline / all_pipelines"):
+        diff_bronze_silver("example_api.events", all_pipelines=True, root=tmp_path)
+    with pytest.raises(ValueError, match="exactly one of pipeline / all_pipelines"):
+        silver_catchup_dry_run("example_api.events", all_pipelines=True, root=tmp_path)
+    with pytest.raises(ValueError, match="exactly one of pipeline / all_pipelines"):
+        diff_bronze_silver(root=tmp_path)
+    with pytest.raises(ValueError, match="exactly one of pipeline / all_pipelines"):
+        silver_catchup_dry_run(root=tmp_path)
 
 
 def test_biglake_register_dry_run_returns_iam_hint(
