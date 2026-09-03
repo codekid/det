@@ -59,6 +59,9 @@ def test_clamp_list_limit_and_warehouse_paths(
     assert clamp_list_limit(9999) == DEFAULT_LIST_LIMIT
     assert clamp_list_limit(50) == 50
 
+    # CI exports DET_*_DUCKDB; clear so default-under-root behavior is testable.
+    monkeypatch.delenv("DET_ANALYTICS_DUCKDB", raising=False)
+    monkeypatch.delenv("DET_OPS_DUCKDB", raising=False)
     assert analytics_duckdb_path(tmp_path) == (tmp_path / "data" / "analytics.duckdb").resolve()
     assert ops_duckdb_path(tmp_path) == (tmp_path / "data" / "det_ops.duckdb").resolve()
 
