@@ -50,6 +50,14 @@ def test_trajectory_fixtures_cover_plan_ids():
         "new_source_list_then_init_dry_run",
         "new_source_init_without_list",
         "dlt_pipeline_text",
+        "silver_catchup_diff_dry_run_stop",
+        "silver_catchup_chain_apply",
+        "silver_catchup_full_refresh_invent",
+        "silver_catchup_full_refresh_negated_ok",
+        "silver_catchup_full_refresh_after_negation_sentence",
+        "silver_catchup_diff_only_then_apply",
+        "silver_catchup_dry_run_only_then_apply",
+        "silver_catchup_apply_after_yes",
     ):
         assert expected in names
 
@@ -69,6 +77,14 @@ def test_writing_argv_classifier():
     assert is_writing_cli(["det", "scaffold-ops"])
     assert not is_writing_cli(["det", "scaffold-ops", "--dry-run"])
     assert is_writing_cli(["det", "dbt"])
+    assert is_writing_cli(["det", "dbt", "--catchup"])
+    assert is_writing_cli(
+        ["det", "silver-catchup-plan", "-p", "x", "--apply"]
+    )
+    assert not is_writing_cli(
+        ["det", "silver-catchup-plan", "-p", "x", "--dry-run"]
+    )
+    assert not is_writing_cli(["det", "silver-catchup-diff", "-p", "x"])
     assert is_writing_cli(["det", "lock-release", "-p", "x", "-s", "2026-08-06", "--force"])
     assert is_writing_cli(["airflow", "dags", "trigger", "det_extract"])
     assert is_dry_run_cli(["det", "migrate", "--dry-run", "-p", "x"])

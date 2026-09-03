@@ -12,7 +12,7 @@ plans, or scaffold/dbt previews.
 ## v1 policy (dry-run / read-only)
 
 **Allowed via MCP:** `list_*`, `describe_pipeline`, `describe_model`, `read_manifest`,
-`diff_partitions`, `sample_raw`, `validate_sample`, `sample_bronze`,
+`diff_partitions`, `diff_bronze_silver`, `sample_raw`, `validate_sample`, `sample_bronze`,
 `diagnose_pipeline`, `check`, `query_analytics`, `cube_meta`, `cube_load`,
 `schema_from_sample_dry_run`,
 `mapper_from_diff_dry_run`,
@@ -20,7 +20,7 @@ plans, or scaffold/dbt previews.
 `describe_airflow_det_env`, `preview_backfill_conf`, `migrate_dry_run`,
 `list_runs`, `summarize_runs`,
 `prune_dry_run`, `dbt_dry_run`, `scaffold_dbt_dry_run`, `scaffold_ops_dry_run`,
-`init_pipeline_dry_run`,
+`init_pipeline_dry_run`, `silver_catchup_dry_run`,
 `list_approvals`, `describe_approval`,
 `det://` resources, and prompts `det_ops` / `det_new_source` / `det_migrate` /
 `det_dbt` / `det_airflow` (skill playbooks).
@@ -33,7 +33,7 @@ run `det approve`). The record is guaranteed to describe the command that runs:
 every flag that changes what or where data is written is in `plan_digest`, and an
 unrecognized flag is rejected as `approval_unbound_flag`. Practical consequence —
 **re-approve whenever a flag changes**, including `--lake-path`, `--set`,
-`--full-refresh`, `--target`, `--ingestion`. Pipeline refs and intervals are
+`--full-refresh`, `--catchup`, `--target`, `--ingestion`. Pipeline refs and intervals are
 canonicalized, so the ref form (`noaa.storm_events` vs `noaa/storm_events` vs the
 YAML path) and the interval form (`2026-08-06` vs `2026-08-06T00:00:00+00:00`)
 do not affect the digest.

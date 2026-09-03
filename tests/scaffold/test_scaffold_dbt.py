@@ -212,8 +212,10 @@ def test_scaffold_creates_and_skips_without_force(tmp_path: Path):
     silver = (models / "silver_noaa__storm_events.sql").read_text(encoding="utf-8")
     assert 'materialized="incremental"' in silver
     assert 'unique_key=["event_id"]' in silver
-    assert "is_incremental()" in silver
-    assert "interval '3 days'" in silver
+    assert "det_silver_incremental_filter" in silver
+    assert "det_silver_catchup_guard" in silver
+    assert 'tags=["det_catchup"]' in silver
+    assert '"3 days"' in silver or "3 days" in silver
     assert 'partition_by=["event_id"]' in silver
     assert "det_dedupe_latest_run" in silver
     assert 'ref("stg_noaa__storm_events")' in silver
@@ -586,6 +588,49 @@ def test_scaffold_silver_omits_bigquery_layout_when_unset(tmp_path: Path):
     assert "require_partition_filter" not in silver
     assert '"field":' not in silver
     assert "partition_by={" not in silver
+
+
+def test_scaffold_table_silver_omits_det_catchup_tag(tmp_path: Path):
+    schema_path = (
+        tmp_path / "schemas" / "example_api" / "events" / "events.schema.yaml"
+    )
+    schema_path.parent.mkdir(parents=True)
+    schema_path.write_text(
+        yaml.safe_dump(
+            {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "required": ["id"],
+                "properties": {"id": {"type": "integer"}},
+                "additionalProperties": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    pipeline = tmp_path / "configs" / "pipelines" / "example_api" / "events.yaml"
+    pipeline.parent.mkdir(parents=True)
+    pipeline.write_text(
+        """
+name: example_api.events
+source:
+  type: example_api.events
+schema: schemas/example_api/events/events.schema.yaml
+dbt:
+  silver:
+    materialized: table
+    unique_key: [__row_hash]
+destination:
+  type: filesystem
+  path: ./data/lake
+""",
+        encoding="utf-8",
+    )
+    config = load_pipeline_config(pipeline)
+    models = tmp_path / "dbt" / "models" / "silver"
+    scaffold_dbt(config, project_root=tmp_path, dbt_models_dir=models)
+    silver = (models / "silver_example_api__events.sql").read_text(encoding="utf-8")
+    assert 'materialized="table"' in silver
+    assert "det_catchup" not in silver
 
 
 def test_scaffold_silver_emits_bigquery_partition_cluster(tmp_path: Path):

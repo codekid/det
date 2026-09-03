@@ -156,6 +156,7 @@ _BOUND_PARAMS: dict[str, frozenset[str]] = {
             "select",
             "command",
             "full_refresh",
+            "catchup",
             "target",
             *_LAKE_LAYER_PARAMS,
             "set_",
@@ -196,6 +197,17 @@ _BOUND_PARAMS: dict[str, frozenset[str]] = {
             *_LAKE_LAYER_PARAMS,
         }
     ),
+    "silver-catchup-plan": frozenset(
+        {
+            "pipeline",
+            "all_pipelines",
+            "interval_start",
+            "interval_end",
+            "limit",
+            "apply",
+            *_LAKE_LAYER_PARAMS,
+        }
+    ),
 }
 
 # Params that cannot change what or where anything is written, so they are safe
@@ -208,6 +220,7 @@ _NEUTRAL_PARAMS: frozenset[str] = frozenset(
         "lock_ttl_sec",
         "dry_run",
         "json",
+        "as_json",  # Typer param name for --json on inspect/ops/catch-up
         "json_out",
         "verbose",
         "validate_limit",

@@ -689,6 +689,7 @@ def expected_silver_sql(
             model_slug=model_slug,
             silver=silver,
             provider=provider,
+            pipeline_name=config.name,
         )
     }
     for name_parts_t, _path_chain_t, rel in iter_relation_paths(stg_cfg.relations):

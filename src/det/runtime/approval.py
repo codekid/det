@@ -775,6 +775,7 @@ def dbt_write_argv(
     command: str = "build",
     select: Sequence[str] | None = None,
     full_refresh: bool = False,
+    catchup: bool = False,
     target: str | None = None,
     lake_path: str | None = None,
     lake_path_raw: str | None = None,
@@ -791,6 +792,8 @@ def dbt_write_argv(
     # warehouse. Both change what the run does, so both are bound.
     if full_refresh:
         argv.append("--full-refresh")
+    if catchup:
+        argv.append("--catchup")
     if target:
         argv.extend(["--target", str(target).strip()])
     argv.extend(
@@ -802,6 +805,43 @@ def dbt_write_argv(
         )
     )
     argv.extend(_set_argv(set_))
+    return argv
+
+
+def silver_catchup_plan_write_argv(
+    pipeline: str | None = None,
+    *,
+    all_pipelines: bool = False,
+    interval_start: str | None = None,
+    interval_end: str | None = None,
+    limit: int = 200,
+    lake_path: str | None = None,
+    lake_path_raw: str | None = None,
+    lake_path_bronze: str | None = None,
+    lake_path_ops: str | None = None,
+) -> list[str]:
+    argv = ["silver-catchup-plan", "--apply"]
+    if all_pipelines:
+        argv.append("--all-pipelines")
+    elif pipeline:
+        argv.extend(["-p", _norm_pipeline(pipeline)])
+    else:
+        raise ValueError("pipeline required unless all_pipelines=True")
+    if interval_start:
+        argv.extend(["-s", _require_interval(interval_start)])
+        end = _norm_interval(interval_end)
+        if end:
+            argv.extend(["-e", end])
+    if limit != 200:
+        argv.extend(["--limit", str(int(limit))])
+    argv.extend(
+        _lake_argv(
+            lake_path,
+            lake_path_raw=lake_path_raw,
+            lake_path_bronze=lake_path_bronze,
+            lake_path_ops=lake_path_ops,
+        )
+    )
     return argv
 
 

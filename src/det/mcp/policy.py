@@ -6,6 +6,7 @@ not call a model. Live Cursor transcripts can be converted to the same shape lat
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -27,6 +28,8 @@ ALLOWED_MCP_TOOLS: frozenset[str] = frozenset(
         "scaffold_ops_dry_run",
         "init_pipeline_dry_run",
         "diff_partitions",
+        "diff_bronze_silver",
+        "silver_catchup_dry_run",
         "sample_raw",
         "validate_sample",
         "sample_bronze",
@@ -69,6 +72,7 @@ WRITING_CLI_COMMANDS: frozenset[str] = frozenset(
         "biglake-register",
         "iceberg-register",
         "lock-release",
+        "silver-catchup-plan",
     }
 )
 
@@ -83,9 +87,33 @@ SCENARIO_REQUIRED_MCP: dict[str, tuple[str, ...]] = {
     "fleet_metrics": ("cube_load", "cube_meta"),
     "gold_metrics": ("cube_load", "cube_meta"),
     "new_source": ("list_sources",),
+    "silver_catchup": ("diff_bronze_silver", "silver_catchup_dry_run"),
 }
 
 _DLT_LANDING_MARKERS: tuple[str, ...] = ("dlt.pipeline", "pipeline.run")
+
+# Affirmative full-refresh invent: hyphen or underscore forms, optional leading --.
+_FULL_REFRESH_TOKEN = re.compile(r"(?:--)?full[-_]refresh", re.IGNORECASE)
+# Drop same-clause "do not use --full-refresh" guidance before matching.
+# Do not let the bridge cross newlines or sentence/clause enders (.!?;).
+_NEGATED_FULL_REFRESH = re.compile(
+    r"(?:"
+    r"do\s+not|don't|dont|never|avoid|"
+    r"\bnot\b|"
+    r"without|"
+    r"rather\s+than|"
+    r"instead\s+of"
+    r")"
+    r"[^\n.!?;]{0,48}"
+    r"(?:--)?full[-_]refresh",
+    re.IGNORECASE,
+)
+
+
+def _suggests_full_refresh(text: str) -> bool:
+    """True when text recommends full-refresh, not when it only warns against it."""
+    scrubbed = _NEGATED_FULL_REFRESH.sub(" ", text)
+    return bool(_FULL_REFRESH_TOKEN.search(scrubbed))
 
 
 @dataclass(frozen=True)
@@ -178,6 +206,8 @@ def is_writing_cli(argv: Sequence[str]) -> bool:
         return "--dry-run" not in cmd
     if name == "prune":
         return "--apply" in cmd
+    if name == "silver-catchup-plan":
+        return "--apply" in cmd
     if name in {"init-pipeline", "scaffold-dbt", "scaffold-ops"}:
         return "--dry-run" not in cmd
     return True
@@ -216,6 +246,7 @@ def score_trace(
     violations.extend(_score_metrics_without_cube(trace))
     violations.extend(_score_dlt_landing(trace))
     violations.extend(_score_full_validate_gating(trace))
+    violations.extend(_score_silver_catchup_full_refresh(trace))
     return violations
 
 
@@ -284,6 +315,8 @@ def _score_scenario(trace: Trace) -> list[Violation]:
     required = SCENARIO_REQUIRED_MCP.get(trace.scenario)
     if not required:
         return []
+    if trace.scenario == "silver_catchup":
+        return _score_silver_catchup_required(trace, required)
     positions = _mcp_positions(trace, required)
     write_at = _first_write_index(trace)
     if not positions:
@@ -315,6 +348,32 @@ def _score_scenario(trace: Trace) -> list[Violation]:
         return _score_new_source_order(trace)
     return []
 
+
+def _score_silver_catchup_required(
+    trace: Trace, required: tuple[str, ...]
+) -> list[Violation]:
+    """diff_bronze_silver and silver_catchup_dry_run are both required (not alternatives)."""
+    write_at = _first_write_index(trace)
+    missing: list[str] = []
+    for name in required:
+        positions = _mcp_positions(trace, (name,))
+        if not positions:
+            missing.append(name)
+            continue
+        if write_at is not None and min(positions) > write_at:
+            missing.append(name)
+    if not missing:
+        return []
+    return [
+        Violation(
+            code="missing_inspect",
+            turn=0 if write_at is None else write_at[0],
+            detail=(
+                f"scenario 'silver_catchup' requires {list(required)} before any write "
+                f"(missing or after write: {missing})"
+            ),
+        )
+    ]
 
 def _score_new_source_order(trace: Trace) -> list[Violation]:
     """list_sources must appear before init_pipeline_dry_run / init-pipeline."""
@@ -375,6 +434,28 @@ def _score_dlt_landing(trace: Trace) -> list[Violation]:
                     code="dlt_landing",
                     turn=turn_i,
                     detail="assistant text suggests dlt.pipeline / pipeline.run for landing",
+                )
+            )
+    return found
+
+
+def _score_silver_catchup_full_refresh(trace: Trace) -> list[Violation]:
+    """Catch-up scenario must not invent --full-refresh as the default heal."""
+    if trace.scenario != "silver_catchup":
+        return []
+    found: list[Violation] = []
+    for turn_i, _ev_i, event in _iter_events(trace):
+        if event.type != "assistant_text" or not event.text:
+            continue
+        if _suggests_full_refresh(event.text):
+            found.append(
+                Violation(
+                    code="invent_full_refresh",
+                    turn=turn_i,
+                    detail=(
+                        "silver catch-up should use manifest + det dbt --catchup, "
+                        "not --full-refresh as the default heal"
+                    ),
                 )
             )
     return found

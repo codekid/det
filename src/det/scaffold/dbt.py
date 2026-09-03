@@ -250,6 +250,7 @@ def scaffold_dbt(
         model_slug=model_slug,
         silver=silver,
         provider=provider,
+        pipeline_name=config.name,
     )
 
     _write_or_skip(

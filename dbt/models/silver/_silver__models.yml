@@ -66,6 +66,7 @@ models:
   description: Cleaned, deduped openlibrary__subjects (silver)
   columns:
   - name: __row_hash
+    description: DET content hash used for silver dedupe.
     tests:
     - unique
     - not_null

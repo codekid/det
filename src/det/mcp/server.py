@@ -22,11 +22,12 @@ def create_server():
         "det",
         instructions=(
             "DET (Data Extract Tool) MCP v1: read-only inspect and dry-run tools. "
-            "Inspect: check, diff_partitions, sample_raw, validate_sample, "
+            "Inspect: check, diff_partitions, diff_bronze_silver, sample_raw, validate_sample, "
             "sample_bronze, diagnose_pipeline (sample size via limit/sample_limit, "
             "default 5, max 50). "
             "Generate (dry-run): schema_from_sample_dry_run, mapper_from_diff_dry_run. "
             "scaffold_ops_dry_run previews ops dbt models (never writes). "
+            "silver_catchup_dry_run previews ops/silver_catchup/manifest.json (never writes). "
             "Airflow inspect (read-only): airflow_health, list_airflow_dags, "
             "list_airflow_dag_runs, describe_airflow_det_env, preview_backfill_conf. "
             "Configure via DET_AIRFLOW_BASE_URL/USER/PASSWORD (Compose defaults). "
@@ -111,9 +112,12 @@ def create_server():
         pipeline: p.PipelineRefOpt = None,
         command: p.DbtCommand = "build",
         select: p.DbtSelectOpt = None,
+        catchup: bool = False,
     ) -> dict[str, Any]:
         """Preview the dbt CLI argv DET would run (dry_run=True)."""
-        return t.dbt_dry_run(pipeline, command=command, select=select)
+        return t.dbt_dry_run(
+            pipeline, command=command, select=select, catchup=catchup
+        )
 
     @mcp.tool()
     def scaffold_dbt_dry_run(pipeline: p.PipelineRef, force: p.Force = False) -> dict[str, Any]:
@@ -159,6 +163,40 @@ def create_server():
         """Compare raw vs bronze extract-run keys (hive and/or SQL meta columns)."""
         return t.diff_partitions(
             pipeline,
+            interval_start=interval_start,
+            interval_end=interval_end,
+            limit=limit,
+        )
+
+    @mcp.tool()
+    def diff_bronze_silver(
+        pipeline: p.PipelineRefOpt = None,
+        all_pipelines: bool = False,
+        interval_start: p.IntervalStartOpt = None,
+        interval_end: p.IntervalEndOpt = None,
+        limit: p.ListLimit = t.DEFAULT_LIST_LIMIT,
+    ) -> dict[str, Any]:
+        """Latest bronze extract-run per interval vs silver (catch-up candidates)."""
+        return t.diff_bronze_silver(
+            pipeline,
+            all_pipelines=all_pipelines,
+            interval_start=interval_start,
+            interval_end=interval_end,
+            limit=limit,
+        )
+
+    @mcp.tool()
+    def silver_catchup_dry_run(
+        pipeline: p.PipelineRefOpt = None,
+        all_pipelines: bool = False,
+        interval_start: p.IntervalStartOpt = None,
+        interval_end: p.IntervalEndOpt = None,
+        limit: p.ListLimit = t.DEFAULT_LIST_LIMIT,
+    ) -> dict[str, Any]:
+        """Preview silver catch-up manifest + approval_plan (never writes)."""
+        return t.silver_catchup_dry_run(
+            pipeline,
+            all_pipelines=all_pipelines,
             interval_start=interval_start,
             interval_end=interval_end,
             limit=limit,

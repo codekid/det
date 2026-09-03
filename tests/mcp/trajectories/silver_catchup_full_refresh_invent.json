@@ -1,0 +1,25 @@
+{
+  "id": "silver_catchup_full_refresh_invent",
+  "scenario": "silver_catchup",
+  "expect": ["invent_full_refresh"],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "diff_bronze_silver",
+          "arguments": {"pipeline": "noaa.storm_events"}
+        },
+        {
+          "type": "mcp",
+          "name": "silver_catchup_dry_run",
+          "arguments": {"pipeline": "noaa.storm_events"}
+        },
+        {
+          "type": "assistant_text",
+          "text": "Use det dbt --full-refresh to heal the watermark hole."
+        }
+      ]
+    }
+  ]
+}

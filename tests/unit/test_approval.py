@@ -34,6 +34,7 @@ from det.runtime.approval import (
     run_write_argv,
     scaffold_dbt_write_argv,
     scaffold_ops_write_argv,
+    silver_catchup_plan_write_argv,
 )
 
 NOW = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
@@ -437,10 +438,15 @@ def test_dbt_full_refresh_and_target_are_bound():
     base = dbt_write_argv("noaa.storm_events")
     refreshed = dbt_write_argv("noaa.storm_events", full_refresh=True)
     retargeted = dbt_write_argv("noaa.storm_events", target="prod")
+    catchup = dbt_write_argv("noaa.storm_events", catchup=True)
     assert "--full-refresh" in refreshed
+    assert "--catchup" in catchup
     assert ["--target", "prod"] == retargeted[-2:]
-    digests = {make_plan("dbt", argv).plan_digest for argv in (base, refreshed, retargeted)}
-    assert len(digests) == 3
+    digests = {
+        make_plan("dbt", argv).plan_digest
+        for argv in (base, refreshed, retargeted, catchup)
+    }
+    assert len(digests) == 4
 
 
 def test_claim_is_exclusive(tmp_path: Path):
@@ -1203,6 +1209,10 @@ def test_bound_params_encoded_in_write_argv_builders():
                     dbt_write_argv("noaa.storm_events", full_refresh=True),
                     ("--full-refresh",),
                 ),
+                "catchup": (
+                    dbt_write_argv("noaa.storm_events", catchup=True),
+                    ("--catchup",),
+                ),
                 "target": (
                     dbt_write_argv("noaa.storm_events", target="prod"),
                     ("--target", "prod"),
@@ -1363,6 +1373,61 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ("--skip-ops",),
                 ),
                 "apply": (base, ("--apply",)),  # implicit: always present
+            }
+        elif command == "silver-catchup-plan":
+            base = silver_catchup_plan_write_argv("noaa.storm_events")
+            checks = {
+                "pipeline": (
+                    silver_catchup_plan_write_argv("example_api.events"),
+                    ("example_api.events",),
+                ),
+                "all_pipelines": (
+                    silver_catchup_plan_write_argv(all_pipelines=True),
+                    ("--all-pipelines",),
+                ),
+                "interval_start": (
+                    silver_catchup_plan_write_argv(
+                        "noaa.storm_events", interval_start="2026-08-06"
+                    ),
+                    ("-s",),
+                ),
+                "interval_end": (
+                    silver_catchup_plan_write_argv(
+                        "noaa.storm_events",
+                        interval_start="2026-08-06",
+                        interval_end="2026-08-07",
+                    ),
+                    ("-e",),
+                ),
+                "limit": (
+                    silver_catchup_plan_write_argv("noaa.storm_events", limit=50),
+                    ("--limit", "50"),
+                ),
+                "apply": (base, ("--apply",)),  # implicit: always present
+                "lake_path": (
+                    silver_catchup_plan_write_argv(
+                        "noaa.storm_events", lake_path="/tmp/lake"
+                    ),
+                    ("--lake-path",),
+                ),
+                "lake_path_raw": (
+                    silver_catchup_plan_write_argv(
+                        "noaa.storm_events", lake_path_raw="/tmp/raw"
+                    ),
+                    ("--lake-path-raw",),
+                ),
+                "lake_path_bronze": (
+                    silver_catchup_plan_write_argv(
+                        "noaa.storm_events", lake_path_bronze="/tmp/bronze"
+                    ),
+                    ("--lake-path-bronze",),
+                ),
+                "lake_path_ops": (
+                    silver_catchup_plan_write_argv(
+                        "noaa.storm_events", lake_path_ops="/tmp/ops"
+                    ),
+                    ("--lake-path-ops",),
+                ),
             }
         elif command == "lock-release":
             base = lock_release_write_argv("noaa.storm_events", "2026-08-06")

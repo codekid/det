@@ -115,6 +115,7 @@ Every landed row includes (names stable in layout 1):
 | `locks/` | Interval leases `{pipeline}/{start}_{end}.json`; bronze-dataset RW `{lake}/locks/datasets/…/_lock.json` |
 | `runs/dt=YYYY-MM-DD/{pipeline}/` | Extract/load attempt receipts (JSON) |
 | `ops/` | Materialized receipt Iceberg table (`run_receipts`) for ops dbt |
+| `ops/silver_catchup/` | Optional JSON catch-up manifest (`manifest.json`) for bronze↔silver heal; see [silver-catchup.md](silver-catchup.md) |
 
 Additive keys in manifests or receipts, or new optional siblings documented here,
 do **not** require a layout bump.

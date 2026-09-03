@@ -52,6 +52,25 @@ Install: `uv pip install -e ".[mcp]"`.
    pointed at the wrong interval.
    Rebuild bronze from raw via `det migrate`, not from a bronze payload column.
 
+## Silver lag (bronze present, silver missing latest run)
+
+When bronze has data but incremental silver appears behind (watermark hole):
+
+1. MCP `diff_bronze_silver` — `catchup_runs` are **latest bronze extract-run per
+   interval** not yet in silver. Ignore `stale_siblings_ignored` (older siblings;
+   silver stays deduped).
+2. MCP `silver_catchup_dry_run` → show manifest + `approval_plan` → **stop**.
+3. After confirm: `det approve` then later
+   `det silver-catchup-plan --apply --approval <manifest_id>` (this approval is
+   only for the manifest write).
+4. MCP `dbt_dry_run` with `catchup=True` → show its separate `approval_plan` →
+   **stop**. After confirm: `det approve` then later
+   `det dbt --catchup --approval <dbt_id>` (distinct id; one build; not
+   `--full-refresh`).
+5. Re-diff to verify `catchup_count=0`.
+
+See [docs/silver-catchup.md](../../docs/silver-catchup.md).
+
 ## Debug a failed or slow run
 
 Receipts under `{lake}/runs/` are observability (what happened). `meta/manifest.json`

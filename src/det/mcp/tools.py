@@ -62,6 +62,12 @@ def _canonical_id(pipeline: str, root: Path) -> str:
     return resolve_pipeline_ref(pipeline, project_root=root).canonical_id
 
 
+def _require_catchup_scope(*, pipeline: str | None, all_pipelines: bool) -> None:
+    """Require exactly one of ``pipeline`` or ``all_pipelines=True`` (CLI parity)."""
+    if all_pipelines == (pipeline is not None):
+        raise ValueError("exactly one of pipeline / all_pipelines=True is required")
+
+
 def _load_pipeline(pipeline: str, root: Path):
     from det.runtime.config import load_pipeline_config
     from det.runtime.pipelines import resolve_pipeline_ref
@@ -394,6 +400,7 @@ def dbt_dry_run(
     *,
     command: str = "build",
     select: list[str] | None = None,
+    catchup: bool = False,
     root: Path | None = None,
 ) -> dict[str, Any]:
     _prepare_tool()
@@ -409,6 +416,7 @@ def dbt_dry_run(
         select=select,
         exclude=analytics_exclude(select),
         pipeline=pipeline_arg,
+        catchup=catchup,
         dry_run=True,
     )
     from det.runtime.approval import dbt_write_argv
@@ -420,12 +428,14 @@ def dbt_dry_run(
         "project_dir": _rel(result.project_dir, base),
         "lake_path": result.lake_path,
         "bronze_source": result.bronze_source,
+        "catchup": catchup,
         "approval_plan": _approval_plan(
             "dbt",
             dbt_write_argv(
                 _canonical_id(pipeline, base) if pipeline is not None else None,
                 command=command,
                 select=select,
+                catchup=catchup,
             ),
         ),
     }
@@ -574,6 +584,84 @@ def diff_partitions(
         limit=limit,
         root=root,
     )
+
+
+def diff_bronze_silver(
+    pipeline: str | None = None,
+    *,
+    all_pipelines: bool = False,
+    interval_start: str | None = None,
+    interval_end: str | None = None,
+    limit: int = DEFAULT_LIST_LIMIT,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Latest bronze extract-run per interval vs silver coverage (read-only)."""
+    _prepare_tool()
+    from det.runtime.silver_catchup import diff_bronze_silver as _diff
+    from det.runtime.silver_catchup import diff_bronze_silver_fleet
+
+    _require_catchup_scope(pipeline=pipeline, all_pipelines=all_pipelines)
+    base = _root(root)
+    if all_pipelines:
+        return diff_bronze_silver_fleet(
+            project_root=base,
+            interval_start=interval_start,
+            interval_end=interval_end,
+            limit=limit,
+        )
+    # Exactly-one scope is enforced above; pipeline is set when not fleet-wide.
+    return _diff(
+        pipeline,  # type: ignore[arg-type]
+        project_root=base,
+        interval_start=interval_start,
+        interval_end=interval_end,
+        limit=limit,
+    )
+
+
+def silver_catchup_dry_run(
+    pipeline: str | None = None,
+    *,
+    all_pipelines: bool = False,
+    interval_start: str | None = None,
+    interval_end: str | None = None,
+    limit: int = DEFAULT_LIST_LIMIT,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Preview ops/silver_catchup/manifest.json + approval_plan (never writes)."""
+    _prepare_tool()
+    from det.runtime.approval import silver_catchup_plan_write_argv
+    from det.runtime.silver_catchup import plan_catchup_manifest
+
+    _require_catchup_scope(pipeline=pipeline, all_pipelines=all_pipelines)
+    base = _root(root)
+    pipe_id = _canonical_id(pipeline, base) if pipeline is not None else None
+    planned = plan_catchup_manifest(
+        project_root=base,
+        pipeline=pipe_id,
+        all_pipelines=all_pipelines,
+        interval_start=interval_start,
+        interval_end=interval_end,
+        limit=limit,
+    )
+    return {
+        **planned,
+        "approval_plan": _approval_plan(
+            "silver-catchup-plan",
+            silver_catchup_plan_write_argv(
+                pipeline=pipe_id,
+                all_pipelines=all_pipelines,
+                interval_start=interval_start,
+                interval_end=interval_end,
+                limit=limit,
+            ),
+        ),
+        "next_steps": (
+            "Operator: det approve --plan <approval_plan> --approved-by <id>. "
+            "Agent (later turn): det silver-catchup-plan --apply --approval <id>; "
+            "then det dbt --catchup --approval <id> after a second approve for dbt."
+        ),
+    }
 
 
 def sample_raw(
