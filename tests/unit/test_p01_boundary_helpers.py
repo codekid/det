@@ -372,6 +372,17 @@ def test_walk_hive_runs_filters_and_committed(tmp_path: Path) -> None:
         interval_end="2026-08-09",
     )
     assert windowed == []
+    # Window filter must use ISO bounds even when callers ask for compact values.
+    in_window = walk_hive_runs(
+        base,
+        root=root,
+        limit=10,
+        interval_start="2026-08-06",
+        interval_end="2026-08-07",
+        normalize_iso=False,
+    )
+    assert len(in_window) == 2
+    assert in_window[0]["interval_start"] == start
     assert walk_hive_runs(root / "missing", root=root, limit=5) == []
 
     # Skip non-dirs / malformed hive keys; honor limit and raw (non-ISO) values.
@@ -765,6 +776,96 @@ def test_scaffold_sql_stale_missing_file_and_normalize(tmp_path: Path) -> None:
         config, project_root=tmp_path, pipeline_id="acme.widgets"
     )
     assert any(f.code == "scaffold_sql_stale" and "missing" in f.detail for f in findings)
+
+
+def test_scaffold_sql_stale_unreadable_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from det.runtime.config import load_pipeline_config
+    from det.scaffold.dbt import scaffold_dbt
+
+    pipe = tmp_path / "configs" / "pipelines" / "acme" / "widgets.yaml"
+    pipe.parent.mkdir(parents=True)
+    schema = tmp_path / "schemas" / "acme" / "widgets" / "widgets.schema.yaml"
+    schema.parent.mkdir(parents=True)
+    schema.write_text(
+        "type: object\nproperties:\n  id: {type: integer}\nadditionalProperties: false\n",
+        encoding="utf-8",
+    )
+    _write_acme_plugin(tmp_path)
+    doc = {
+        "name": "acme.widgets",
+        "source": {"type": "acme.widgets"},
+        "schema": "schemas/acme/widgets/widgets.schema.yaml",
+        "destination": {"type": "filesystem", "path": "."},
+        "wire_version": 1,
+        "dbt": {
+            "silver": {
+                "materialized": "table",
+                "unique_key": ["id"],
+                "order_by": ["id asc"],
+            }
+        },
+    }
+    pipe.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    config = load_pipeline_config(pipe)
+    scaffold_dbt(config, project_root=tmp_path, force=True)
+
+    real_read_text = Path.read_text
+
+    def _boom(self, *args, **kwargs):
+        if self.name.endswith(".sql") and "silver_acme__widgets" in self.name:
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _boom)
+    findings = check_pipeline_config_with_dbt(pipe, project_root=tmp_path)
+    assert any(
+        f.code == "scaffold_sql_stale" and "could not read" in f.detail for f in findings
+    )
+
+
+def test_scaffold_sql_stale_despite_missing_dbt_models(tmp_path: Path) -> None:
+    """Silver drift still reported when only stg is missing (missing_dbt_models)."""
+    from det.runtime.config import load_pipeline_config
+    from det.scaffold.dbt import scaffold_dbt
+
+    pipe = tmp_path / "configs" / "pipelines" / "acme" / "widgets.yaml"
+    pipe.parent.mkdir(parents=True)
+    schema = tmp_path / "schemas" / "acme" / "widgets" / "widgets.schema.yaml"
+    schema.parent.mkdir(parents=True)
+    schema.write_text(
+        "type: object\nproperties:\n  id: {type: integer}\nadditionalProperties: false\n",
+        encoding="utf-8",
+    )
+    _write_acme_plugin(tmp_path)
+    doc = {
+        "name": "acme.widgets",
+        "source": {"type": "acme.widgets"},
+        "schema": "schemas/acme/widgets/widgets.schema.yaml",
+        "destination": {"type": "filesystem", "path": "."},
+        "wire_version": 1,
+        "dbt": {
+            "silver": {
+                "materialized": "incremental",
+                "unique_key": ["id"],
+                "order_by": ["__extract_run_datetime desc"],
+                "watermark": "__extract_run_datetime",
+                "lookback": "3 days",
+            }
+        },
+    }
+    pipe.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    config = load_pipeline_config(pipe)
+    scaffold_dbt(config, project_root=tmp_path, force=True)
+    stg = tmp_path / "dbt" / "models" / "silver" / "stg_acme__widgets.sql"
+    assert stg.is_file()
+    stg.unlink()
+    doc["dbt"]["silver"]["lookback"] = "9 days"
+    pipe.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    findings = check_pipeline_config_with_dbt(pipe, project_root=tmp_path)
+    assert any(f.code == "missing_dbt_models" for f in findings)
+    assert any(f.code == "scaffold_sql_stale" for f in findings)
 
 
 def test_check_pipeline_config_with_dbt_early_exits(

@@ -89,9 +89,10 @@ def walk_hive_runs(
         start_raw = _parse_hive_key(start_dir.name, "__interval_start_datetime=")
         if start_raw is None:
             continue
-        start_val = from_partition_value(start_raw) if normalize_iso else start_raw
-        if window is not None and not (window[0] <= start_val < window[1]):
+        start_iso = from_partition_value(start_raw)
+        if window is not None and not (window[0] <= start_iso < window[1]):
             continue
+        start_val = start_iso if normalize_iso else start_raw
         for end_dir in sorted(start_dir.iterdir()):
             if not end_dir.is_dir():
                 continue

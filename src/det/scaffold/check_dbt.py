@@ -68,7 +68,19 @@ def scaffold_sql_stale_findings(
                 )
             )
             continue
-        on_disk = _normalize_scaffold_text(path.read_text(encoding="utf-8"))
+        try:
+            on_disk = _normalize_scaffold_text(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError) as exc:
+            findings.append(
+                Finding(
+                    severity="warning",
+                    code="scaffold_sql_stale",
+                    pipeline=pipeline_id,
+                    path=rel,
+                    detail=f"could not read on-disk silver SQL: {exc}",
+                )
+            )
+            continue
         if on_disk != _normalize_scaffold_text(content):
             findings.append(
                 Finding(
@@ -95,7 +107,7 @@ def check_pipeline_config_with_dbt(
     """Kernel pipeline check plus scaffold SQL drift when silver models exist."""
     root = project_root.resolve()
     findings = check_pipeline_config(config_path, project_root=root)
-    if any(f.code in {"missing_dbt_models", "invalid_pipeline"} for f in findings):
+    if any(f.code == "invalid_pipeline" for f in findings):
         return findings
     dbt_root = root / "dbt"
     if not dbt_root.is_dir():
