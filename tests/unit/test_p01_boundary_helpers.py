@@ -182,8 +182,10 @@ def test_list_bronze_runs_duckdb(tmp_path: Path) -> None:
     con.execute(
         """
         insert into bronze_acme.widgets_v1 values
-          (1, '2026-08-06', '2026-08-07', '2026-08-06 12:00:00'),
-          (2, '2026-08-06', '2026-08-07', '2026-08-06 12:00:00'),
+          (1, '2026-08-06 00:00:00.123456', '2026-08-07 00:00:00.999000',
+           '2026-08-06 12:00:00.654321'),
+          (2, '2026-08-06 00:00:00.123456', '2026-08-07 00:00:00.999000',
+           '2026-08-06 12:00:00.654321'),
           (3, '2026-08-07', '2026-08-08', '2026-08-07 12:00:00')
         """
     )
@@ -193,6 +195,10 @@ def test_list_bronze_runs_duckdb(tmp_path: Path) -> None:
     listed, note = list_bronze_runs(config, root=root, limit=10)
     assert note is None
     assert len(listed) == 2
+    assert listed[0]["interval_start"] == "2026-08-06T00:00:00+00:00"
+    assert listed[0]["interval_end"] == "2026-08-07T00:00:00+00:00"
+    assert listed[0]["extract_run_datetime"] == "2026-08-06T12:00:00+00:00"
+    assert "." not in listed[0]["extract_run_datetime"].split("+")[0]
     windowed, _ = list_bronze_runs(
         config,
         root=root,

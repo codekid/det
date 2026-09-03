@@ -25,6 +25,7 @@ from det.runtime.meta import (
     from_partition_value,
     identity_iso,
     resolve_interval,
+    to_partition_value,
 )
 from det.runtime.secrets import SecretError
 
@@ -52,6 +53,11 @@ def run_dict(
     if path is not None:
         out["path"] = path
     return out
+
+
+def _sql_run_key_iso(value: object) -> str:
+    """Normalize a SQL datetime to second-precision ISO (matches hive partition keys)."""
+    return from_partition_value(to_partition_value(identity_iso(value)))
 
 
 def _parse_hive_key(dirname: str, prefix: str) -> str | None:
@@ -187,9 +193,9 @@ def _list_bronze_sql_runs(
             con.close()
         return [
             run_dict(
-                interval_start=identity_iso(r[0]),
-                interval_end=identity_iso(r[1]),
-                extract_run_datetime=identity_iso(r[2]),
+                interval_start=_sql_run_key_iso(r[0]),
+                interval_end=_sql_run_key_iso(r[1]),
+                extract_run_datetime=_sql_run_key_iso(r[2]),
             )
             for r in rows
         ], None
@@ -247,9 +253,9 @@ def _list_bronze_sql_runs(
                 rows = cur.fetchall()
         return [
             run_dict(
-                interval_start=identity_iso(r[0]),
-                interval_end=identity_iso(r[1]),
-                extract_run_datetime=identity_iso(r[2]),
+                interval_start=_sql_run_key_iso(r[0]),
+                interval_end=_sql_run_key_iso(r[1]),
+                extract_run_datetime=_sql_run_key_iso(r[2]),
             )
             for r in rows
         ], None
