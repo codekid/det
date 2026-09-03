@@ -94,4 +94,4 @@ State interval mode on the plugin docstring: `year_files` | `query_params` |
 - Pipeline `name` / `-p` stay `provider.source`; lake / SQL ids are
   `{name}_v{wire_version}` (including `_v1`). Top-level `dataset:` is rejected.
 - Do not suggest `dlt.pipeline` for landing. Prefer `ingestion.library: det`
-  (`dlt` is a deprecated alias, not removed yet).
+  (or `thin` for filesystem-only); `ingestion.library: dlt` is rejected.

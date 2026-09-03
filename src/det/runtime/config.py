@@ -50,11 +50,21 @@ class ValidationConfig(BaseModel):
 
 
 class IngestionConfig(BaseModel):
-    # ``det`` is the multi-destination bronze writer. ``dlt`` is a deprecated alias
-    # for the same backend (dlt never lands bronze). ``thin`` is filesystem-only.
-    library: Literal["det", "dlt", "thin"] = "det"
+    # ``det`` is the multi-destination bronze writer. ``thin`` is filesystem-only.
+    # ``dlt`` was never a writer — only a removed alias for ``det``.
+    library: Literal["det", "thin"] = "det"
     # SQL INSERT batch size and JSONL flush cadence. Coerce/validate stay per-row.
     chunk_rows: int = Field(default=10_000, ge=1)
+
+    @field_validator("library", mode="before")
+    @classmethod
+    def reject_dlt_writer_alias(cls, v: Any) -> Any:
+        if isinstance(v, str) and v.strip().lower() == "dlt":
+            raise ValueError(
+                "ingestion.library 'dlt' was removed; use 'det' "
+                "(dlt HTTP helpers in extract_to_raw remain allowed)"
+            )
+        return v
 
 
 # Iceberg bronze partition profile (create-time only; not hive layout).

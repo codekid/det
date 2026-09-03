@@ -19,7 +19,6 @@ def load_plugins() -> None:
     from det.runtime.registry import register_ingestion, register_mapper
 
     register_ingestion("det", DetBackend)
-    register_ingestion("dlt", DetBackend)  # deprecated alias for library: det
     register_ingestion("thin", ThinBackend)
     register_mapper("identity", identity_mapper)
     _LOADED = True
