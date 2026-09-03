@@ -7,7 +7,7 @@ from pathlib import Path
 from textwrap import dedent
 
 from det.logging import get_logger
-from det.runtime.discovery import in_tree_source_map, project_sources_dir
+from det.runtime.discovery import in_tree_reserved_source_map, project_sources_dir
 from det.runtime.ids import parse_canonical_id, validate_canonical_id
 from det.scaffold.dbt import ScaffoldAction
 from det.scaffold.init_pipeline import InitPipelineResult, init_pipeline
@@ -134,7 +134,7 @@ def init_source(
     plugin_path = project_sources_dir(root) / provider / f"{source}.py"
     actions: list[ScaffoldAction] = []
 
-    tree = in_tree_source_map()
+    tree = in_tree_reserved_source_map()
     if name in tree:
         raise ValueError(
             f"source id {name!r} collides with in-tree plugin {tree[name]}; "

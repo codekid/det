@@ -13,7 +13,9 @@ inclusive, `-e` exclusive (default start + 1 day). Lake hive/SQL contract:
 
 - Prefer the **det** MCP server for inspect and dry-run. Never extract/load/run,
   `det migrate` (write), `det prune --apply`, DagRun triggers, or non-dry-run
-  scaffold/init through MCP (those tools are not exposed).
+  scaffold/init through MCP (those tools are not exposed). Agents drive the
+  analytics adapter (scaffold / dbt) via MCP dry-run + CLI — not by importing
+  scaffold from `det.runtime`.
 - Never chain a dry-run preview into a writing CLI command in the same turn. Show
   the plan and wait for the user to confirm. After they confirm, the operator
   runs `det approve --plan` (or `--command` / `--argv-json`) with `--approved-by`.

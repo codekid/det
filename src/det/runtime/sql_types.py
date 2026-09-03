@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from det.scaffold.flatten import is_array_prop, is_object_prop
+from det.runtime.schema_shapes import is_array_prop, is_object_prop
 
 Dialect = Literal["duckdb", "postgres"]
 

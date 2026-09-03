@@ -1122,10 +1122,11 @@ def check(
     extract/load.
     """
     _prepare_tool()
-    from det.runtime.check import check_project, findings_payload
+    from det.runtime.check import findings_payload
+    from det.scaffold.check_dbt import check_project_with_dbt
 
     base = _root(root)
-    findings = check_project(base, pipeline=pipeline)
+    findings = check_project_with_dbt(base, pipeline=pipeline)
     return findings_payload(findings)
 
 

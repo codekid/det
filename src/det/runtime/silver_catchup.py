@@ -15,16 +15,16 @@ from pathlib import Path
 from typing import Any
 
 from det.logging import get_logger
-from det.mcp.inspect._common import DEFAULT_LIST_LIMIT, clamp_list_limit
-from det.mcp.inspect._partitions import list_bronze_runs
-from det.mcp.query_sql import analytics_duckdb_path
 from det.optional_deps import require_duckdb
+from det.runtime.bronze_runs import list_bronze_runs
 from det.runtime.config import PipelineConfig, load_pipeline_config
 from det.runtime.ids import dbt_model_slug, parse_canonical_id
 from det.runtime.lake import LakeRef, relpath, resolve_lake_roots
+from det.runtime.limits import DEFAULT_LIST_LIMIT, clamp_list_limit
 from det.runtime.meta import identity_iso
 from det.runtime.pipelines import list_pipeline_ids, resolve_pipeline_ref
 from det.runtime.settings import DetSettings, get_active_settings
+from det.runtime.warehouse_paths import analytics_duckdb_path
 
 logger = get_logger(__name__)
 

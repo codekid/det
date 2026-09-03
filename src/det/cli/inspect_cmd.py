@@ -31,15 +31,15 @@ def check_cmd(
     import json
 
     from det.runtime.check import (
-        check_project,
         findings_payload,
         format_findings,
         has_errors,
         has_warnings,
     )
+    from det.scaffold.check_dbt import check_project_with_dbt
 
     root = _project_root(project_root)
-    findings = check_project(root, pipeline=pipeline)
+    findings = check_project_with_dbt(root, pipeline=pipeline)
     if as_json:
         typer.echo(json.dumps(findings_payload(findings), indent=2))
     else:
