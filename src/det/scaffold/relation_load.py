@@ -19,8 +19,11 @@ IncStrategy = Literal["delete+insert", "append", "merge"]
 
 
 class _SpineLike(Protocol):
-    name: str
-    level_idx: int
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def level_idx(self) -> int: ...
 
 
 @dataclass(frozen=True)
