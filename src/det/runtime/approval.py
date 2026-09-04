@@ -799,6 +799,8 @@ def dbt_write_argv(
         if not mid:
             raise ValueError("--catchup requires --catchup-manifest <scm_…>")
         argv.extend(["--catchup-manifest", mid])
+    elif (catchup_manifest or "").strip():
+        raise ValueError("--catchup-manifest requires --catchup")
     if target:
         argv.extend(["--target", str(target).strip()])
     argv.extend(

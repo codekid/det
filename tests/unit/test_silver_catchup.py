@@ -491,6 +491,91 @@ def test_plan_includes_all_catchup_rows_beyond_display_limit(
     assert planned["diff"]["catchup_count"] == n
 
 
+def test_duckdb_coverage_query_fails_closed_on_missing_interval_columns(
+    catchup_root: Path, monkeypatch
+):
+    """Missing coverage columns must not look like empty silver."""
+    duckdb = pytest.importorskip("duckdb")
+    lake = catchup_root / "data" / "lake"
+    monkeypatch.setenv("DET_LAKE_PATH", str(lake))
+    db = catchup_root / "analytics.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create schema if not exists silver_example_api")
+    con.execute(
+        """
+        create table silver_example_api.silver_example_api__events (
+            id integer,
+            __extract_run_datetime timestamptz
+        )
+        """
+    )
+    con.execute(
+        "insert into silver_example_api.silver_example_api__events values (1, ?)",
+        ["2026-09-02T12:08:00+00:00"],
+    )
+    con.close()
+
+    config = load_pipeline_config(
+        catchup_root / "configs" / "pipelines" / "example_api" / "events.yaml"
+    )
+    with pytest.raises(ValueError, match="coverage query failed"):
+        list_silver_extract_runs(
+            config, project_root=catchup_root, analytics_db=db
+        )
+
+    _write_bronze_run(
+        lake,
+        interval_start="2026-09-01T00:00:00+00:00",
+        interval_end="2026-09-02T00:00:00+00:00",
+        extract_run="2026-09-02T12:08:00+00:00",
+    )
+    settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
+        lake_override=str(lake)
+    )
+    with use_settings(settings):
+        with pytest.raises(ValueError, match="coverage query failed"):
+            diff_bronze_silver(
+                "example_api.events",
+                project_root=catchup_root,
+                analytics_db=db,
+                complete=True,
+            )
+
+
+def test_complete_diff_rejects_unavailable_silver_coverage(
+    catchup_root: Path, monkeypatch
+):
+    """Missing DuckDB analytics must not become zero coverage on apply."""
+    lake = catchup_root / "data" / "lake"
+    monkeypatch.setenv("DET_LAKE_PATH", str(lake))
+    _write_bronze_run(
+        lake,
+        interval_start="2026-09-01T00:00:00+00:00",
+        interval_end="2026-09-02T00:00:00+00:00",
+        extract_run="2026-09-02T12:08:00+00:00",
+    )
+    missing_db = catchup_root / "no-such-analytics.duckdb"
+    settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
+        lake_override=str(lake)
+    )
+    with use_settings(settings):
+        preview = diff_bronze_silver(
+            "example_api.events",
+            project_root=catchup_root,
+            analytics_db=missing_db,
+            complete=False,
+        )
+        assert preview.get("note")
+        assert preview["catchup_count"] == 1
+        with pytest.raises(ValueError, match="requires readable silver coverage"):
+            diff_bronze_silver(
+                "example_api.events",
+                project_root=catchup_root,
+                analytics_db=missing_db,
+                complete=True,
+            )
+
+
 def test_list_silver_extract_runs_bigquery_note_without_project(
     catchup_root: Path, monkeypatch
 ):

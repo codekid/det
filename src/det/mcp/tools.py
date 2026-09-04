@@ -419,6 +419,8 @@ def dbt_dry_run(
         pipeline_arg = _pipeline_path(pipeline, base)
     if catchup and not (catchup_manifest and str(catchup_manifest).strip()):
         raise ValueError("catchup requires catchup_manifest (scm_… id)")
+    if catchup_manifest and str(catchup_manifest).strip() and not catchup:
+        raise ValueError("catchup_manifest requires catchup=true")
     result = run_dbt(
         project_root=base,
         command=command,  # type: ignore[arg-type]

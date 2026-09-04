@@ -453,6 +453,14 @@ def test_dbt_full_refresh_and_target_are_bound():
     assert len(digests) == 4
 
 
+def test_dbt_write_argv_rejects_catchup_manifest_without_catchup():
+    mid = "scm_" + ("cd" * 8)
+    with pytest.raises(ValueError, match="catchup-manifest requires --catchup"):
+        dbt_write_argv("noaa.storm_events", catchup=False, catchup_manifest=mid)
+    with pytest.raises(ValueError, match="requires --catchup-manifest"):
+        dbt_write_argv("noaa.storm_events", catchup=True, catchup_manifest=None)
+
+
 def test_claim_is_exclusive(tmp_path: Path):
     """Two concurrent claims on one approval: exactly one wins."""
     rec = _create(tmp_path)

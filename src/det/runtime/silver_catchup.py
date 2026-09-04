@@ -205,13 +205,16 @@ def _list_silver_extract_runs_duckdb(
     duckdb = require_duckdb()
     con = duckdb.connect(str(db_path), read_only=True)
     try:
-        exists = con.execute(
-            """
-            select count(*) from information_schema.tables
-            where table_schema = ? and table_name = ?
-            """,
-            [schema, table],
-        ).fetchone()
+        try:
+            exists = con.execute(
+                """
+                select count(*) from information_schema.tables
+                where table_schema = ? and table_name = ?
+                """,
+                [schema, table],
+            ).fetchone()
+        except Exception as exc:
+            return set(), f"catch-up silver coverage uses DuckDB analytics; {exc}"
         if not exists or exists[0] == 0:
             return (
                 set(),
@@ -220,17 +223,23 @@ def _list_silver_extract_runs_duckdb(
             )
         # schema/table from silver_relation (pipeline ids), not caller SQL.
         qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
-        rows = con.execute(
-            f"""
-            select distinct
-                "__interval_start_datetime",
-                "__interval_end_datetime",
-                "__extract_run_datetime"
-            from {qualified}
-            """  # noqa: S608
-        ).fetchall()
-    except Exception as exc:
-        return set(), f"catch-up silver coverage uses DuckDB analytics; {exc}"
+        try:
+            rows = con.execute(
+                f"""
+                select distinct
+                    "__interval_start_datetime",
+                    "__interval_end_datetime",
+                    "__extract_run_datetime"
+                from {qualified}
+                """  # noqa: S608
+            ).fetchall()
+        except Exception as exc:
+            # Missing interval columns (or other SELECT failures) must not look
+            # like a valid empty silver — that would invent full catch-up holes.
+            raise ValueError(
+                "catch-up silver coverage query failed for "
+                f"{schema}.{table}: {exc}"
+            ) from exc
     finally:
         con.close()
     out: set[tuple[str, str, str]] = set()
@@ -371,6 +380,11 @@ def diff_bronze_silver(
     silver_keys, silver_note = list_silver_extract_runs(
         config, project_root=root, analytics_db=analytics_db
     )
+    if complete and silver_note:
+        raise ValueError(
+            "catch-up apply requires readable silver coverage; "
+            f"{silver_note}"
+        )
 
     latest = _latest_per_interval(bronze_runs)
     stamp = detected_at or datetime.now(UTC).isoformat()
