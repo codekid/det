@@ -6,7 +6,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from det.runtime.config import DbtStgConfig, load_pipeline_config
+from det.runtime.config import DbtStgConfig, FlattenConfig, ViewWarnConfig, load_pipeline_config
 from det.scaffold.dbt import (
     _is_identity_name,
     _order_stg_select_columns,
@@ -369,6 +369,63 @@ def test_dbt_stg_config_rejects_empty_coalesce_and_rename_collision():
         DbtStgConfig(coalesce={"severity": []})
     with pytest.raises(ValidationError):
         DbtStgConfig(rename={"a": "x", "b": "x"})
+
+
+def test_dbt_stg_closed_set_rejects_unknown_keys():
+    with pytest.raises(ValidationError, match="foo"):
+        DbtStgConfig.model_validate({"foo": 1})
+    with pytest.raises(ValidationError, match="bar"):
+        FlattenConfig.model_validate({"depth": 1, "bar": True})
+    with pytest.raises(ValidationError, match="baz"):
+        ViewWarnConfig.model_validate({"enabled": True, "baz": 1})
+    with pytest.raises(ValidationError, match="typo"):
+        DbtStgConfig.model_validate(
+            {"relations": {"line_items": {"path": "line_items", "typo": True}}}
+        )
+
+
+def test_dbt_stg_nested_fields_scopes_still_validate():
+    stg = DbtStgConfig.model_validate(
+        {
+            "fields": {
+                "shipping_address": {
+                    "rename": {"city": "ship_city"},
+                    "geo": {"coords": {"rename": {"lat": "ship_lat"}}},
+                }
+            },
+            "relations": {
+                "line_items": {
+                    "path": "line_items",
+                    "grain": ["sku"],
+                    "variant": {"rename": {"id": "variant_id"}},
+                }
+            },
+        }
+    )
+    assert (
+        stg.fields["shipping_address"].children["geo"].children["coords"].rename[
+            "lat"
+        ]
+        == "ship_lat"
+    )
+    assert stg.relations["line_items"].children["variant"].rename["id"] == "variant_id"
+
+
+def test_in_tree_pipelines_with_dbt_stg_still_load(project_root: Path):
+    events = load_pipeline_config(
+        project_root / "configs/pipelines/example_api/events.yaml"
+    )
+    assert events.dbt.stg.coalesce
+    assert events.dbt.stg.rename
+    # Default/empty stg on pipelines without knobs must still load under forbid.
+    orders = load_pipeline_config(
+        project_root / "configs/pipelines/example_api/orders.yaml"
+    )
+    assert orders.dbt.stg is not None
+    storm = load_pipeline_config(
+        project_root / "configs/pipelines/noaa/storm_events.yaml"
+    )
+    assert storm.dbt.stg is not None
 
 
 def test_scaffold_applies_dbt_stg(tmp_path: Path):

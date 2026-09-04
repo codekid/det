@@ -48,6 +48,8 @@ inclusive, `-e` exclusive (default start + 1 day). Lake hive/SQL contract:
 - Pipeline YAML holds secret **names** (`auth_env`, `connection_env`); values stay in env.
 - Source plugins are discovered from `src/det/sources/<provider>/<source>.py`
   (`name` must match the path). Do not list them in `plugins.py`.
+- `dbt.stg` is a **closed** scaffold knob set (unknown keys fail at load). Prefer
+  hand-edited stg SQL for one-offs; see [docs/contract-triangle.md](docs/contract-triangle.md).
 
 ## MCP vs CLI
 

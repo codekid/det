@@ -14,6 +14,15 @@ source of “bronze loads but dbt fails” or “schema validates but analytics 
 Bronze is **wire-faithful**. Silver/gold adapt for reporting — prefer `dbt.stg` for
 frequent renames; reserve bronze mappers and `wire_version` bumps for true wire breaks.
 
+### `dbt.stg` is a closed scaffold API
+
+The knob inventory under `dbt.stg` (flatten, relations/`load`, adapt knobs, `fields`,
+`view_warn`) is **frozen**. Unknown keys fail at pipeline config load
+(`extra=forbid`). Scaffold **snapshots** stg/silver SQL from that set; one-off or
+novel analytics meaning belongs in hand-edited stg SQL (re-scaffold with
+`--force` only when you intend to overwrite). Expand the YAML surface only via an
+explicit SemVer change — do not invent silent knobs.
+
 ## When you change something
 
 | Change | Touch | Rebuild / regen |
