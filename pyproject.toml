@@ -1,6 +1,6 @@
 [project]
 name = "det-elt"
-version = "0.5.0"
+version = "0.5.1"
 description = "DET — Data Extract Tool: config-driven extraction runtime with pluggable ingestion"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"

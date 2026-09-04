@@ -250,6 +250,8 @@ def _validate_adapt_knob_keys(
 class BigQueryPartitionConfig(BaseModel):
     """dbt-bigquery ``partition_by`` dict for scaffolded silver models."""
 
+    model_config = ConfigDict(extra="forbid")
+
     field: str
     data_type: Literal["timestamp", "date", "datetime", "int64"] = "timestamp"
     granularity: Literal["hour", "day", "month", "year"] | None = None
@@ -288,6 +290,8 @@ class BigQueryPartitionConfig(BaseModel):
 
 class BigQuerySilverConfig(BaseModel):
     """Opt-in BigQuery table layout for scaffolded silver (parent or relation)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     partition_by: BigQueryPartitionConfig | None = None
     cluster_by: list[str] = Field(default_factory=list)
@@ -427,7 +431,10 @@ class FlattenConfig(BaseModel):
     Struct flatten knobs for stg (and per-relation flatten).
 
     ``depth`` null/omit = unlimited object levels. Arrays are never auto-exploded.
+    Closed set — unknown keys are rejected (``extra=forbid``).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     depth: int | None = None
     include: list[str] = Field(default_factory=list)
@@ -531,8 +538,11 @@ class AdaptScope(BaseModel):
     Path-scoped stg adaptations / relation tests.
 
     Knobs use **relative** names only. Any other mapping key is a child property
-    scope (e.g. ``geo:`` under ``shipping_address``).
+    scope (e.g. ``geo:`` under ``shipping_address``), rewritten into ``children``
+    before ``extra=forbid`` runs.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     coalesce: dict[str, list[str]] = Field(default_factory=dict)
     null_sentinels: dict[str, list[Any]] = Field(default_factory=dict)
@@ -588,7 +598,12 @@ class RelationConfig(BaseModel):
     ``grain`` lists item field names that identify a row at this nest level.
     Scaffold emits path-qualified spine columns (``line_items__line_id``). Empty
     grain falls back to ``{path}__index`` from unnest ordinality.
+
+    Closed set — unknown keys are rejected after nested adapt scopes are
+    rewritten into ``children``.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     path: str | None = None
     materialized: Literal["view", "table"] = "view"
@@ -702,6 +717,8 @@ def _normalize_relations(
 class ViewWarnConfig(BaseModel):
     """Advisory lake sample thresholds for view-materialized relations."""
 
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = True
     sample_rows: int = 5000
     parent_rows: int = 500_000
@@ -725,7 +742,12 @@ class DbtStgConfig(BaseModel):
     Root coalesce/map/rename/exclude/null_sentinels apply to top-level scalars.
     Nested struct adaptations live under ``fields`` (path-scoped, relative keys).
     Relation adaptations/tests live on each ``relations`` entry.
+
+    Closed scaffold API — unknown keys fail at load (``extra=forbid``). Prefer
+    hand-edited stg SQL for one-off semantics; expand the set only via SemVer.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     flatten: FlattenConfig = Field(default_factory=FlattenConfig)
     relations: dict[str, RelationConfig] = Field(default_factory=dict)

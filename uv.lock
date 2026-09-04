@@ -601,7 +601,7 @@ wheels = [
 
 [[package]]
 name = "det-elt"
-version = "0.5.0"
+version = "0.5.1"
 source = { editable = "." }
 dependencies = [
     { name = "jsonschema" },

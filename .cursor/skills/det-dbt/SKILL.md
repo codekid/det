@@ -46,6 +46,11 @@ Install: `uv pip install -e ".[mcp,dbt]"`.
 
 ## `dbt.stg` / `dbt.silver` / `dbt.docs` (scaffold knobs)
 
+**`dbt.stg` is frozen (closed set).** Unknown keys fail at config load. Scaffold
+snapshots SQL from the inventory below; prefer hand-edited stg SQL for one-offs.
+Do not add new YAML semantics without a SemVer expansion. See
+[contract-triangle.md](../../docs/contract-triangle.md).
+
 ```yaml
 dbt:
   silver:
