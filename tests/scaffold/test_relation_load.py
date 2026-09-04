@@ -180,6 +180,9 @@ def test_scaffold_parent_replace_and_full_refresh(
     assert "line_items__tax_lines__title" in sil_tax  # in dedupe partition_by
     assert 'det_relation_path_chain=["line_items", "tax_lines"]' in sil_tax
     assert "det_relation_clear_empty_arrays" in sil_tax
+    assert '"json_path_macro": "det_json_path_string"' in sil_tax
+    assert '"json_path_macro": "det_json_path_double"' in sil_tax
+    assert '"field": "rate"' in sil_tax
 
     # YAML tests use dedupe grain, not delete_key (would wrongly unique-test parent id)
     yml = yaml.safe_load(
@@ -221,6 +224,43 @@ def test_spine_helpers_align_with_chain() -> None:
     chain = relation_chain_for(rels, name_parts)
     spine = spine_for_relation(name_parts, chain)
     assert relation_delete_key("id", spine) == ["id", "line_items__sku"]
+
+
+def test_spine_cte_expr_carries_typed_json_path_macro(project_root: Path) -> None:
+    from det.scaffold.dbt_sql import _spine_cte_expr, _spine_meta_entry
+    from det.validation.jsonschema_validator import load_json_schema
+
+    schema = load_json_schema(
+        project_root / "schemas/example_api/orders/orders.schema.yaml"
+    )
+    spine = [
+        SpineEntry(name="line_items__sku", level_idx=0, kind="grain", field="sku"),
+        SpineEntry(
+            name="line_items__tax_lines__title",
+            level_idx=1,
+            kind="grain",
+            field="title",
+        ),
+        SpineEntry(
+            name="line_items__tax_lines__rate",
+            level_idx=1,
+            kind="grain",
+            field="rate",
+        ),
+    ]
+    path_chain = ["line_items", "tax_lines"]
+    by_field = {
+        e.field: _spine_cte_expr(e, schema=schema, path_chain=path_chain) for e in spine
+    }
+    assert by_field["sku"]["json_path_macro"] == "det_json_path_string"
+    assert "det_json_path_string('t0._rel', '$.sku')" in by_field["sku"]["cte_expr"]
+    assert by_field["title"]["json_path_macro"] == "det_json_path_string"
+    assert by_field["rate"]["json_path_macro"] == "det_json_path_double"
+    assert "det_json_path_double('t1._rel', '$.rate')" in by_field["rate"]["cte_expr"]
+
+    meta = _spine_meta_entry(spine[2], schema=schema, path_chain=path_chain)
+    assert meta["json_path_macro"] == "det_json_path_double"
+    assert meta["field"] == "rate"
 
 
 def test_empty_array_clears_top_level_and_nested_children() -> None:

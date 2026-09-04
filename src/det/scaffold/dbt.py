@@ -308,10 +308,20 @@ def scaffold_dbt(
         rel_slug = f"{model_slug}__{'__'.join(name_parts)}"
         rel_chain = relation_chain_for(stg_cfg.relations, name_parts)
         spine = spine_for_relation(name_parts, rel_chain)
-        spine_projections = [
-            {"name": e.name, "cte_expr": _spine_cte_expr(e, schema=schema, path_chain=path_chain)}
-            for e in spine
-        ]
+        spine_projections = []
+        spine_meta = []
+        for e in spine:
+            proj = _spine_cte_expr(e, schema=schema, path_chain=path_chain)
+            spine_projections.append({"name": e.name, "cte_expr": proj["cte_expr"]})
+            spine_meta.append(
+                {
+                    "name": e.name,
+                    "level_idx": e.level_idx,
+                    "kind": e.kind,
+                    "field": e.field,
+                    "json_path_macro": proj["json_path_macro"],
+                }
+            )
         rel_columns = relation_stg_columns(
             schema,
             path_chain=path_chain,
@@ -342,15 +352,6 @@ def scaffold_dbt(
             provider=provider,
             meta_columns=_META_COLUMNS,
         )
-        spine_meta = [
-            {
-                "name": e.name,
-                "level_idx": e.level_idx,
-                "kind": e.kind,
-                "field": e.field,
-            }
-            for e in spine
-        ]
         rel_silver_sql = _render(
             "silver_relation.sql.j2",
             model_slug=rel_slug,

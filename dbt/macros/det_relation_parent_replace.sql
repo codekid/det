@@ -83,13 +83,56 @@
 {%- if sp['kind'] == 'index' %}
             t{{ sp['level_idx'] }}.__rel_index as {{ sp['name'] }}
 {%- else %}
+{%- set path_macro = sp.get('json_path_macro', 'det_json_path_string') -%}
+{%- if path_macro == 'det_json_path_integer' %}
+            {{ det_json_path_integer('t' ~ sp['level_idx'] ~ '._rel', '$.' ~ sp['field']) }} as {{ sp['name'] }}
+{%- elif path_macro == 'det_json_path_double' %}
+            {{ det_json_path_double('t' ~ sp['level_idx'] ~ '._rel', '$.' ~ sp['field']) }} as {{ sp['name'] }}
+{%- elif path_macro == 'det_json_path_boolean' %}
+            {{ det_json_path_boolean('t' ~ sp['level_idx'] ~ '._rel', '$.' ~ sp['field']) }} as {{ sp['name'] }}
+{%- else %}
             {{ det_json_path_string('t' ~ sp['level_idx'] ~ '._rel', '$.' ~ sp['field']) }} as {{ sp['name'] }}
+{%- endif %}
 {%- endif %}
 {%- endfor %}
         from {{ det_bronze_from(sql_table, sql_schema) }} as _parent
 {%- for step_i in range(level_k) %}
 {%- set step = path_chain[step_i] %}
+{%- if target.name == 'bigquery' %}
+{#- Subquery keeps tN._rel / tN.__rel_index like DuckDB WITH ORDINALITY aliases. -#}
 {%- if step_i == 0 %}
+        cross join (
+          select __el as _rel, __off as __rel_index
+          from unnest(
+            json_query_array(
+              safe.parse_json(
+                if(
+                  typeof(_parent.{{ step }}) = 'JSON',
+                  to_json_string(_parent.{{ step }}),
+                  cast(_parent.{{ step }} as string)
+                )
+              )
+            )
+          ) as __el with offset as __off
+        ) as t{{ step_i }}
+{%- else %}
+        cross join (
+          select __el as _rel, __off as __rel_index
+          from unnest(
+            json_query_array(
+              safe.parse_json(
+                if(
+                  typeof(t{{ step_i - 1 }}._rel) = 'JSON',
+                  to_json_string(t{{ step_i - 1 }}._rel),
+                  cast(t{{ step_i - 1 }}._rel as string)
+                )
+              ),
+              '$.{{ step }}'
+            )
+          ) as __el with offset as __off
+        ) as t{{ step_i }}
+{%- endif %}
+{%- elif step_i == 0 %}
         cross join unnest(cast(_parent.{{ step }} as JSON[])) with ordinality as t{{ step_i }}(_rel, __rel_index)
 {%- else %}
         cross join unnest(cast(json_extract(t{{ step_i - 1 }}._rel, '$.{{ step }}') as JSON[])) with ordinality as t{{ step_i }}(_rel, __rel_index)

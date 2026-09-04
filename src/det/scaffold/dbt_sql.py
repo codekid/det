@@ -281,19 +281,25 @@ def _cast_macro_call(name: str, prop: dict[str, Any] | None) -> str:
     return f"{{{{ det_as_string('{name}') }}}}"
 
 
+def _path_json_macro_name(prop: dict[str, Any] | None) -> str:
+    """Resolve ``det_json_path_*`` macro from a JSON Schema property."""
+    allowed = _allowed_types(prop) if prop else set()
+    if "integer" in allowed:
+        return "det_json_path_integer"
+    if "number" in allowed:
+        return "det_json_path_double"
+    if "boolean" in allowed:
+        return "det_json_path_boolean"
+    return "det_json_path_string"
+
+
 def _path_cast_macro_call(
     root_col: str, extract_path: str, prop: dict[str, Any] | None
 ) -> str:
     """dbt Jinja path extract + cast (``{{ det_json_path_string('a', '$.b') }}``)."""
-    allowed = _allowed_types(prop) if prop else set()
     path_lit = extract_path.replace("'", "''")
-    if "integer" in allowed:
-        return f"{{{{ det_json_path_integer('{root_col}', '{path_lit}') }}}}"
-    if "number" in allowed:
-        return f"{{{{ det_json_path_double('{root_col}', '{path_lit}') }}}}"
-    if "boolean" in allowed:
-        return f"{{{{ det_json_path_boolean('{root_col}', '{path_lit}') }}}}"
-    return f"{{{{ det_json_path_string('{root_col}', '{path_lit}') }}}}"
+    macro = _path_json_macro_name(prop)
+    return f"{{{{ {macro}('{root_col}', '{path_lit}') }}}}"
 
 
 def _apply_null_sentinels(expr: str, sentinels: list[Any]) -> str:
@@ -570,20 +576,49 @@ def _spine_cte_expr(
     *,
     schema: dict[str, Any],
     path_chain: Sequence[str],
-) -> str:
-    """SQL/Jinja expr that projects a spine column inside the exploded CTE."""
+) -> dict[str, str]:
+    """Spine CTE projection: ``cte_expr`` and ``json_path_macro`` for grain keys.
+
+    Index spines use unnest ordinality (no JSON path). Grain spines resolve the
+    schema type so parent_replace key projection matches typed silver columns.
+    """
     if entry.kind == "index":
-        return f"t{entry.level_idx}.__rel_index"
+        return {
+            "cte_expr": f"t{entry.level_idx}.__rel_index",
+            # Unused for index projection; keeps spine_meta shape uniform.
+            "json_path_macro": "det_json_path_integer",
+        }
     item_schema = relation_item_schema_at(schema, list(path_chain[: entry.level_idx + 1]))
     props = item_schema.get("properties") or {}
     if not isinstance(props, dict):
         props = {}
     prop = props.get(entry.field) if isinstance(props.get(entry.field), dict) else None
-    return _path_cast_macro_call(
-        f"t{entry.level_idx}._rel",
-        f"$.{entry.field}",
-        prop if isinstance(prop, dict) else {"type": "string"},
-    )
+    resolved = prop if isinstance(prop, dict) else {"type": "string"}
+    return {
+        "cte_expr": _path_cast_macro_call(
+            f"t{entry.level_idx}._rel",
+            f"$.{entry.field}",
+            resolved,
+        ),
+        "json_path_macro": _path_json_macro_name(resolved),
+    }
+
+
+def _spine_meta_entry(
+    entry: SpineEntry,
+    *,
+    schema: dict[str, Any],
+    path_chain: Sequence[str],
+) -> dict[str, Any]:
+    """Config payload for ``det_relation_spine`` (parent_replace key projection)."""
+    proj = _spine_cte_expr(entry, schema=schema, path_chain=path_chain)
+    return {
+        "name": entry.name,
+        "level_idx": entry.level_idx,
+        "kind": entry.kind,
+        "field": entry.field,
+        "json_path_macro": proj["json_path_macro"],
+    }
 
 
 def relation_stg_columns(
@@ -711,13 +746,7 @@ def expected_silver_sql(
         dedupe_key = relation_dedupe_key(parent_key, spine)
         delete_key = relation_delete_key(parent_key, spine)
         spine_meta = [
-            {
-                "name": e.name,
-                "level_idx": e.level_idx,
-                "kind": e.kind,
-                "field": e.field,
-            }
-            for e in spine
+            _spine_meta_entry(e, schema=schema, path_chain=path_chain) for e in spine
         ]
         out[f"dbt/models/silver/silver_{rel_slug}.sql"] = _render(
             "silver_relation.sql.j2",
