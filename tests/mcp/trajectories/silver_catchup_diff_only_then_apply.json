@@ -1,14 +1,18 @@
 {
   "id": "silver_catchup_diff_only_then_apply",
   "scenario": "silver_catchup",
-  "expect": ["missing_inspect"],
+  "expect": [
+    "missing_inspect"
+  ],
   "turns": [
     {
       "events": [
         {
           "type": "mcp",
           "name": "diff_bronze_silver",
-          "arguments": {"pipeline": "noaa.storm_events"}
+          "arguments": {
+            "pipeline": "noaa.storm_events"
+          }
         }
       ]
     },
@@ -21,7 +25,11 @@
             "silver-catchup-plan",
             "-p",
             "noaa.storm_events",
-            "--apply"
+            "--apply",
+            "--manifest-id",
+            "scm_abababababababab",
+            "--content-digest",
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           ]
         }
       ]

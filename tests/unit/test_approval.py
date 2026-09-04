@@ -435,12 +435,16 @@ def test_set_overrides_are_order_independent():
 
 
 def test_dbt_full_refresh_and_target_are_bound():
+    mid = "scm_" + ("ab" * 8)
     base = dbt_write_argv("noaa.storm_events")
     refreshed = dbt_write_argv("noaa.storm_events", full_refresh=True)
     retargeted = dbt_write_argv("noaa.storm_events", target="prod")
-    catchup = dbt_write_argv("noaa.storm_events", catchup=True)
+    catchup = dbt_write_argv(
+        "noaa.storm_events", catchup=True, catchup_manifest=mid
+    )
     assert "--full-refresh" in refreshed
     assert "--catchup" in catchup
+    assert "--catchup-manifest" in catchup and mid in catchup
     assert ["--target", "prod"] == retargeted[-2:]
     digests = {
         make_plan("dbt", argv).plan_digest
@@ -1210,8 +1214,20 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ("--full-refresh",),
                 ),
                 "catchup": (
-                    dbt_write_argv("noaa.storm_events", catchup=True),
+                    dbt_write_argv(
+                        "noaa.storm_events",
+                        catchup=True,
+                        catchup_manifest="scm_" + ("ab" * 8),
+                    ),
                     ("--catchup",),
+                ),
+                "catchup_manifest": (
+                    dbt_write_argv(
+                        "noaa.storm_events",
+                        catchup=True,
+                        catchup_manifest="scm_" + ("cd" * 8),
+                    ),
+                    ("--catchup-manifest",),
                 ),
                 "target": (
                     dbt_write_argv("noaa.storm_events", target="prod"),
@@ -1375,19 +1391,36 @@ def test_bound_params_encoded_in_write_argv_builders():
                 "apply": (base, ("--apply",)),  # implicit: always present
             }
         elif command == "silver-catchup-plan":
-            base = silver_catchup_plan_write_argv("noaa.storm_events")
+            mid = "scm_" + ("ab" * 8)
+            digest = "sha256:" + ("0" * 64)
+            mid2 = "scm_" + ("cd" * 8)
+            digest2 = "sha256:" + ("1" * 64)
+            base = silver_catchup_plan_write_argv(
+                "noaa.storm_events", manifest_id=mid, content_digest=digest
+            )
             checks = {
                 "pipeline": (
-                    silver_catchup_plan_write_argv("example_api.events"),
+                    silver_catchup_plan_write_argv(
+                        "example_api.events",
+                        manifest_id=mid,
+                        content_digest=digest,
+                    ),
                     ("example_api.events",),
                 ),
                 "all_pipelines": (
-                    silver_catchup_plan_write_argv(all_pipelines=True),
+                    silver_catchup_plan_write_argv(
+                        all_pipelines=True,
+                        manifest_id=mid,
+                        content_digest=digest,
+                    ),
                     ("--all-pipelines",),
                 ),
                 "interval_start": (
                     silver_catchup_plan_write_argv(
-                        "noaa.storm_events", interval_start="2026-08-06"
+                        "noaa.storm_events",
+                        interval_start="2026-08-06",
+                        manifest_id=mid,
+                        content_digest=digest,
                     ),
                     ("-s",),
                 ),
@@ -1396,35 +1429,70 @@ def test_bound_params_encoded_in_write_argv_builders():
                         "noaa.storm_events",
                         interval_start="2026-08-06",
                         interval_end="2026-08-07",
+                        manifest_id=mid,
+                        content_digest=digest,
                     ),
                     ("-e",),
                 ),
                 "limit": (
-                    silver_catchup_plan_write_argv("noaa.storm_events", limit=50),
+                    silver_catchup_plan_write_argv(
+                        "noaa.storm_events",
+                        limit=50,
+                        manifest_id=mid,
+                        content_digest=digest,
+                    ),
                     ("--limit", "50"),
                 ),
                 "apply": (base, ("--apply",)),  # implicit: always present
+                "manifest_id": (
+                    silver_catchup_plan_write_argv(
+                        "noaa.storm_events",
+                        manifest_id=mid2,
+                        content_digest=digest,
+                    ),
+                    ("--manifest-id", mid2),
+                ),
+                "content_digest": (
+                    silver_catchup_plan_write_argv(
+                        "noaa.storm_events",
+                        manifest_id=mid,
+                        content_digest=digest2,
+                    ),
+                    ("--content-digest", digest2),
+                ),
                 "lake_path": (
                     silver_catchup_plan_write_argv(
-                        "noaa.storm_events", lake_path="/tmp/lake"
+                        "noaa.storm_events",
+                        lake_path="/tmp/lake",
+                        manifest_id=mid,
+                        content_digest=digest,
                     ),
                     ("--lake-path",),
                 ),
                 "lake_path_raw": (
                     silver_catchup_plan_write_argv(
-                        "noaa.storm_events", lake_path_raw="/tmp/raw"
+                        "noaa.storm_events",
+                        lake_path_raw="/tmp/raw",
+                        manifest_id=mid,
+                        content_digest=digest,
                     ),
                     ("--lake-path-raw",),
                 ),
                 "lake_path_bronze": (
                     silver_catchup_plan_write_argv(
-                        "noaa.storm_events", lake_path_bronze="/tmp/bronze"
+                        "noaa.storm_events",
+                        lake_path_bronze="/tmp/bronze",
+                        manifest_id=mid,
+                        content_digest=digest,
                     ),
                     ("--lake-path-bronze",),
                 ),
                 "lake_path_ops": (
                     silver_catchup_plan_write_argv(
-                        "noaa.storm_events", lake_path_ops="/tmp/ops"
+                        "noaa.storm_events",
+                        lake_path_ops="/tmp/ops",
+                        manifest_id=mid,
+                        content_digest=digest,
                     ),
                     ("--lake-path-ops",),
                 ),

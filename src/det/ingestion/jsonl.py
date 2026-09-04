@@ -27,6 +27,10 @@ def write_jsonl_partition(
     ``chunk_rows`` lines. On error the partition dir is removed so load does
     not see a partial file.
 
+    Visibility for list/catch-up is **not** this write: filesystem bronze
+    backends must publish ``meta/manifest.json`` afterward
+    (:func:`det.runtime.manifest.publish_filesystem_bronze_commit`).
+
     DET writes bronze itself rather than handing rows to a dlt pipeline. dlt's
     normalizer would reshape nested fields and strip the leading __ from meta
     columns, and its pipeline would persist load/version/state files next to the

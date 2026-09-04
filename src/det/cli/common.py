@@ -157,6 +157,7 @@ _BOUND_PARAMS: dict[str, frozenset[str]] = {
             "command",
             "full_refresh",
             "catchup",
+            "catchup_manifest",
             "target",
             *_LAKE_LAYER_PARAMS,
             "set_",
@@ -205,6 +206,8 @@ _BOUND_PARAMS: dict[str, frozenset[str]] = {
             "interval_end",
             "limit",
             "apply",
+            "manifest_id",
+            "content_digest",
             *_LAKE_LAYER_PARAMS,
         }
     ),

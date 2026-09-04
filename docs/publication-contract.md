@@ -143,6 +143,21 @@ Bronze **replace-by-run** is keyed by DET run-identity meta columns (interval +
 extract_run), not by “append forever.” Reloading the same extract-run is
 intended to converge, not to duplicate.
 
+### Filesystem bronze publication
+
+JSONL bronze uses the same visibility protocol as raw:
+
+```text
+WRITING      data.jsonl streamed in place (incomplete prefixes may exist)
+COMMITTED    meta/manifest.json published → list_bronze_runs / catch-up see it
+```
+
+- `write_jsonl_partition` is the data write only.
+- `publish_filesystem_bronze_commit` (via DetBackend / ThinBackend) publishes
+  `meta/manifest.json` **after** `data.jsonl` completes.
+- `list_bronze_runs` for `destination.type=filesystem` walks with
+  `require_committed=True` (Iceberg/SQL retain their own commit semantics).
+
 Attempt **receipts** under `{lake}/runs/` are observability (`ok` / `error`).
 They are **not** the raw commit marker.
 
@@ -155,7 +170,8 @@ They are **not** the raw commit marker.
 | Crash during `data/` writes | Orphan prefix, not committed | Re-extract (same prefix cleans; or new extract_run) |
 | Crash before manifest publish | Same | Same |
 | Crash after manifest | **COMMITTED** | `det load` (or complete via load half of run) |
-| Crash during bronze write | Raw committed; bronze may be partial | `det load` same extract_run (replace-by-run) |
+| Crash during bronze write | Raw committed; bronze may be partial / uncommitted | `det load` same extract_run (replace-by-run). Filesystem: incomplete JSONL without `meta/manifest.json` is invisible to list/catch-up |
+| Crash after bronze data, before bronze manifest | Filesystem: data may exist, not listed | Re-load (rewrites partition + publishes commit) |
 | Crash after bronze, before `validation` stamp | Bronze may be complete; no validation block | Re-load to stamp, or treat validation as optional proof |
 | Lease holder dead | Lock until TTL; then steal | Wait, or `det lock-release … --force` after confirming the worker is gone |
 | Corrupt manifest JSON | Treated as not committed | Fix or delete prefix; re-extract |

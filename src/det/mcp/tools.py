@@ -303,7 +303,13 @@ def list_bronze_partitions(
 
     dataset_dir = bronze_dataset_dir(config, base)
     capped = max(1, min(int(limit), DEFAULT_LIST_LIMIT))
-    runs = insp.walk_hive_runs(dataset_dir, root=base, limit=capped, normalize_iso=False)
+    runs = insp.walk_hive_runs(
+        dataset_dir,
+        root=base,
+        limit=capped,
+        normalize_iso=False,
+        require_committed=True,
+    )
     return {
         "pipeline": config.name,
         "destination_type": "filesystem",
@@ -401,6 +407,7 @@ def dbt_dry_run(
     command: str = "build",
     select: list[str] | None = None,
     catchup: bool = False,
+    catchup_manifest: str | None = None,
     root: Path | None = None,
 ) -> dict[str, Any]:
     _prepare_tool()
@@ -410,6 +417,8 @@ def dbt_dry_run(
     pipeline_arg: Path | str | None = None
     if pipeline is not None:
         pipeline_arg = _pipeline_path(pipeline, base)
+    if catchup and not (catchup_manifest and str(catchup_manifest).strip()):
+        raise ValueError("catchup requires catchup_manifest (scm_… id)")
     result = run_dbt(
         project_root=base,
         command=command,  # type: ignore[arg-type]
@@ -417,6 +426,7 @@ def dbt_dry_run(
         exclude=analytics_exclude(select),
         pipeline=pipeline_arg,
         catchup=catchup,
+        catchup_manifest=catchup_manifest,
         dry_run=True,
     )
     from det.runtime.approval import dbt_write_argv
@@ -429,6 +439,7 @@ def dbt_dry_run(
         "lake_path": result.lake_path,
         "bronze_source": result.bronze_source,
         "catchup": catchup,
+        "catchup_manifest": catchup_manifest,
         "approval_plan": _approval_plan(
             "dbt",
             dbt_write_argv(
@@ -436,6 +447,7 @@ def dbt_dry_run(
                 command=command,
                 select=select,
                 catchup=catchup,
+                catchup_manifest=catchup_manifest,
             ),
         ),
     }
@@ -628,7 +640,7 @@ def silver_catchup_dry_run(
     limit: int = DEFAULT_LIST_LIMIT,
     root: Path | None = None,
 ) -> dict[str, Any]:
-    """Preview ops/silver_catchup/manifest.json + approval_plan (never writes)."""
+    """Preview immutable ops/silver_catchup/<id>.json + approval_plan (never writes)."""
     _prepare_tool()
     from det.runtime.approval import silver_catchup_plan_write_argv
     from det.runtime.silver_catchup import plan_catchup_manifest
@@ -644,6 +656,8 @@ def silver_catchup_dry_run(
         interval_end=interval_end,
         limit=limit,
     )
+    mid = str(planned["manifest_id"])
+    digest = str(planned["content_digest"])
     return {
         **planned,
         "approval_plan": _approval_plan(
@@ -654,12 +668,16 @@ def silver_catchup_dry_run(
                 interval_start=interval_start,
                 interval_end=interval_end,
                 limit=limit,
+                manifest_id=mid,
+                content_digest=digest,
             ),
         ),
         "next_steps": (
             "Operator: det approve --plan <approval_plan> --approved-by <id>. "
-            "Agent (later turn): det silver-catchup-plan --apply --approval <id>; "
-            "then det dbt --catchup --approval <id> after a second approve for dbt."
+            "Agent (later turn): det silver-catchup-plan --apply "
+            f"--manifest-id {mid} --content-digest {digest} --approval <id>; "
+            "then MCP dbt_dry_run(catchup=True, catchup_manifest=…) → approve → "
+            f"det dbt --catchup --catchup-manifest {mid} --approval <dbt_id>."
         ),
     }
 

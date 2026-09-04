@@ -198,6 +198,7 @@ def run_dbt(
     target: str | None = None,
     full_refresh: bool = False,
     catchup: bool = False,
+    catchup_manifest: str | None = None,
     lake_path: str | Path | None = None,
     pipeline: PipelineConfig | Path | str | None = None,
     pipeline_overrides: Sequence[str] | None = None,
@@ -208,12 +209,15 @@ def run_dbt(
     Invoke the dbt CLI for local/testing use.
 
     Sets DET_LAKE_PATH from --lake-path, destination.path, existing env, or
-    ``./data/lake``. Requires the optional `[dbt]` extra.
+    ``./data/lake``. Requires the optional ``[dbt]`` extra.
 
-    When ``catchup=True``, loads ``ops/silver_catchup/manifest.json`` from the
-    same lake (ops root when split) used for this run, injects
-    ``det_catchup_by_pipeline`` vars, and defaults ``--select`` to silver models
-    listed in the manifest (unless ``select`` is already set).
+    When ``catchup=True``, loads immutable
+    ``ops/silver_catchup/<catchup_manifest>.json`` from the same lake (ops root
+    when split) used for this run, sets ``DET_CATCHUP_MANIFEST_PATH`` and tiny
+    ``det_catchup`` / ``det_catchup_manifest_id`` vars (DuckDB macros
+    ``read_json`` the file), and defaults ``--select`` to silver models listed
+    in the manifest (unless ``select`` is already set). BigQuery target is
+    refused for catch-up.
     """
     import json
 
@@ -287,20 +291,32 @@ def run_dbt(
 
     catchup_extra: list[str] = []
     catchup_select: list[str] | None = None
+    catchup_mid: str | None = None
     if catchup:
         from det.runtime.silver_catchup import (
+            catchup_manifest_file_path,
             catchup_select_from_manifest,
             catchup_vars_from_manifest,
             read_catchup_manifest,
+            validate_catchup_manifest_id,
         )
 
-        payload = read_catchup_manifest(project_root=root, lake_path=catchup_lake)
+        catchup_mid = validate_catchup_manifest_id(str(catchup_manifest or ""))
+        payload = read_catchup_manifest(
+            manifest_id=catchup_mid, project_root=root, lake_path=catchup_lake
+        )
         if payload is None or not (payload.get("runs") or []):
             raise FileNotFoundError(
-                "catch-up requires ops/silver_catchup/manifest.json with runs; "
+                f"catch-up requires ops/silver_catchup/{catchup_mid}.json with runs; "
                 "run det silver-catchup-plan --apply first"
             )
-        vars_map = catchup_vars_from_manifest(payload)
+        manifest_path = catchup_manifest_file_path(
+            manifest_id=catchup_mid, project_root=root, lake_path=catchup_lake
+        )
+        env["DET_CATCHUP_MANIFEST_PATH"] = str(manifest_path)
+        vars_map = catchup_vars_from_manifest(
+            {**payload, "manifest_id": catchup_mid}
+        )
         catchup_extra = ["--vars", json.dumps(vars_map, separators=(",", ":"))]
         catchup_select = catchup_select_from_manifest(payload, project_root=root)
         if not catchup_select:
@@ -322,6 +338,54 @@ def run_dbt(
         resolved_target = target
     else:
         resolved_target = ops_dbt_target(resolved_select, env_target) or env_target
+
+    if catchup and (resolved_target or "").strip() == "bigquery":
+        from det.runtime.silver_catchup import (
+            catchup_bq_relation,
+            catchup_manifest_file_path,
+            catchup_runs_file_path,
+            ensure_bq_catchup_external_table,
+        )
+
+        assert catchup_mid is not None
+        manifest_path = catchup_manifest_file_path(
+            manifest_id=catchup_mid, project_root=root, lake_path=catchup_lake
+        )
+        manifest_uri = str(manifest_path)
+        if not manifest_uri.startswith("gs://"):
+            raise ValueError(
+                "BigQuery catch-up requires a GCS ops lake (gs:// scm path); "
+                f"got {manifest_uri!r}. Local-lake → BQ heal is unsupported."
+            )
+        runs_path = catchup_runs_file_path(
+            manifest_id=catchup_mid, project_root=root, lake_path=catchup_lake
+        )
+        if not runs_path.exists():
+            raise FileNotFoundError(
+                "BigQuery catch-up requires sibling NDJSON "
+                f"{runs_path}; re-run det silver-catchup-plan --apply "
+                "to write .runs.jsonl"
+            )
+        if dry_run:
+            project = (
+                env.get("DET_GCP_PROJECT")
+                or env.get("GOOGLE_CLOUD_PROJECT")
+                or ""
+            ).strip()
+            if not project:
+                raise ValueError(
+                    "BigQuery catch-up requires DET_GCP_PROJECT "
+                    "(or GOOGLE_CLOUD_PROJECT)"
+                )
+            dataset = (env.get("DET_BQ_DATASET") or "analytics").strip() or "analytics"
+            env["DET_CATCHUP_BQ_RELATION"] = catchup_bq_relation(
+                project=project, dataset=dataset, manifest_id=catchup_mid
+            )
+        else:
+            env["DET_CATCHUP_BQ_RELATION"] = ensure_bq_catchup_external_table(
+                runs_uri=str(runs_path),
+                manifest_id=catchup_mid,
+            )
 
     # MinIO/S3 lakes use DuckDB iceberg_scan + httpfs. GCS lakes keep bronze on
     # gs:// Iceberg; prod analytics is BigQuery (DET_DBT_TARGET=bigquery) — never

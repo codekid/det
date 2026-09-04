@@ -43,17 +43,8 @@
 
 
 {% macro det_relation_watermark_predicate(alias, watermark, lookback=none, pipeline_name=none) -%}
-  {% set catchup_map = var('det_catchup_by_pipeline', {}) %}
-  {% set catchup_runs = [] %}
-  {% if pipeline_name and catchup_map is mapping and pipeline_name in catchup_map %}
-    {% set catchup_runs = catchup_map[pipeline_name] %}
-  {% endif %}
-  {% if catchup_runs %}
-  {{ alias }}.{{ watermark }} in (
-    {% for r in catchup_runs %}
-      '{{ r }}'{% if not loop.last %}, {% endif %}
-    {% endfor %}
-  )
+  {% if var('det_catchup', false) and pipeline_name %}
+  {{ det_catchup_coverage_predicate(pipeline_name, alias=alias) }}
   {% elif lookback %}
   {{ alias }}.{{ watermark }} >= (
       select coalesce(

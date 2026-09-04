@@ -8,18 +8,24 @@
         {
           "type": "mcp",
           "name": "diff_bronze_silver",
-          "arguments": {"pipeline": "noaa.storm_events"}
+          "arguments": {
+            "pipeline": "noaa.storm_events"
+          }
         },
         {
           "type": "mcp",
           "name": "silver_catchup_dry_run",
-          "arguments": {"pipeline": "noaa.storm_events"}
+          "arguments": {
+            "pipeline": "noaa.storm_events"
+          }
         }
       ]
     },
     {
       "events": [
-        {"type": "user_approval"},
+        {
+          "type": "user_approval"
+        },
         {
           "type": "cli",
           "argv": [
@@ -28,6 +34,10 @@
             "-p",
             "noaa.storm_events",
             "--apply",
+            "--manifest-id",
+            "scm_abababababababab",
+            "--content-digest",
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             "--approval",
             "apr_demo"
           ]

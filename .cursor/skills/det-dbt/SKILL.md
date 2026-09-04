@@ -245,8 +245,10 @@ not `--full-refresh` by default:
 
 1. MCP `diff_bronze_silver` / `det silver-catchup-diff`
 2. MCP `silver_catchup_dry_run` → approve → `det silver-catchup-plan --apply`
-3. Later: `det dbt --catchup` (reads `ops/silver_catchup/manifest.json`, one
-   process, `det_catchup_by_pipeline` vars). Scaffolded incremental models apply
+3. Later: `det dbt --catchup --catchup-manifest <scm_…>` (DuckDB, or BigQuery when
+   ops/scm is `gs://`; sets `DET_CATCHUP_MANIFEST_PATH` + tiny `det_catchup` /
+   `det_catchup_manifest_id` vars; BQ also `DET_CATCHUP_BQ_RELATION` over sibling
+   `.runs.jsonl`; local-lake → BQ raises). Scaffolded incremental models apply
    only rows that are missing or **younger** than silver for the unique_key.
    Incremental scaffold also sets `tags=["det_catchup"]` (discoverability only;
    heal `--select` stays manifest-driven, not `tag:det_catchup`).
