@@ -89,11 +89,11 @@ dbt:
     relations:
       discount_codes:
         path: discount_codes   # top-level array
-        materialized: view
+        load: full_refresh     # silver table; stg stays view
         # omit grain → discount_codes__index from unnest ordinality
       line_items:
         path: line_items
-        materialized: view     # view|table → stg + silver for the child
+        load: parent_replace   # silver incremental delete+insert on parent_key
         # parent_key: id       # default: first non-meta silver.unique_key
         grain: [sku]           # → line_items__sku on this table and descendants
         rename: { sku: line_sku }
@@ -101,7 +101,7 @@ dbt:
         relations:             # nested array under each line item
           tax_lines:
             path: tax_lines
-            materialized: view
+            load: parent_replace
             grain: [title, rate]  # → line_items__tax_lines__title, …__rate
             not_null: [title, rate]
     view_warn:                 # advisory sample; never fails the build
@@ -130,7 +130,8 @@ dbt:
 | Depth | Default unlimited; set `flatten.depth: N` only to cap |
 | Adapt order | flatten → coalesce → null_sentinels → map → rename → exclude |
 | Collisions | Scaffold fails if flattened name clashes |
-| Relation mat. | `relations.*.materialized` applies to **both** child stg and silver (default `view`) |
+| Relation mat. | Legacy: `relations.*.materialized` view\|table applies to **both** stg and silver (default `view`). Prefer closed `load:` for silver persistence (below). |
+| Relation `load` | Closed set: `full_refresh` → silver table (stg view); `parent_replace` → silver incremental delete+insert on delete key `[parent_key]+ancestor spine`, stg view, `tags=["det_catchup"]`. Conflicts with `materialized: table` + `parent_replace`. Dedupe still uses full spine. Not more adapt knobs — finishes nested load semantics. |
 | BigQuery layout | Opt-in `dbt.silver.bigquery` / `relations.*.bigquery` (`partition_by`, `cluster_by`, `require_partition_filter`); scaffold emits only under `target.name == 'bigquery'`; requires `table`/`incremental` (not `view`). Distinct from Iceberg `destination.partition`. |
 | Engine | DuckDB macros (`det_json_path_*`, unnest); bronze stays wire-faithful |
 

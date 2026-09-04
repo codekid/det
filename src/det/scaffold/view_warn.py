@@ -126,10 +126,12 @@ def collect_view_size_warnings(
     if not warn_cfg.enabled:
         return []
 
+    from det.scaffold.relation_load import resolve_relation_materialization
+
     view_relations = {
         name: rel
         for name, rel in stg.relations.items()
-        if rel.materialized == "view"
+        if resolve_relation_materialization(rel).silver_materialized == "view"
     }
     if not view_relations:
         return []
@@ -157,7 +159,8 @@ def collect_view_size_warnings(
             ViewSizeWarning(
                 message=(
                     f"view_warn: estimated parent bronze rows ~{parent_est:,} "
-                    f"(>= {warn_cfg.parent_rows:,}); prefer materialized: table "
+                    f"(>= {warn_cfg.parent_rows:,}); prefer load: full_refresh "
+                    f"or materialized: table "
                     f"for large relations on {config.bronze_dataset()}"
                 )
             )
@@ -181,7 +184,8 @@ def collect_view_size_warnings(
                         f"~{child_est:,} unnested rows "
                         f"(parent~{parent_est:,} × mean_len~{mean_len:.2f}) "
                         f">= {warn_cfg.child_rows:,}; consider "
-                        f"dbt.stg.relations.{name}.materialized: table"
+                        f"dbt.stg.relations.{name}.load: full_refresh "
+                        f"or materialized: table"
                     )
                 )
             )

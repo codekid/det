@@ -39,6 +39,11 @@ from det.scaffold.flatten import (
     plan_flatten,
     relation_item_schema_at,
 )
+from det.scaffold.relation_load import (
+    relation_dedupe_key,
+    relation_delete_key,
+    resolve_relation_materialization,
+)
 from det.validation.jsonschema_validator import load_json_schema
 
 logger = get_logger(__name__)
@@ -698,15 +703,23 @@ def expected_silver_sql(
         rel_slug = f"{model_slug}__{'__'.join(name_parts)}"
         rel_chain = relation_chain_for(stg_cfg.relations, name_parts)
         spine = spine_for_relation(name_parts, rel_chain)
-        spine_names = [e.name for e in spine]
-        rel_unique_key = [parent_key, *spine_names]
+        rel_mat = resolve_relation_materialization(
+            rel, incremental_strategy=silver.incremental_strategy
+        )
+        dedupe_key = relation_dedupe_key(parent_key, spine)
+        delete_key = relation_delete_key(parent_key, spine)
         out[f"dbt/models/silver/silver_{rel_slug}.sql"] = _render(
             "silver_relation.sql.j2",
             model_slug=rel_slug,
             relation_name="__".join(name_parts),
-            materialized=rel.materialized,
-            unique_key=rel_unique_key,
+            silver_materialized=rel_mat.silver_materialized,
+            incremental_strategy=rel_mat.incremental_strategy or silver.incremental_strategy,
+            delete_key=delete_key,
+            dedupe_key=dedupe_key,
             order_by=list(silver.order_by),
+            watermark=silver.watermark,
+            lookback=silver.lookback,
+            pipeline_name=config.name,
             provider=provider,
             bigquery=rel.bigquery,
         )

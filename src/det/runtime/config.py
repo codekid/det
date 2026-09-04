@@ -476,6 +476,7 @@ _RELATION_RESERVED = frozenset(
     {
         "path",
         "materialized",
+        "load",
         "parent_key",
         "grain",
         "flatten",
@@ -577,9 +578,12 @@ class RelationConfig(BaseModel):
     Explicit array → child stg/silver model.
 
     Root ``path`` is a top-level bronze array property. Nested ``relations`` use a
-    ``path`` relative to the parent array item. ``materialized`` applies to both
-    stg and silver (default view). Adapt/test knobs are relative to the item;
-    other mapping keys are nested property scopes (same as AdaptScope).
+    ``path`` relative to the parent array item.
+
+    Without ``load``, ``materialized`` applies to both stg and silver (default
+    view). With ``load`` (``full_refresh`` | ``parent_replace``), stg stays a
+    view and silver follows the load mapping — see
+    ``det.scaffold.relation_load.resolve_relation_materialization``.
 
     ``grain`` lists item field names that identify a row at this nest level.
     Scaffold emits path-qualified spine columns (``line_items__line_id``). Empty
@@ -588,6 +592,7 @@ class RelationConfig(BaseModel):
 
     path: str | None = None
     materialized: Literal["view", "table"] = "view"
+    load: Literal["full_refresh", "parent_replace"] | None = None
     parent_key: str | None = None
     grain: list[str] = Field(default_factory=list)
     flatten: FlattenConfig = Field(default_factory=FlattenConfig)
@@ -628,6 +633,12 @@ class RelationConfig(BaseModel):
             _require_dbt_col_id(self.parent_key, where="dbt.stg.relations.parent_key")
         for field in self.grain:
             _require_dbt_col_id(field, where="dbt.stg.relations.grain")
+        if self.load == "parent_replace" and self.materialized == "table":
+            raise ValueError(
+                "dbt.stg.relations: load=parent_replace conflicts with "
+                "materialized=table (omit materialized or use load only; "
+                "parent_replace maps silver to incremental)"
+            )
         _validate_adapt_knob_keys(
             coalesce=self.coalesce,
             null_sentinels=self.null_sentinels,
@@ -640,9 +651,14 @@ class RelationConfig(BaseModel):
             children=self.children,
             where="dbt.stg.relations",
         )
+        silver_mat = self.materialized
+        if self.load == "full_refresh":
+            silver_mat = "table"
+        elif self.load == "parent_replace":
+            silver_mat = "incremental"
         _validate_bigquery_vs_materialized(
             self.bigquery,
-            materialized=self.materialized,
+            materialized=silver_mat,
             where="dbt.stg.relations",
         )
         return self

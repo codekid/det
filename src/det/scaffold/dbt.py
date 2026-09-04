@@ -7,6 +7,7 @@ Re-exports all public (and private) names that callers use, so
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from det.logging import get_logger
 from det.runtime.config import (
@@ -75,6 +76,11 @@ from det.scaffold.dbt_yaml import (  # noqa: F401
     _yaml_block,
 )
 from det.scaffold.flatten import iter_relation_paths
+from det.scaffold.relation_load import (
+    relation_dedupe_key,
+    relation_delete_key,
+    resolve_relation_materialization,
+)
 from det.validation.jsonschema_validator import load_json_schema
 
 logger = get_logger(__name__)
@@ -302,7 +308,6 @@ def scaffold_dbt(
         rel_slug = f"{model_slug}__{'__'.join(name_parts)}"
         rel_chain = relation_chain_for(stg_cfg.relations, name_parts)
         spine = spine_for_relation(name_parts, rel_chain)
-        spine_names = [e.name for e in spine]
         spine_projections = [
             {"name": e.name, "cte_expr": _spine_cte_expr(e, schema=schema, path_chain=path_chain)}
             for e in spine
@@ -318,6 +323,11 @@ def scaffold_dbt(
             spine=spine,
         )
         path_display = "[]".join(path_chain) + "[]"
+        rel_mat = resolve_relation_materialization(
+            rel, incremental_strategy=silver.incremental_strategy
+        )
+        dedupe_key = relation_dedupe_key(parent_key, spine)
+        delete_key = relation_delete_key(parent_key, spine)
         rel_stg_sql = _render(
             "stg_relation.sql.j2",
             sql_table=sql_table,
@@ -327,19 +337,23 @@ def scaffold_dbt(
             path_display=path_display,
             spine_projections=spine_projections,
             parent_key=parent_key,
-            materialized=rel.materialized,
+            materialized=rel_mat.stg_materialized,
             columns=rel_columns,
             provider=provider,
             meta_columns=_META_COLUMNS,
         )
-        rel_unique_key = [parent_key, *spine_names]
         rel_silver_sql = _render(
             "silver_relation.sql.j2",
             model_slug=rel_slug,
             relation_name="__".join(name_parts),
-            materialized=rel.materialized,
-            unique_key=rel_unique_key,
+            silver_materialized=rel_mat.silver_materialized,
+            incremental_strategy=rel_mat.incremental_strategy or silver.incremental_strategy,
+            delete_key=delete_key,
+            dedupe_key=dedupe_key,
             order_by=list(silver.order_by),
+            watermark=silver.watermark,
+            lookback=silver.lookback,
+            pipeline_name=config.name,
             provider=provider,
             bigquery=rel.bigquery,
         )
@@ -358,19 +372,23 @@ def scaffold_dbt(
             actions=actions,
         )
         rel_adapt = compile_relation_adapt(rel)
-        rel_not_null = [parent_key, *spine_names]
+        rel_not_null = list(dedupe_key)
         for col in rel_adapt.not_null:
             if col not in rel_not_null:
                 rel_not_null.append(col)
-        rel_silver_cfg = silver.model_copy(
-            update={
-                "materialized": rel.materialized,
-                "unique_key": rel_unique_key,
-                "not_null": rel_not_null,
-                "unique": list(rel_adapt.unique),
-                "accepted_values": dict(rel_adapt.accepted_values),
-            }
+        yml_unique_key = (
+            delete_key if rel_mat.is_parent_replace else dedupe_key
         )
+        rel_silver_update: dict[str, Any] = {
+            "materialized": rel_mat.silver_materialized,
+            "unique_key": yml_unique_key,
+            "not_null": rel_not_null,
+            "unique": list(rel_adapt.unique),
+            "accepted_values": dict(rel_adapt.accepted_values),
+        }
+        if rel_mat.incremental_strategy is not None:
+            rel_silver_update["incremental_strategy"] = rel_mat.incremental_strategy
+        rel_silver_cfg = silver.model_copy(update=rel_silver_update)
         _merge_silver_models_yml(
             models_dir / "_silver__models.yml",
             dataset=rel_slug,
