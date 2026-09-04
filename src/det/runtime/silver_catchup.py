@@ -143,6 +143,42 @@ def catchup_content_digest(runs: Sequence[dict[str, Any]]) -> str:
     return "sha256:" + hashlib.sha256(blob).hexdigest()
 
 
+def load_catchup_runs_from_jsonl(runs_path: LakeRef) -> list[dict[str, Any]]:
+    """Parse sibling ``.runs.jsonl`` into run dicts (one JSON object per line)."""
+    text = runs_path.read_text(encoding="utf-8")
+    rows: list[dict[str, Any]] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"catch-up runs NDJSON line {line_no} is not JSON: {runs_path}"
+            ) from exc
+        if not isinstance(raw, dict):
+            raise ValueError(
+                f"catch-up runs NDJSON line {line_no} must be an object: {runs_path}"
+            )
+        rows.append(raw)
+    return rows
+
+
+def assert_catchup_runs_sidecar_matches(
+    runs_path: LakeRef,
+    *,
+    expected_digest: str,
+) -> None:
+    """Fail closed when ``.runs.jsonl`` coverage keys drift from scm digest."""
+    want = validate_catchup_content_digest(expected_digest)
+    got = catchup_content_digest(load_catchup_runs_from_jsonl(runs_path))
+    if got != want:
+        raise ValueError(
+            "catch-up runs NDJSON does not match manifest content_digest; "
+            f"manifest {want}, sidecar {got} ({runs_path})"
+        )
+
+
 def resolve_ops_lake(
     *,
     project_root: Path,

@@ -292,12 +292,14 @@ def run_dbt(
     catchup_extra: list[str] = []
     catchup_select: list[str] | None = None
     catchup_mid: str | None = None
+    catchup_digest: str | None = None
     if catchup:
         from det.runtime.silver_catchup import (
             catchup_manifest_file_path,
             catchup_select_from_manifest,
             catchup_vars_from_manifest,
             read_catchup_manifest,
+            validate_catchup_content_digest,
             validate_catchup_manifest_id,
         )
 
@@ -310,6 +312,9 @@ def run_dbt(
                 f"catch-up requires ops/silver_catchup/{catchup_mid}.json with runs; "
                 "run det silver-catchup-plan --apply first"
             )
+        catchup_digest = validate_catchup_content_digest(
+            str(payload.get("content_digest") or "")
+        )
         manifest_path = catchup_manifest_file_path(
             manifest_id=catchup_mid, project_root=root, lake_path=catchup_lake
         )
@@ -341,13 +346,14 @@ def run_dbt(
 
     if catchup and (resolved_target or "").strip() == "bigquery":
         from det.runtime.silver_catchup import (
+            assert_catchup_runs_sidecar_matches,
             catchup_bq_relation,
             catchup_manifest_file_path,
             catchup_runs_file_path,
             ensure_bq_catchup_external_table,
         )
 
-        if catchup_mid is None:
+        if catchup_mid is None or catchup_digest is None:
             raise ValueError("catch-up requires --catchup-manifest <scm_…>")
         manifest_path = catchup_manifest_file_path(
             manifest_id=catchup_mid, project_root=root, lake_path=catchup_lake
@@ -367,6 +373,10 @@ def run_dbt(
                 f"{runs_path}; re-run det silver-catchup-plan --apply "
                 "to write .runs.jsonl"
             )
+        # Fail closed before BQ config when sidecar drifts from scm digest.
+        assert_catchup_runs_sidecar_matches(
+            runs_path, expected_digest=catchup_digest
+        )
         if dry_run:
             project = (
                 env.get("DET_GCP_PROJECT")
