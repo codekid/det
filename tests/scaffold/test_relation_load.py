@@ -1,0 +1,380 @@
+"""Tests for dbt.stg.relations.*.load materialization mapping."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+from det.runtime.config import RelationConfig, load_pipeline_config
+from det.scaffold.dbt import scaffold_dbt
+from det.scaffold.dbt_sql import SpineEntry, relation_chain_for, spine_for_relation
+from det.scaffold.relation_load import (
+    relation_dedupe_key,
+    relation_delete_key,
+    resolve_relation_materialization,
+)
+
+
+def test_resolve_legacy_materialized_only() -> None:
+    rel = RelationConfig(materialized="table")
+    mat = resolve_relation_materialization(rel)
+    assert mat.stg_materialized == "table"
+    assert mat.silver_materialized == "table"
+    assert mat.incremental_strategy is None
+    assert not mat.is_parent_replace
+
+
+def test_resolve_full_refresh() -> None:
+    rel = RelationConfig(load="full_refresh")
+    mat = resolve_relation_materialization(rel)
+    assert mat.stg_materialized == "view"
+    assert mat.silver_materialized == "table"
+    assert mat.incremental_strategy is None
+
+
+def test_resolve_parent_replace_uses_parent_strategy() -> None:
+    rel = RelationConfig(load="parent_replace")
+    mat = resolve_relation_materialization(rel, incremental_strategy="merge")
+    assert mat.stg_materialized == "view"
+    assert mat.silver_materialized == "incremental"
+    assert mat.incremental_strategy == "merge"
+    assert mat.is_parent_replace
+
+
+def test_load_parent_replace_rejects_materialized_table() -> None:
+    with pytest.raises(ValueError, match="parent_replace conflicts"):
+        RelationConfig(load="parent_replace", materialized="table")
+
+
+def test_load_full_refresh_allows_materialized_table() -> None:
+    rel = RelationConfig(load="full_refresh", materialized="table")
+    assert rel.load == "full_refresh"
+    mat = resolve_relation_materialization(rel)
+    assert mat.silver_materialized == "table"
+
+
+def test_delete_key_excludes_self_grain() -> None:
+    spine = [
+        SpineEntry(name="line_items__sku", level_idx=0, kind="grain", field="sku"),
+        SpineEntry(
+            name="line_items__tax_lines__title",
+            level_idx=1,
+            kind="grain",
+            field="title",
+        ),
+        SpineEntry(
+            name="line_items__tax_lines__rate",
+            level_idx=1,
+            kind="grain",
+            field="rate",
+        ),
+    ]
+    assert relation_dedupe_key("id", spine) == [
+        "id",
+        "line_items__sku",
+        "line_items__tax_lines__title",
+        "line_items__tax_lines__rate",
+    ]
+    assert relation_delete_key("id", spine) == ["id", "line_items__sku"]
+
+
+def test_delete_key_top_level_is_parent_only() -> None:
+    spine = [
+        SpineEntry(name="line_items__sku", level_idx=0, kind="grain", field="sku"),
+    ]
+    assert relation_delete_key("id", spine) == ["id"]
+    assert relation_dedupe_key("id", spine) == ["id", "line_items__sku"]
+
+
+def test_scaffold_parent_replace_and_full_refresh(
+    tmp_path: Path, project_root: Path
+) -> None:
+    schema_src = project_root / "schemas/example_api/orders/orders.schema.yaml"
+    schema_dst = tmp_path / "schemas/example_api/orders/orders.schema.yaml"
+    schema_dst.parent.mkdir(parents=True)
+    schema_dst.write_text(schema_src.read_text(encoding="utf-8"), encoding="utf-8")
+
+    pipe = tmp_path / "configs/pipelines/example_api/orders.yaml"
+    pipe.parent.mkdir(parents=True)
+    pipe.write_text(
+        yaml.safe_dump(
+            {
+                "name": "example_api.orders",
+                "source": {"type": "example_api.orders"},
+                "schema": "schemas/example_api/orders/orders.schema.yaml",
+                "destination": {"type": "filesystem", "path": str(tmp_path / "lake")},
+                "dbt": {
+                    "silver": {
+                        "unique_key": ["id"],
+                        "order_by": ["__extract_run_datetime desc"],
+                        "incremental_strategy": "delete+insert",
+                    },
+                    "stg": {
+                        "relations": {
+                            "discount_codes": {
+                                "load": "full_refresh",
+                                "parent_key": "id",
+                            },
+                            "line_items": {
+                                "load": "parent_replace",
+                                "parent_key": "id",
+                                "grain": ["sku"],
+                                "relations": {
+                                    "tax_lines": {
+                                        "load": "parent_replace",
+                                        "parent_key": "id",
+                                        "grain": ["title", "rate"],
+                                    }
+                                },
+                            },
+                        }
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_pipeline_config(pipe)
+    models = tmp_path / "dbt" / "models" / "silver"
+    scaffold_dbt(config, project_root=tmp_path, dbt_models_dir=models, warn=False, force=True)
+
+    stg_disc = (models / "stg_example_api__orders__discount_codes.sql").read_text(
+        encoding="utf-8"
+    )
+    sil_disc = (models / "silver_example_api__orders__discount_codes.sql").read_text(
+        encoding="utf-8"
+    )
+    assert 'materialized="view"' in stg_disc
+    assert 'materialized="table"' in sil_disc
+    assert "det_catchup" not in sil_disc
+
+    stg_li = (models / "stg_example_api__orders__line_items.sql").read_text(
+        encoding="utf-8"
+    )
+    sil_li = (models / "silver_example_api__orders__line_items.sql").read_text(
+        encoding="utf-8"
+    )
+    assert 'materialized="view"' in stg_li
+    assert 'materialized="incremental"' in sil_li
+    assert "det_catchup" in sil_li
+    assert "det_silver_incremental_filter" in sil_li
+    assert 'unique_key=["id"]' in sil_li
+    assert "det_relation_clear_empty_arrays" in sil_li
+    assert "det_parent_replace=true" in sil_li
+    assert 'det_relation_path_chain=["line_items"]' in sil_li
+    # parent_replace always delete+insert (delete_key is not row-unique)
+    assert "incremental_strategy='delete+insert'" in sil_li
+    assert "'merge' if target.name == 'bigquery'" not in sil_li
+    assert "partition_by=" in sil_li
+    assert "line_items__sku" in sil_li
+
+    sil_tax = (
+        models / "silver_example_api__orders__line_items__tax_lines.sql"
+    ).read_text(encoding="utf-8")
+    assert 'materialized="incremental"' in sil_tax
+    # delete key = parent + ancestor spine (line_items__sku), not self grain
+    assert 'unique_key=["id", "line_items__sku"]' in sil_tax
+    assert "line_items__tax_lines__title" in sil_tax  # in dedupe partition_by
+    assert 'det_relation_path_chain=["line_items", "tax_lines"]' in sil_tax
+    assert "det_relation_clear_empty_arrays" in sil_tax
+    assert '"json_path_macro": "det_json_path_string"' in sil_tax
+    assert '"json_path_macro": "det_json_path_double"' in sil_tax
+    assert '"field": "rate"' in sil_tax
+
+    # YAML tests use dedupe grain, not delete_key (would wrongly unique-test parent id)
+    yml = yaml.safe_load(
+        (models / "_silver__models.yml").read_text(encoding="utf-8")
+    )
+    li_model = next(
+        m
+        for m in yml["models"]
+        if m["name"] == "silver_example_api__orders__line_items"
+    )
+    li_cols = {c["name"]: c for c in li_model["columns"]}
+    assert "id" in li_cols and "line_items__sku" in li_cols
+    assert "unique" not in li_cols["id"].get("tests", [])
+    assert "not_null" in li_cols["line_items__sku"]["tests"]
+
+    tax_model = next(
+        m
+        for m in yml["models"]
+        if m["name"] == "silver_example_api__orders__line_items__tax_lines"
+    )
+    tax_cols = {c["name"]: c for c in tax_model["columns"]}
+    assert "line_items__tax_lines__title" in tax_cols
+    assert "not_null" in tax_cols["line_items__tax_lines__title"]["tests"]
+
+
+def test_spine_helpers_align_with_chain() -> None:
+    rels = {
+        "line_items": RelationConfig(
+            load="parent_replace",
+            grain=["sku"],
+            relations={
+                "tax_lines": RelationConfig(
+                    load="parent_replace", grain=["title", "rate"]
+                )
+            },
+        )
+    }
+    name_parts = ["line_items", "tax_lines"]
+    chain = relation_chain_for(rels, name_parts)
+    spine = spine_for_relation(name_parts, chain)
+    assert relation_delete_key("id", spine) == ["id", "line_items__sku"]
+
+
+def test_spine_cte_expr_carries_typed_json_path_macro(project_root: Path) -> None:
+    from det.scaffold.dbt_sql import _spine_cte_expr, _spine_meta_entry
+    from det.validation.jsonschema_validator import load_json_schema
+
+    schema = load_json_schema(
+        project_root / "schemas/example_api/orders/orders.schema.yaml"
+    )
+    spine = [
+        SpineEntry(name="line_items__sku", level_idx=0, kind="grain", field="sku"),
+        SpineEntry(
+            name="line_items__tax_lines__title",
+            level_idx=1,
+            kind="grain",
+            field="title",
+        ),
+        SpineEntry(
+            name="line_items__tax_lines__rate",
+            level_idx=1,
+            kind="grain",
+            field="rate",
+        ),
+    ]
+    path_chain = ["line_items", "tax_lines"]
+    by_field = {
+        e.field: _spine_cte_expr(e, schema=schema, path_chain=path_chain) for e in spine
+    }
+    assert by_field["sku"]["json_path_macro"] == "det_json_path_string"
+    assert "det_json_path_string('t0._rel', '$.sku')" in by_field["sku"]["cte_expr"]
+    assert by_field["title"]["json_path_macro"] == "det_json_path_string"
+    assert by_field["rate"]["json_path_macro"] == "det_json_path_double"
+    assert "det_json_path_double('t1._rel', '$.rate')" in by_field["rate"]["cte_expr"]
+
+    meta = _spine_meta_entry(spine[2], schema=schema, path_chain=path_chain)
+    assert meta["json_path_macro"] == "det_json_path_double"
+    assert meta["field"] == "rate"
+
+
+def test_empty_array_clears_top_level_and_nested_children() -> None:
+    """Data-level: empty relation arrays must delete silver children (no insert).
+
+    Mirrors ``det_relation_clear_empty_arrays`` key generation: top-level empty
+    ``line_items`` clears by parent id; nested empty ``tax_lines`` clears by
+    (id, sku); empty ancestor ``line_items`` clears all nested rows for the parent.
+    JSON null (distinct from SQL NULL / ``[]``) must clear the same way.
+    """
+    import duckdb
+
+    con = duckdb.connect()
+    con.execute(
+        """
+        create table bronze_orders as
+        select * from (
+          values
+            (1, cast('[{"sku":"A","tax_lines":[{"title":"s","rate":0.1}]}]' as JSON),
+             timestamp '2026-01-02'),
+            (2, cast('[]' as JSON), timestamp '2026-01-02'),
+            (3, cast('[{"sku":"B","tax_lines":[]}]' as JSON), timestamp '2026-01-02'),
+            (4, cast('null' as JSON), timestamp '2026-01-02'),
+            (5, cast('[{"sku":"C","tax_lines":null}]' as JSON), timestamp '2026-01-02')
+        ) v(id, line_items, __extract_run_datetime)
+        """
+    )
+    con.execute(
+        """
+        create table silver_line_items as
+        select * from (
+          values
+            (1, 'A', timestamp '2026-01-01'),
+            (2, 'Z', timestamp '2026-01-01'),
+            (3, 'B', timestamp '2026-01-01'),
+            (4, 'gone', timestamp '2026-01-01'),
+            (5, 'C', timestamp '2026-01-01')
+        ) v(id, line_items__sku, __extract_run_datetime)
+        """
+    )
+    con.execute(
+        """
+        create table silver_tax_lines as
+        select * from (
+          values
+            (1, 'A', 's', 0.1, timestamp '2026-01-01'),
+            (2, 'Z', 'old', 0.2, timestamp '2026-01-01'),
+            (3, 'B', 'gone', 0.3, timestamp '2026-01-01'),
+            (4, 'gone', 'x', 0.4, timestamp '2026-01-01'),
+            (5, 'C', 'stale', 0.5, timestamp '2026-01-01')
+        ) v(id, line_items__sku, line_items__tax_lines__title, line_items__tax_lines__rate,
+            __extract_run_datetime)
+        """
+    )
+
+    # Top-level empty / JSON-null line_items → clear silver_line_items by parent id
+    con.execute(
+        """
+        delete from silver_line_items as t
+        where t.id in (
+          select p.id from bronze_orders p
+          where (
+              p.line_items is null
+              or json_type(p.line_items) = 'NULL'
+              or len(cast(p.line_items as JSON[])) = 0
+            )
+            and p.__extract_run_datetime > (
+              select coalesce(max(__extract_run_datetime), timestamp '0001-01-01')
+              from silver_line_items
+            )
+        )
+        """
+    )
+    li = con.execute(
+        "select id, line_items__sku from silver_line_items order by id"
+    ).fetchall()
+    assert li == [(1, "A"), (3, "B"), (5, "C")]  # id=2 [] and id=4 JSON null cleared
+
+    # Nested: empty / JSON-null tax_lines on a line item → clear by (id, sku)
+    con.execute(
+        """
+        delete from silver_tax_lines as t
+        where (t.id, t.line_items__sku) in (
+          select p.id,
+                 json_extract_string(t0._rel, '$.sku') as line_items__sku
+          from bronze_orders p
+          cross join unnest(cast(p.line_items as JSON[])) with ordinality
+            as t0(_rel, __rel_index)
+          where (
+              json_extract(t0._rel, '$.tax_lines') is null
+              or json_type(json_extract(t0._rel, '$.tax_lines')) = 'NULL'
+              or len(cast(json_extract(t0._rel, '$.tax_lines') as JSON[])) = 0
+            )
+            and p.__extract_run_datetime > timestamp '2026-01-01'
+        )
+        """
+    )
+    # Nested: empty / JSON-null ancestor line_items → clear all tax rows for parent
+    con.execute(
+        """
+        delete from silver_tax_lines as t
+        where t.id in (
+          select p.id from bronze_orders p
+          where (
+              p.line_items is null
+              or json_type(p.line_items) = 'NULL'
+              or len(cast(p.line_items as JSON[])) = 0
+            )
+            and p.__extract_run_datetime > timestamp '2026-01-01'
+        )
+        """
+    )
+    tax = con.execute(
+        "select id, line_items__sku, line_items__tax_lines__title "
+        "from silver_tax_lines order by id"
+    ).fetchall()
+    assert tax == [(1, "A", "s")]  # 2/4 ancestor-empty, 3/5 self-empty; no inserts
