@@ -376,12 +376,11 @@ def scaffold_dbt(
         for col in rel_adapt.not_null:
             if col not in rel_not_null:
                 rel_not_null.append(col)
-        yml_unique_key = (
-            delete_key if rel_mat.is_parent_replace else dedupe_key
-        )
+        # YAML uniqueness/not_null tests use full grain; SQL incremental unique_key
+        # is delete_key (emitted in silver_relation.sql.j2 for parent_replace).
         rel_silver_update: dict[str, Any] = {
             "materialized": rel_mat.silver_materialized,
-            "unique_key": yml_unique_key,
+            "unique_key": dedupe_key,
             "not_null": rel_not_null,
             "unique": list(rel_adapt.unique),
             "accepted_values": dict(rel_adapt.accepted_values),

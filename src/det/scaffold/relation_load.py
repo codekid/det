@@ -80,13 +80,15 @@ def relation_delete_key(parent_key: str, spine: Sequence[_SpineLike]) -> list[st
     ``[parent_key] + ancestor spine`` (exclude this level's own grain/index) so
     vanished children under a touched parent/line are removed.
 
-    dbt ``delete+insert`` (DuckDB) / ``merge`` (BigQuery scaffold) deletes target
-    rows whose unique_key values appear in the incremental batch, then inserts.
-    With delete_key ``[parent_key]`` (top-level) or ``[parent_key, …ancestor spine]``
-    (nested), that clears all children for those parents/lines — including grain
-    values absent from the new explosion — before insert. No custom pre-delete
-    macro is required when unique_key is this delete_key (not the full dedupe
-    spine).
+    dbt ``delete+insert`` deletes target rows whose unique_key values appear in
+    the incremental batch, then inserts. BigQuery has no stock ``delete+insert``;
+    relation silver forces that strategy on BQ and DET macros
+    (``det_bq_delete_insert``) implement delete-then-insert there. Do **not** map
+    parent_replace to ``merge``: delete_key is not row-unique, so merge cannot
+    drop vanished children. With delete_key ``[parent_key]`` (top-level) or
+    ``[parent_key, …ancestor spine]`` (nested), the batch clears all children for
+    those parents/lines — including grain values absent from the new explosion —
+    before insert.
     """
     if not spine:
         return [parent_key]

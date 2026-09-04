@@ -162,6 +162,12 @@ def test_scaffold_parent_replace_and_full_refresh(
     assert "det_catchup" in sil_li
     assert "det_silver_incremental_filter" in sil_li
     assert 'unique_key=["id"]' in sil_li
+    # parent_replace: BQ must delete+insert (not merge) so vanished children drop
+    assert (
+        "incremental_strategy='delete+insert' if target.name == 'bigquery' "
+        "else 'delete+insert'"
+    ) in sil_li
+    assert "'merge' if target.name == 'bigquery'" not in sil_li
     assert "partition_by=" in sil_li
     assert "line_items__sku" in sil_li
 
@@ -172,6 +178,29 @@ def test_scaffold_parent_replace_and_full_refresh(
     # delete key = parent + ancestor spine (line_items__sku), not self grain
     assert 'unique_key=["id", "line_items__sku"]' in sil_tax
     assert "line_items__tax_lines__title" in sil_tax  # in dedupe partition_by
+
+    # YAML tests use dedupe grain, not delete_key (would wrongly unique-test parent id)
+    yml = yaml.safe_load(
+        (models / "_silver__models.yml").read_text(encoding="utf-8")
+    )
+    li_model = next(
+        m
+        for m in yml["models"]
+        if m["name"] == "silver_example_api__orders__line_items"
+    )
+    li_cols = {c["name"]: c for c in li_model["columns"]}
+    assert "id" in li_cols and "line_items__sku" in li_cols
+    assert "unique" not in li_cols["id"].get("tests", [])
+    assert "not_null" in li_cols["line_items__sku"]["tests"]
+
+    tax_model = next(
+        m
+        for m in yml["models"]
+        if m["name"] == "silver_example_api__orders__line_items__tax_lines"
+    )
+    tax_cols = {c["name"]: c for c in tax_model["columns"]}
+    assert "line_items__tax_lines__title" in tax_cols
+    assert "not_null" in tax_cols["line_items__tax_lines__title"]["tests"]
 
 
 def test_spine_helpers_align_with_chain() -> None:

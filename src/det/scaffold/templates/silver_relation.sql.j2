@@ -5,7 +5,7 @@
 {%- if silver_materialized == "incremental" %}
 ,
         unique_key={{ delete_key | tojson }},
-        incremental_strategy='merge' if target.name == 'bigquery' else '{{ incremental_strategy }}',
+        incremental_strategy='delete+insert' if target.name == 'bigquery' else '{{ incremental_strategy }}',
         tags=["det_catchup"]
 {%- endif %}
 {%- if bigquery and bigquery.has_layout() %}
