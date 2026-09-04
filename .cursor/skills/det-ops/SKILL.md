@@ -57,16 +57,20 @@ Install: `uv pip install -e ".[mcp]"`.
 When bronze has data but incremental silver appears behind (watermark hole):
 
 1. MCP `diff_bronze_silver` — `catchup_runs` are **latest bronze extract-run per
-   interval** not yet in silver. Ignore `stale_siblings_ignored` (older siblings;
-   silver stays deduped).
-2. MCP `silver_catchup_dry_run` → show manifest + `approval_plan` → **stop**.
+   interval** not yet in silver (DuckDB analytics, or BigQuery when
+   `DET_DBT_TARGET=bigquery`). Ignore
+   `stale_siblings_ignored` (older siblings; silver stays deduped).
+2. MCP `silver_catchup_dry_run` → show immutable `manifest_id` / `content_digest`
+   + `approval_plan` → **stop**.
 3. After confirm: `det approve` then later
-   `det silver-catchup-plan --apply --approval <manifest_id>` (this approval is
-   only for the manifest write).
-4. MCP `dbt_dry_run` with `catchup=True` → show its separate `approval_plan` →
-   **stop**. After confirm: `det approve` then later
-   `det dbt --catchup --approval <dbt_id>` (distinct id; one build; not
-   `--full-refresh`).
+   `det silver-catchup-plan --apply --manifest-id <scm_…> --content-digest <sha256:…> --approval <id>`
+   (writes immutable `.json` + sibling `.runs.jsonl`).
+4. MCP `dbt_dry_run` with `catchup=True` and `catchup_manifest=<scm_…>` → show its
+   separate `approval_plan` → **stop**. After confirm: `det approve` then later
+   `det dbt --catchup --catchup-manifest <scm_…> --approval <dbt_id>` (distinct id;
+   one build; DuckDB `read_json` via `DET_CATCHUP_MANIFEST_PATH`, or BQ external
+   table via `DET_CATCHUP_BQ_RELATION` when ops is `gs://`; local→BQ fails;
+   not `--full-refresh`).
 5. Re-diff to verify `catchup_count=0`.
 
 See [docs/silver-catchup.md](../../docs/silver-catchup.md).

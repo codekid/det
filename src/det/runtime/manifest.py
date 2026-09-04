@@ -39,6 +39,9 @@ def is_committed_raw_dir(raw_dir: LakePath) -> bool:
     Data files may already sit at final keys (one write, no copy). Visibility
     for load/migrate/list is the tiny commit object ``meta/manifest.json``.
     A ``.tmp`` sibling is never a commit.
+
+    Same rule applies to filesystem bronze hive leaves (JSONL): list/catch-up
+    only surface partitions after ``publish_filesystem_bronze_commit``.
     """
     path = manifest_path(raw_dir)
     if not path.is_file():
@@ -48,6 +51,34 @@ def is_committed_raw_dir(raw_dir: LakePath) -> bool:
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return False
     return isinstance(data, dict)
+
+
+def publish_filesystem_bronze_commit(
+    partition_dir: LakePath,
+    *,
+    run_identity: tuple[str, str, str] | None = None,
+) -> LakePath:
+    """
+    Publish filesystem bronze visibility after ``data.jsonl`` is complete.
+
+    Same commit object as raw (``meta/manifest.json`` via :func:`write_manifest`).
+    Callers must write data first; list_bronze_runs / catch-up ignore prefixes
+    without this publish.
+    """
+    payload: ManifestPayload = {}
+    if run_identity is not None:
+        start, end, run = (
+            str(run_identity[0]).strip(),
+            str(run_identity[1]).strip(),
+            str(run_identity[2]).strip(),
+        )
+        if start and end and run:
+            payload = {
+                "interval_start": start,
+                "interval_end": end,
+                "extract_run_datetime": run,
+            }
+    return write_manifest(partition_dir, payload)
 
 
 def committed_extract_run_dirs(interval_end_dir: LakePath) -> list[LakePath]:

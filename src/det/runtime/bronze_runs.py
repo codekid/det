@@ -322,6 +322,7 @@ def list_bronze_runs(
             interval_start=interval_start,
             interval_end=interval_end,
             normalize_iso=True,
+            require_committed=True,
         )
         return runs, None
     if dest.type == "iceberg":

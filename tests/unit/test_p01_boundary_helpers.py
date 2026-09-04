@@ -73,6 +73,7 @@ def test_clamp_list_limit_and_warehouse_paths(
 
 def test_walk_hive_runs_and_filesystem_list_bronze(tmp_path: Path) -> None:
     from det.runtime.config import load_pipeline_config
+    from det.runtime.manifest import write_manifest
 
     root = tmp_path
     ds = (
@@ -86,6 +87,7 @@ def test_walk_hive_runs_and_filesystem_list_bronze(tmp_path: Path) -> None:
     )
     ds.mkdir(parents=True)
     (ds / "data.jsonl").write_text("{}\n", encoding="utf-8")
+    write_manifest(ds, {"extract_run_datetime": "2026-08-06T12:00:00+00:00"})
 
     runs = walk_hive_runs(
         root / "bronze" / "acme" / "widgets_v1",
@@ -135,6 +137,21 @@ def test_walk_hive_runs_and_filesystem_list_bronze(tmp_path: Path) -> None:
     listed, note = list_bronze_runs(config, root=root, limit=10)
     assert note is None
     assert len(listed) == 1
+
+    # Incomplete JSONL without commit must not surface for catch-up listing.
+    orphan = (
+        root
+        / "bronze"
+        / "acme"
+        / "widgets_v1"
+        / "__interval_start_datetime=20260807T000000Z"
+        / "__interval_end_datetime=20260808T000000Z"
+        / "__extract_run_datetime=20260807T120000Z"
+    )
+    orphan.mkdir(parents=True)
+    (orphan / "data.jsonl").write_text("{}\n", encoding="utf-8")
+    listed2, _ = list_bronze_runs(config, root=root, limit=10)
+    assert len(listed2) == 1
 
 
 def test_list_bronze_runs_duckdb(tmp_path: Path) -> None:

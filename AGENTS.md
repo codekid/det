@@ -60,7 +60,7 @@ inclusive, `-e` exclusive (default start + 1 day). Lake hive/SQL contract:
 | Gold / fleet metrics | MCP `cube_meta` / `cube_load` (`make cube-up`) |
 | Silver or ops row detail | MCP `query_analytics` (`warehouse=analytics` or `ops`) |
 | Draft schema / mapper / migrate / prune / dbt / silver catch-up | MCP `*_dry_run` (`approval_plan`) then `det approve` then CLI `--approval` |
-| Bronze↔silver catch-up | MCP `diff_bronze_silver` / `silver_catchup_dry_run` → approve → `det silver-catchup-plan --apply`; then MCP `dbt_dry_run(catchup=True)` → separate approve → `det dbt --catchup --approval` (manifest apply and dbt catch-up need distinct plans/approvals; [docs/silver-catchup.md](docs/silver-catchup.md)) |
+| Bronze↔silver catch-up | MCP `diff_bronze_silver` / `silver_catchup_dry_run` → approve → `det silver-catchup-plan --apply --manifest-id <scm_…> --content-digest <sha256:…> --approval <id>`; then MCP `dbt_dry_run(catchup=True, catchup_manifest=<scm_…>)` → separate approve → `det dbt --catchup --catchup-manifest <scm_…> --approval <id>` (immutable `scm_…` + `.runs.jsonl`; DuckDB or BQ-on-GCS; tiny pointer vars + `DET_CATCHUP_MANIFEST_PATH` / `DET_CATCHUP_BQ_RELATION`; [docs/silver-catchup.md](docs/silver-catchup.md)) |
 | Ops dbt models for embedders | After `runs-materialize`: MCP `scaffold_ops_dry_run` → show plan, wait for confirm → `det approve`; later turn `det scaffold-ops --approval <id>` |
 | Extract, load, run, apply prune, write migrate | CLI / Airflow after `det approve` (and `--approval` when required) |
 

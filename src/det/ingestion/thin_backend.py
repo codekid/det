@@ -8,6 +8,7 @@ from det.ingestion.jsonl import write_jsonl_partition
 from det.logging import get_logger
 from det.runtime.config import DestinationConfig, PipelineConfig
 from det.runtime.lake import LakeRef
+from det.runtime.manifest import publish_filesystem_bronze_commit
 
 logger = get_logger(__name__)
 
@@ -43,6 +44,7 @@ class ThinBackend:
         write_jsonl_partition(
             records, partition_dir, chunk_rows=size, on_chunk=on_chunk
         )
+        publish_filesystem_bronze_commit(partition_dir, run_identity=run_identity)
         logger.info(
             "thin backend wrote partition",
             path=str(partition_dir),

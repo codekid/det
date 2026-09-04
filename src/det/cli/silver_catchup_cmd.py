@@ -145,8 +145,22 @@ def silver_catchup_plan_cmd(
     interval_start: str | None = typer.Option(None, "--interval-start", "-s"),
     interval_end: str | None = typer.Option(None, "--interval-end", "-e"),
     limit: int = typer.Option(200, "--limit", help="Max runs considered per pipeline"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview manifest only"),
-    apply: bool = typer.Option(False, "--apply", help="Write ops/silver_catchup/manifest.json"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview immutable manifest only"),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Write ops/silver_catchup/<manifest_id>.json (immutable)",
+    ),
+    manifest_id: str | None = typer.Option(
+        None,
+        "--manifest-id",
+        help="Immutable id from dry-run (scm_…); required with --content-digest on --apply",
+    ),
+    content_digest: str | None = typer.Option(
+        None,
+        "--content-digest",
+        help="Coverage digest from dry-run (sha256:…); must match live plan on --apply",
+    ),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
     lake_path_raw: str | None = typer.Option(
@@ -164,10 +178,12 @@ def silver_catchup_plan_cmd(
         False, "--require-approval", help=_REQUIRE_APPROVAL_HELP
     ),
 ) -> None:
-    """Build or apply the silver catch-up manifest under ops/silver_catchup/."""
+    """Build or apply an immutable silver catch-up manifest under ops/silver_catchup/."""
+    from det.errors import DetConflictError
     from det.runtime.approval import silver_catchup_plan_write_argv
     from det.runtime.settings import use_settings
     from det.runtime.silver_catchup import (
+        assert_catchup_digest_matches,
         manifest_relpath_for_root,
         plan_catchup_manifest,
         write_catchup_manifest,
@@ -182,6 +198,13 @@ def silver_catchup_plan_cmd(
         raise typer.BadParameter(
             "exactly one of --pipeline / --all-pipelines is required",
             param_hint="--pipeline/--all-pipelines",
+        )
+    has_mid = bool(manifest_id and str(manifest_id).strip())
+    has_digest = bool(content_digest and str(content_digest).strip())
+    if has_mid != has_digest:
+        raise typer.BadParameter(
+            "--manifest-id and --content-digest must be passed together",
+            param_hint="--manifest-id/--content-digest",
         )
 
     root = _project_root(project_root)
@@ -202,20 +225,36 @@ def silver_catchup_plan_cmd(
 
     claimed = False
     if apply:
-        claimed = _gate_approval(
-            root,
-            "silver-catchup-plan",
-            silver_catchup_plan_write_argv(
+        from det.runtime.approval import require_approvals_enabled
+
+        need_bound = bool(approval) or require_approval or require_approvals_enabled()
+        if need_bound and not (has_mid and has_digest):
+            raise typer.BadParameter(
+                "--apply under approval requires --manifest-id and --content-digest "
+                "from the dry-run approval_plan",
+                param_hint="--manifest-id/--content-digest",
+            )
+        if has_mid and has_digest:
+            gate_argv = silver_catchup_plan_write_argv(
                 pipeline=pipe_id,
                 all_pipelines=all_pipelines,
                 interval_start=start,
                 interval_end=end,
                 limit=limit,
+                manifest_id=manifest_id,
+                content_digest=content_digest,
                 lake_path=lake_path,
                 lake_path_raw=lake_path_raw,
                 lake_path_bronze=lake_path_bronze,
                 lake_path_ops=lake_path_ops,
-            ),
+            )
+        else:
+            # Ungated local apply: allocate id at plan time; claim is a no-op.
+            gate_argv = ["silver-catchup-plan", "--apply"]
+        claimed = _gate_approval(
+            root,
+            "silver-catchup-plan",
+            gate_argv,
             approval,
             require_approval,
             ctx=ctx,
@@ -229,6 +268,7 @@ def silver_catchup_plan_cmd(
             interval_start=start,
             interval_end=end,
             limit=limit,
+            manifest_id=manifest_id if has_mid else None,
         )
         if dry_run:
             if as_json:
@@ -237,6 +277,8 @@ def silver_catchup_plan_cmd(
                 runs = planned["manifest"].get("runs") or []
                 typer.echo(
                     f"DRY-RUN silver-catchup-plan runs={len(runs)} "
+                    f"manifest_id={planned['manifest_id']} "
+                    f"content_digest={planned['content_digest']} "
                     f"path={planned['manifest_relpath']}"
                 )
                 for row in runs:
@@ -247,12 +289,25 @@ def silver_catchup_plan_cmd(
                     )
             return
 
-        with _claimed_approval_work(claimed, approval):
-            path = write_catchup_manifest(
-                planned["manifest"],
-                project_root=root,
-                settings=settings,
-            )
+        if has_digest:
+            try:
+                assert_catchup_digest_matches(
+                    planned["manifest"], expected_digest=str(content_digest)
+                )
+            except ValueError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1) from exc
+
+        try:
+            with _claimed_approval_work(claimed, approval):
+                path = write_catchup_manifest(
+                    planned["manifest"],
+                    project_root=root,
+                    settings=settings,
+                )
+        except DetConflictError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
         _consume_approval(root, approval)
 
     if as_json:
@@ -270,5 +325,6 @@ def silver_catchup_plan_cmd(
     else:
         typer.echo(
             f"OK silver-catchup-plan wrote={manifest_relpath_for_root(root, path)} "
+            f"manifest_id={planned['manifest_id']} "
             f"runs={len(planned['manifest'].get('runs') or [])}"
         )

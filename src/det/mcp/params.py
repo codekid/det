@@ -338,3 +338,20 @@ BqConnectionOpt = Annotated[
         )
     ),
 ]
+CatchupFlag = Annotated[
+    bool,
+    Field(
+        description=(
+            "When true, preview det dbt --catchup (requires catchup_manifest scm_… id)"
+        )
+    ),
+]
+CatchupManifestOpt = Annotated[
+    str | None,
+    Field(
+        description=(
+            "Immutable catch-up manifest id (scm_ + 16 hex) from "
+            "silver_catchup_dry_run / silver-catchup-plan --apply; required when catchup=true"
+        )
+    ),
+]

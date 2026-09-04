@@ -129,7 +129,8 @@ def test_no_backend_lets_dlt_manage_state_or_unnest(tmp_path: Path):
             partition_dir=partition,
             destination=config.destination,
         )
-        assert [p.name for p in partition.iterdir()] == ["data.jsonl"]
+        assert {p.name for p in partition.iterdir()} == {"data.jsonl", "meta"}
+        assert (partition / "meta" / "manifest.json").is_file()
         row = json.loads((partition / "data.jsonl").read_text(encoding="utf-8").splitlines()[0])
         assert "__raw" not in row
         assert not [k for k in row if k.startswith("_dlt")]

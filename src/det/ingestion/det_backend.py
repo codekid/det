@@ -12,6 +12,7 @@ from det.logging import get_logger
 from det.runtime.config import DestinationConfig, PipelineConfig, resolve_path
 from det.runtime.ids import sql_names_for_config
 from det.runtime.lake import LakeRef
+from det.runtime.manifest import publish_filesystem_bronze_commit
 from det.validation.jsonschema_validator import load_json_schema
 
 logger = get_logger(__name__)
@@ -48,6 +49,7 @@ class DetBackend:
                 config=config,
                 partition_dir=partition_dir,
                 chunk_rows=size,
+                run_identity=run_identity,
                 on_chunk=on_chunk,
             )
         if destination.type == "duckdb":
@@ -88,11 +90,13 @@ class DetBackend:
         config: PipelineConfig,
         partition_dir: Path | LakeRef,
         chunk_rows: int,
+        run_identity: tuple[str, str, str] | None = None,
         on_chunk: Callable[[], None] | None = None,
     ) -> Path | LakeRef:
         write_jsonl_partition(
             records, partition_dir, chunk_rows=chunk_rows, on_chunk=on_chunk
         )
+        publish_filesystem_bronze_commit(partition_dir, run_identity=run_identity)
         logger.info(
             "filesystem load finished",
             partition=str(partition_dir),

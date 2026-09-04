@@ -776,6 +776,7 @@ def dbt_write_argv(
     select: Sequence[str] | None = None,
     full_refresh: bool = False,
     catchup: bool = False,
+    catchup_manifest: str | None = None,
     target: str | None = None,
     lake_path: str | None = None,
     lake_path_raw: str | None = None,
@@ -794,6 +795,12 @@ def dbt_write_argv(
         argv.append("--full-refresh")
     if catchup:
         argv.append("--catchup")
+        mid = (catchup_manifest or "").strip()
+        if not mid:
+            raise ValueError("--catchup requires --catchup-manifest <scm_…>")
+        argv.extend(["--catchup-manifest", mid])
+    elif (catchup_manifest or "").strip():
+        raise ValueError("--catchup-manifest requires --catchup")
     if target:
         argv.extend(["--target", str(target).strip()])
     argv.extend(
@@ -815,6 +822,8 @@ def silver_catchup_plan_write_argv(
     interval_start: str | None = None,
     interval_end: str | None = None,
     limit: int = 200,
+    manifest_id: str | None = None,
+    content_digest: str | None = None,
     lake_path: str | None = None,
     lake_path_raw: str | None = None,
     lake_path_bronze: str | None = None,
@@ -834,6 +843,14 @@ def silver_catchup_plan_write_argv(
             argv.extend(["-e", end])
     if limit != 200:
         argv.extend(["--limit", str(int(limit))])
+    mid = (manifest_id or "").strip()
+    digest = (content_digest or "").strip()
+    if not mid or not digest:
+        raise ValueError(
+            "silver-catchup-plan --apply approval requires "
+            "--manifest-id and --content-digest from dry-run"
+        )
+    argv.extend(["--manifest-id", mid, "--content-digest", digest])
     argv.extend(
         _lake_argv(
             lake_path,

@@ -154,3 +154,38 @@ def test_replace_by_run_requires_stable_run_identity():
                 },
             ]
         )
+
+
+def test_filesystem_bronze_commit_gates_list_bronze_runs(
+    project_root: Path, tmp_path: Path
+):
+    """Filesystem bronze: data.jsonl alone is invisible; manifest publishes it."""
+    from det.runtime.bronze_runs import list_bronze_runs
+    from det.runtime.config import load_pipeline_config
+    from det.runtime.manifest import is_committed_raw_dir
+
+    pipe = _example_pipe(tmp_path, project_root)
+    runner = PipelineRunner(tmp_path)
+    extracted = runner.extract(
+        pipe, interval_start="2026-08-06", interval_end="2026-08-07"
+    )
+    loaded = runner.load(
+        pipe,
+        interval_start=extracted.interval_start,
+        interval_end=extracted.interval_end,
+        extract_run_datetime=extracted.extract_run_datetime,
+    )
+    assert is_committed_raw_dir(loaded.partition_dir)
+    assert (loaded.partition_dir / "data.jsonl").is_file()
+    assert (loaded.partition_dir / "meta" / "manifest.json").is_file()
+
+    config = load_pipeline_config(pipe)
+    listed, note = list_bronze_runs(config, root=tmp_path, limit=10)
+    assert note is None
+    assert len(listed) == 1
+
+    # Strip commit → listing must hide the incomplete/uncommitted prefix.
+    (loaded.partition_dir / "meta" / "manifest.json").unlink()
+    assert not is_committed_raw_dir(loaded.partition_dir)
+    listed2, _ = list_bronze_runs(config, root=tmp_path, limit=10)
+    assert listed2 == []

@@ -397,25 +397,36 @@ def test_run_dbt_catchup_reads_manifest_from_resolved_lake(
     dbt_dir.mkdir()
     (dbt_dir / "dbt_project.yml").write_text("name: x\n", encoding="utf-8")
     other = tmp_path / "other_lake"
+    mid = "scm_" + ("ab" * 8)
     (other / "ops" / "silver_catchup").mkdir(parents=True)
     manifest = {
-        "version": 1,
+        "manifest_version": 1,
+        "manifest_id": mid,
+        "content_digest": "sha256:" + ("0" * 64),
         "runs": [
             {
                 "pipeline": "noaa.storm_events",
                 "extract_run_datetime": "2026-08-06T12:00:00+00:00",
+                "interval_start": "2026-08-06T00:00:00+00:00",
+                "interval_end": "2026-08-07T00:00:00+00:00",
             }
         ],
     }
-    (other / "ops" / "silver_catchup" / "manifest.json").write_text(
-        __import__("json").dumps(manifest), encoding="utf-8"
-    )
+    scm_path = other / "ops" / "silver_catchup" / f"{mid}.json"
+    scm_path.write_text(__import__("json").dumps(manifest), encoding="utf-8")
 
     seen: dict[str, object] = {}
 
-    def _fake_read(*, project_root, settings=None, lake_path=None):
+    def _fake_read(*, manifest_id, project_root, settings=None, lake_path=None):
         seen["lake_path"] = lake_path
+        seen["manifest_id"] = manifest_id
         return manifest
+
+    captured_env: dict[str, str] = {}
+
+    def _fake_subprocess(argv, *, cwd, env):
+        captured_env.update(env)
+        return 0, ""
 
     with (
         patch(
@@ -426,14 +437,266 @@ def test_run_dbt_catchup_reads_manifest_from_resolved_lake(
             "det.runtime.silver_catchup.catchup_select_from_manifest",
             return_value=["silver_noaa__storm_events"],
         ),
+        patch(
+            "det.runtime.dbt_runner.find_dbt_executable",
+            return_value="dbt",
+        ),
+        patch(
+            "det.runtime.dbt_runner._run_dbt_subprocess",
+            side_effect=_fake_subprocess,
+        ),
     ):
         result = run_dbt(
             project_root=tmp_path,
             catchup=True,
+            catchup_manifest=mid,
             lake_path=other,
-            dry_run=True,
+            dry_run=False,
         )
 
     assert seen["lake_path"] == str(other.resolve())
+    assert seen["manifest_id"] == mid
     assert "--vars" in result.command
+    vars_idx = result.command.index("--vars")
+    vars_json = result.command[vars_idx + 1]
+    assert "det_catchup_by_pipeline" not in vars_json
+    assert '"det_catchup":true' in vars_json.replace(" ", "")
+    assert mid in vars_json
     assert "silver_noaa__storm_events" in result.select
+    assert captured_env.get("DET_CATCHUP_MANIFEST_PATH") == str(scm_path.resolve())
+
+
+def test_run_dbt_catchup_refuses_bigquery_on_local_lake(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    dbt_dir = tmp_path / "dbt"
+    dbt_dir.mkdir()
+    (dbt_dir / "dbt_project.yml").write_text("name: x\n", encoding="utf-8")
+    lake = tmp_path / "lake"
+    mid = "scm_" + ("cd" * 8)
+    (lake / "ops" / "silver_catchup").mkdir(parents=True)
+    manifest = {
+        "manifest_version": 1,
+        "manifest_id": mid,
+        "content_digest": "sha256:" + ("1" * 64),
+        "runs": [
+            {
+                "pipeline": "noaa.storm_events",
+                "extract_run_datetime": "2026-08-06T12:00:00+00:00",
+                "interval_start": "2026-08-06T00:00:00+00:00",
+                "interval_end": "2026-08-07T00:00:00+00:00",
+            }
+        ],
+    }
+    (lake / "ops" / "silver_catchup" / f"{mid}.json").write_text(
+        __import__("json").dumps(manifest), encoding="utf-8"
+    )
+    with (
+        patch(
+            "det.runtime.silver_catchup.read_catchup_manifest",
+            return_value=manifest,
+        ),
+        patch(
+            "det.runtime.silver_catchup.catchup_select_from_manifest",
+            return_value=["silver_noaa__storm_events"],
+        ),
+        pytest.raises(ValueError, match="GCS ops lake"),
+    ):
+        run_dbt(
+            project_root=tmp_path,
+            catchup=True,
+            catchup_manifest=mid,
+            lake_path=lake,
+            target="bigquery",
+            dry_run=True,
+        )
+
+
+def test_run_dbt_catchup_bigquery_gcs_sets_bq_relation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    monkeypatch.setenv("DET_GCP_PROJECT", "proj-test")
+    monkeypatch.setenv("DET_BQ_DATASET", "analytics")
+    dbt_dir = tmp_path / "dbt"
+    dbt_dir.mkdir()
+    (dbt_dir / "dbt_project.yml").write_text("name: x\n", encoding="utf-8")
+    mid = "scm_" + ("ef" * 8)
+    runs = [
+        {
+            "pipeline": "noaa.storm_events",
+            "extract_run_datetime": "2026-08-06T12:00:00+00:00",
+            "interval_start": "2026-08-06T00:00:00+00:00",
+            "interval_end": "2026-08-07T00:00:00+00:00",
+        }
+    ]
+    from det.runtime.silver_catchup import _runs_jsonl_bytes, catchup_content_digest
+
+    digest = catchup_content_digest(runs)
+    manifest = {
+        "manifest_version": 1,
+        "manifest_id": mid,
+        "content_digest": digest,
+        "runs": runs,
+    }
+    scm_uri = f"gs://bucket/ops/silver_catchup/{mid}.json"
+    runs_uri = f"gs://bucket/ops/silver_catchup/{mid}.runs.jsonl"
+    runs_body = _runs_jsonl_bytes(runs).decode("utf-8")
+
+    class _FakeRef:
+        def __init__(self, uri: str, *, exists: bool = True, text: str = "") -> None:
+            self._uri = uri
+            self._exists = exists
+            self._text = text
+
+        def __str__(self) -> str:
+            return self._uri
+
+        def exists(self) -> bool:
+            return self._exists
+
+        def read_text(self, encoding: str = "utf-8") -> str:
+            return self._text
+
+    captured_env: dict[str, str] = {}
+    ensure_seen: dict[str, str] = {}
+
+    def _fake_subprocess(argv, *, cwd, env):
+        captured_env.update(env)
+        return 0, ""
+
+    def _fake_ensure(*, runs_uri: str, manifest_id: str) -> str:
+        ensure_seen["runs_uri"] = runs_uri
+        ensure_seen["manifest_id"] = manifest_id
+        return f"`proj-test.analytics._det_catchup_runs_{manifest_id}`"
+
+    with (
+        patch(
+            "det.runtime.silver_catchup.read_catchup_manifest",
+            return_value=manifest,
+        ),
+        patch(
+            "det.runtime.silver_catchup.catchup_select_from_manifest",
+            return_value=["silver_noaa__storm_events"],
+        ),
+        patch(
+            "det.runtime.silver_catchup.catchup_manifest_file_path",
+            return_value=_FakeRef(scm_uri),
+        ),
+        patch(
+            "det.runtime.silver_catchup.catchup_runs_file_path",
+            return_value=_FakeRef(runs_uri, text=runs_body),
+        ),
+        patch(
+            "det.runtime.silver_catchup.ensure_bq_catchup_external_table",
+            side_effect=_fake_ensure,
+        ),
+        patch(
+            "det.runtime.dbt_runner.find_dbt_executable",
+            return_value="dbt",
+        ),
+        patch(
+            "det.runtime.dbt_runner._run_dbt_subprocess",
+            side_effect=_fake_subprocess,
+        ),
+    ):
+        result = run_dbt(
+            project_root=tmp_path,
+            catchup=True,
+            catchup_manifest=mid,
+            lake_path="gs://bucket",
+            target="bigquery",
+            dry_run=False,
+        )
+
+    vars_json = result.command[result.command.index("--vars") + 1]
+    assert "det_catchup_by_pipeline" not in vars_json
+    assert ensure_seen["runs_uri"] == runs_uri
+    assert ensure_seen["manifest_id"] == mid
+    assert captured_env.get("DET_CATCHUP_MANIFEST_PATH") == scm_uri
+    assert (
+        captured_env.get("DET_CATCHUP_BQ_RELATION")
+        == f"`proj-test.analytics._det_catchup_runs_{mid}`"
+    )
+
+
+def test_run_dbt_catchup_bigquery_rejects_sidecar_digest_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    monkeypatch.setenv("DET_GCP_PROJECT", "proj-test")
+    dbt_dir = tmp_path / "dbt"
+    dbt_dir.mkdir()
+    (dbt_dir / "dbt_project.yml").write_text("name: x\n", encoding="utf-8")
+    mid = "scm_" + ("11" * 8)
+    from det.runtime.silver_catchup import _runs_jsonl_bytes, catchup_content_digest
+
+    runs = [
+        {
+            "pipeline": "noaa.storm_events",
+            "extract_run_datetime": "2026-08-06T12:00:00+00:00",
+            "interval_start": "2026-08-06T00:00:00+00:00",
+            "interval_end": "2026-08-07T00:00:00+00:00",
+        }
+    ]
+    manifest = {
+        "manifest_version": 1,
+        "manifest_id": mid,
+        "content_digest": catchup_content_digest(runs),
+        "runs": runs,
+    }
+    other_runs = [
+        {
+            "pipeline": "noaa.storm_events",
+            "extract_run_datetime": "2026-08-08T12:00:00+00:00",
+            "interval_start": "2026-08-08T00:00:00+00:00",
+            "interval_end": "2026-08-09T00:00:00+00:00",
+        }
+    ]
+    scm_uri = f"gs://bucket/ops/silver_catchup/{mid}.json"
+    runs_uri = f"gs://bucket/ops/silver_catchup/{mid}.runs.jsonl"
+
+    class _FakeRef:
+        def __init__(self, uri: str, *, text: str = "") -> None:
+            self._uri = uri
+            self._text = text
+
+        def __str__(self) -> str:
+            return self._uri
+
+        def exists(self) -> bool:
+            return True
+
+        def read_text(self, encoding: str = "utf-8") -> str:
+            return self._text
+
+    with (
+        patch(
+            "det.runtime.silver_catchup.read_catchup_manifest",
+            return_value=manifest,
+        ),
+        patch(
+            "det.runtime.silver_catchup.catchup_select_from_manifest",
+            return_value=["silver_noaa__storm_events"],
+        ),
+        patch(
+            "det.runtime.silver_catchup.catchup_manifest_file_path",
+            return_value=_FakeRef(scm_uri),
+        ),
+        patch(
+            "det.runtime.silver_catchup.catchup_runs_file_path",
+            return_value=_FakeRef(
+                runs_uri, text=_runs_jsonl_bytes(other_runs).decode("utf-8")
+            ),
+        ),
+        pytest.raises(ValueError, match="does not match manifest content_digest"),
+    ):
+        run_dbt(
+            project_root=tmp_path,
+            catchup=True,
+            catchup_manifest=mid,
+            lake_path="gs://bucket",
+            target="bigquery",
+            dry_run=True,
+        )

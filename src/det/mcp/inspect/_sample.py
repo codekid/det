@@ -15,6 +15,7 @@ from det.plugins import load_plugins
 from det.runtime.coerce import CoerceError, coerce_record
 from det.runtime.config import PipelineConfig, resolve_path
 from det.runtime.lake import LakeRef
+from det.runtime.manifest import is_committed_raw_dir
 from det.runtime.manifest import read_manifest as read_raw_manifest
 from det.runtime.meta import resolve_interval
 from det.runtime.naming import apply_naming
@@ -325,6 +326,11 @@ def _resolve_bronze_fs_run(
         if not run_dir.is_dir():
             raise FileNotFoundError(f"run path is not a directory: {run_dir}")
         _assert_under_bronze(run_dir, root=root)
+        if not is_committed_raw_dir(run_dir):
+            raise FileNotFoundError(
+                f"run path is not a committed bronze partition "
+                f"(no meta/manifest.json): {_rel(run_dir, root)}"
+            )
         return {"path": _rel(run_dir, root)}
 
     runs = walk_hive_runs(
@@ -334,6 +340,7 @@ def _resolve_bronze_fs_run(
         interval_start=interval_start,
         interval_end=interval_end,
         normalize_iso=True,
+        require_committed=True,
     )
     if extract_run_datetime is not None:
         want = to_interval_or_partition(extract_run_datetime)

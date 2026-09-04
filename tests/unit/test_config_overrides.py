@@ -138,7 +138,9 @@ def test_in_tree_storm_events_silver_is_incremental(project_root):
         project_root / "dbt/macros/det_silver_incremental_filter.sql"
     ).read_text(encoding="utf-8")
     assert "is_incremental()" in macro
-    assert "__extract_run_datetime" in macro or "watermark" in macro
+    assert "DET_CATCHUP_MANIFEST_PATH" in macro
+    assert "det_catchup_coverage_predicate" in macro
+    assert "DET_CATCHUP_BQ_RELATION" in macro
 
 
 def test_bigquery_silver_config_defaults_granularity_day():

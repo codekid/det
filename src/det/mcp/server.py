@@ -27,7 +27,7 @@ def create_server():
             "default 5, max 50). "
             "Generate (dry-run): schema_from_sample_dry_run, mapper_from_diff_dry_run. "
             "scaffold_ops_dry_run previews ops dbt models (never writes). "
-            "silver_catchup_dry_run previews ops/silver_catchup/manifest.json (never writes). "
+            "silver_catchup_dry_run previews ops/silver_catchup/<scm_id>.json (never writes). "
             "Airflow inspect (read-only): airflow_health, list_airflow_dags, "
             "list_airflow_dag_runs, describe_airflow_det_env, preview_backfill_conf. "
             "Configure via DET_AIRFLOW_BASE_URL/USER/PASSWORD (Compose defaults). "
@@ -112,11 +112,16 @@ def create_server():
         pipeline: p.PipelineRefOpt = None,
         command: p.DbtCommand = "build",
         select: p.DbtSelectOpt = None,
-        catchup: bool = False,
+        catchup: p.CatchupFlag = False,
+        catchup_manifest: p.CatchupManifestOpt = None,
     ) -> dict[str, Any]:
         """Preview the dbt CLI argv DET would run (dry_run=True)."""
         return t.dbt_dry_run(
-            pipeline, command=command, select=select, catchup=catchup
+            pipeline,
+            command=command,
+            select=select,
+            catchup=catchup,
+            catchup_manifest=catchup_manifest,
         )
 
     @mcp.tool()

@@ -82,7 +82,7 @@ layout 1 does not change paths when switching JSONL ↔ Iceberg on the same data
 | `destination.type` | Layout 1 landing |
 | --- | --- |
 | **`iceberg`** (default lake) | Hadoop-style table at `{lake}/bronze/{provider}/{source}_vN/` (Parquet + metadata) |
-| **`filesystem`** | Hive JSONL: `…/__extract_run_datetime=…/data.jsonl` |
+| **`filesystem`** | Hive JSONL: `…/__extract_run_datetime=…/data.jsonl` plus commit `meta/manifest.json` (same visibility protocol as raw) |
 | **`duckdb` / `postgres`** | SQL table `{medallion}_{provider}.{source}_vN` (default medallion `bronze`) |
 
 ### SQL and dbt naming (layout 1)

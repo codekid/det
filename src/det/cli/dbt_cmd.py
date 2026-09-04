@@ -50,9 +50,16 @@ def dbt_cmd(
         False,
         "--catchup",
         help=(
-            "Heal from ops/silver_catchup/manifest.json (one build; injects "
-            "det_catchup_by_pipeline vars; selects listed silver models)"
+            "Heal from immutable ops/silver_catchup/<id>.json (requires "
+            "--catchup-manifest; DuckDB or BigQuery-on-GCS; sets "
+            "DET_CATCHUP_MANIFEST_PATH + tiny det_catchup vars; BQ also "
+            "DET_CATCHUP_BQ_RELATION over sibling .runs.jsonl)"
         ),
+    ),
+    catchup_manifest: str | None = typer.Option(
+        None,
+        "--catchup-manifest",
+        help="Immutable catch-up manifest id (scm_…) from silver-catchup-plan --apply",
     ),
     project_dir: Path | None = typer.Option(
         None,
@@ -98,6 +105,16 @@ def dbt_cmd(
             "must be one of: build, run, test",
             param_hint="--command",
         )
+    if catchup and not (catchup_manifest and str(catchup_manifest).strip()):
+        raise typer.BadParameter(
+            "--catchup requires --catchup-manifest <scm_…>",
+            param_hint="--catchup-manifest",
+        )
+    if catchup_manifest and not catchup:
+        raise typer.BadParameter(
+            "--catchup-manifest requires --catchup",
+            param_hint="--catchup",
+        )
 
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root) if pipeline is not None else None
@@ -119,6 +136,7 @@ def dbt_cmd(
                 select=select or None,
                 full_refresh=full_refresh,
                 catchup=catchup,
+                catchup_manifest=catchup_manifest,
                 target=target,
                 lake_path=lake_path,
                 lake_path_raw=lake_path_raw,
@@ -157,6 +175,7 @@ def dbt_cmd(
                 target=target,
                 full_refresh=full_refresh,
                 catchup=catchup,
+                catchup_manifest=catchup_manifest,
                 lake_path=lake_path,
                 pipeline=pipe,
                 pipeline_overrides=set_ or None,

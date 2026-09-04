@@ -363,6 +363,8 @@ def test_unreachable_note_sanitizes_exception_paths():
 
 
 def test_sample_bronze_filesystem(tmp_path: Path):
+    from det.runtime.manifest import write_manifest
+
     _write_pipeline(tmp_path)
     start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
     bronze = tmp_path / "data" / "lake" / "bronze" / "example_api" / "events_v1"
@@ -374,12 +376,43 @@ def test_sample_bronze_filesystem(tmp_path: Path):
         + "\n",
         encoding="utf-8",
     )
+    write_manifest(
+        run_dir,
+        {
+            "interval_start": start,
+            "interval_end": end,
+            "extract_run_datetime": "2026-08-06T10:00:00+00:00",
+        },
+    )
     sample = sample_bronze("example_api.events", limit=1, root=tmp_path)
     assert sample["limit"] == 1
     assert len(sample["rows"]) == 1
     assert sample["truncated"] is True
     assert sample["rows"][0]["data"]["id"] == 1
     assert "migrate" in sample["note"].lower()
+    via_path = sample_bronze(
+        "example_api.events",
+        limit=1,
+        run_path=str(run_dir.relative_to(tmp_path)),
+        root=tmp_path,
+    )
+    assert len(via_path["rows"]) == 1
+    assert via_path["rows"][0]["data"]["id"] == 1
+
+
+def test_sample_bronze_filesystem_run_path_rejects_uncommitted(tmp_path: Path):
+    _write_pipeline(tmp_path)
+    start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
+    bronze = tmp_path / "data" / "lake" / "bronze" / "example_api" / "events_v1"
+    run_dir = _mk_hive_run(bronze, start=start, end=end, run="2026-08-06T10:00:00+00:00")
+    (run_dir / "data.jsonl").write_text("{}\n", encoding="utf-8")
+    (run_dir / "meta" / "manifest.json").unlink()
+    with pytest.raises(FileNotFoundError, match="not a committed bronze partition"):
+        sample_bronze(
+            "example_api.events",
+            run_path=str(run_dir.relative_to(tmp_path)),
+            root=tmp_path,
+        )
 
 
 def test_sample_bronze_duckdb(tmp_path: Path):
