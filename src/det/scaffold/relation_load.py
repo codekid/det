@@ -92,6 +92,11 @@ def relation_delete_key(parent_key: str, spine: Sequence[_SpineLike]) -> list[st
     ``[parent_key, …ancestor spine]`` (nested), the batch clears all children for
     those parents/lines — including grain values absent from the new explosion —
     before insert.
+
+    Empty/null relation arrays produce no cross-join unnest rows, so they never
+    appear in the delete+insert batch. Scaffolded ``parent_replace`` silver sets
+    ``pre_hook=det_relation_clear_empty_arrays()`` to delete those keys (and
+    ancestor-empty clears for nested relations) without inserting key-only rows.
     """
     if not spine:
         return [parent_key]

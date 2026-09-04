@@ -342,6 +342,15 @@ def scaffold_dbt(
             provider=provider,
             meta_columns=_META_COLUMNS,
         )
+        spine_meta = [
+            {
+                "name": e.name,
+                "level_idx": e.level_idx,
+                "kind": e.kind,
+                "field": e.field,
+            }
+            for e in spine
+        ]
         rel_silver_sql = _render(
             "silver_relation.sql.j2",
             model_slug=rel_slug,
@@ -356,6 +365,11 @@ def scaffold_dbt(
             pipeline_name=config.name,
             provider=provider,
             bigquery=rel.bigquery,
+            path_chain=path_chain,
+            spine_meta=spine_meta,
+            parent_key=parent_key,
+            sql_table=sql_table,
+            sql_schema=sql_schema,
         )
         _write_or_skip(
             models_dir / f"stg_{rel_slug}.sql",

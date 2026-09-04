@@ -16,7 +16,7 @@ from det.runtime.config import (
     RelationConfig,
     resolve_path,
 )
-from det.runtime.ids import dbt_model_slug, parse_canonical_id
+from det.runtime.ids import dbt_model_slug, parse_canonical_id, sql_names_for_config
 from det.runtime.sql_types import (
     META_SQL_TYPES_DUCKDB,
     bronze_sql_columns,
@@ -685,6 +685,7 @@ def expected_silver_sql(
     root = project_root.resolve()
     model_slug = dbt_model_slug(config.name)
     provider, _ = parse_canonical_id(config.name)
+    sql_schema, sql_table = sql_names_for_config(config)
     silver: DbtSilverConfig = config.dbt.silver
     stg_cfg: DbtStgConfig = config.dbt.stg
     schema = load_json_schema(resolve_path(root, config.schema_path))
@@ -697,8 +698,9 @@ def expected_silver_sql(
             pipeline_name=config.name,
         )
     }
-    for name_parts_t, _path_chain_t, rel in iter_relation_paths(stg_cfg.relations):
+    for name_parts_t, path_chain_t, rel in iter_relation_paths(stg_cfg.relations):
         name_parts = list(name_parts_t)
+        path_chain = list(path_chain_t)
         parent_key = default_parent_key(schema, silver, rel.parent_key)
         rel_slug = f"{model_slug}__{'__'.join(name_parts)}"
         rel_chain = relation_chain_for(stg_cfg.relations, name_parts)
@@ -708,6 +710,15 @@ def expected_silver_sql(
         )
         dedupe_key = relation_dedupe_key(parent_key, spine)
         delete_key = relation_delete_key(parent_key, spine)
+        spine_meta = [
+            {
+                "name": e.name,
+                "level_idx": e.level_idx,
+                "kind": e.kind,
+                "field": e.field,
+            }
+            for e in spine
+        ]
         out[f"dbt/models/silver/silver_{rel_slug}.sql"] = _render(
             "silver_relation.sql.j2",
             model_slug=rel_slug,
@@ -722,5 +733,10 @@ def expected_silver_sql(
             pipeline_name=config.name,
             provider=provider,
             bigquery=rel.bigquery,
+            path_chain=path_chain,
+            spine_meta=spine_meta,
+            parent_key=parent_key,
+            sql_table=sql_table,
+            sql_schema=sql_schema,
         )
     return out

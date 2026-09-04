@@ -162,11 +162,11 @@ def test_scaffold_parent_replace_and_full_refresh(
     assert "det_catchup" in sil_li
     assert "det_silver_incremental_filter" in sil_li
     assert 'unique_key=["id"]' in sil_li
-    # parent_replace: BQ must delete+insert (not merge) so vanished children drop
-    assert (
-        "incremental_strategy='delete+insert' if target.name == 'bigquery' "
-        "else 'delete+insert'"
-    ) in sil_li
+    assert "det_relation_clear_empty_arrays" in sil_li
+    assert "det_parent_replace=true" in sil_li
+    assert 'det_relation_path_chain=["line_items"]' in sil_li
+    # parent_replace always delete+insert (delete_key is not row-unique)
+    assert "incremental_strategy='delete+insert'" in sil_li
     assert "'merge' if target.name == 'bigquery'" not in sil_li
     assert "partition_by=" in sil_li
     assert "line_items__sku" in sil_li
@@ -178,6 +178,8 @@ def test_scaffold_parent_replace_and_full_refresh(
     # delete key = parent + ancestor spine (line_items__sku), not self grain
     assert 'unique_key=["id", "line_items__sku"]' in sil_tax
     assert "line_items__tax_lines__title" in sil_tax  # in dedupe partition_by
+    assert 'det_relation_path_chain=["line_items", "tax_lines"]' in sil_tax
+    assert "det_relation_clear_empty_arrays" in sil_tax
 
     # YAML tests use dedupe grain, not delete_key (would wrongly unique-test parent id)
     yml = yaml.safe_load(
@@ -219,3 +221,102 @@ def test_spine_helpers_align_with_chain() -> None:
     chain = relation_chain_for(rels, name_parts)
     spine = spine_for_relation(name_parts, chain)
     assert relation_delete_key("id", spine) == ["id", "line_items__sku"]
+
+
+def test_empty_array_clears_top_level_and_nested_children() -> None:
+    """Data-level: empty relation arrays must delete silver children (no insert).
+
+    Mirrors ``det_relation_clear_empty_arrays`` key generation: top-level empty
+    ``line_items`` clears by parent id; nested empty ``tax_lines`` clears by
+    (id, sku); empty ancestor ``line_items`` clears all nested rows for the parent.
+    """
+    import duckdb
+
+    con = duckdb.connect()
+    con.execute(
+        """
+        create table bronze_orders as
+        select * from (
+          values
+            (1, cast('[{"sku":"A","tax_lines":[{"title":"s","rate":0.1}]}]' as JSON),
+             timestamp '2026-01-02'),
+            (2, cast('[]' as JSON), timestamp '2026-01-02'),
+            (3, cast('[{"sku":"B","tax_lines":[]}]' as JSON), timestamp '2026-01-02')
+        ) v(id, line_items, __extract_run_datetime)
+        """
+    )
+    con.execute(
+        """
+        create table silver_line_items as
+        select * from (
+          values
+            (1, 'A', timestamp '2026-01-01'),
+            (2, 'Z', timestamp '2026-01-01'),
+            (3, 'B', timestamp '2026-01-01')
+        ) v(id, line_items__sku, __extract_run_datetime)
+        """
+    )
+    con.execute(
+        """
+        create table silver_tax_lines as
+        select * from (
+          values
+            (1, 'A', 's', 0.1, timestamp '2026-01-01'),
+            (2, 'Z', 'old', 0.2, timestamp '2026-01-01'),
+            (3, 'B', 'gone', 0.3, timestamp '2026-01-01')
+        ) v(id, line_items__sku, line_items__tax_lines__title, line_items__tax_lines__rate,
+            __extract_run_datetime)
+        """
+    )
+
+    # Top-level empty line_items → clear silver_line_items by parent id
+    con.execute(
+        """
+        delete from silver_line_items as t
+        where t.id in (
+          select p.id from bronze_orders p
+          where (p.line_items is null or len(cast(p.line_items as JSON[])) = 0)
+            and p.__extract_run_datetime > (
+              select coalesce(max(__extract_run_datetime), timestamp '0001-01-01')
+              from silver_line_items
+            )
+        )
+        """
+    )
+    li = con.execute(
+        "select id, line_items__sku from silver_line_items order by id"
+    ).fetchall()
+    assert li == [(1, "A"), (3, "B")]  # id=2 cleared; no key-only insert
+
+    # Nested: empty tax_lines on a line item → clear by (id, sku)
+    con.execute(
+        """
+        delete from silver_tax_lines as t
+        where (t.id, t.line_items__sku) in (
+          select p.id,
+                 json_extract_string(t0._rel, '$.sku') as line_items__sku
+          from bronze_orders p
+          cross join unnest(cast(p.line_items as JSON[])) with ordinality
+            as t0(_rel, __rel_index)
+          where (json_extract(t0._rel, '$.tax_lines') is null
+                 or len(cast(json_extract(t0._rel, '$.tax_lines') as JSON[])) = 0)
+            and p.__extract_run_datetime > timestamp '2026-01-01'
+        )
+        """
+    )
+    # Nested: empty ancestor line_items → clear all tax rows for parent
+    con.execute(
+        """
+        delete from silver_tax_lines as t
+        where t.id in (
+          select p.id from bronze_orders p
+          where (p.line_items is null or len(cast(p.line_items as JSON[])) = 0)
+            and p.__extract_run_datetime > timestamp '2026-01-01'
+        )
+        """
+    )
+    tax = con.execute(
+        "select id, line_items__sku, line_items__tax_lines__title "
+        "from silver_tax_lines order by id"
+    ).fetchall()
+    assert tax == [(1, "A", "s")]  # id=2 ancestor-empty, id=3 self-empty; no inserts
