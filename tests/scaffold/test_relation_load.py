@@ -269,6 +269,7 @@ def test_empty_array_clears_top_level_and_nested_children() -> None:
     Mirrors ``det_relation_clear_empty_arrays`` key generation: top-level empty
     ``line_items`` clears by parent id; nested empty ``tax_lines`` clears by
     (id, sku); empty ancestor ``line_items`` clears all nested rows for the parent.
+    JSON null (distinct from SQL NULL / ``[]``) must clear the same way.
     """
     import duckdb
 
@@ -281,7 +282,9 @@ def test_empty_array_clears_top_level_and_nested_children() -> None:
             (1, cast('[{"sku":"A","tax_lines":[{"title":"s","rate":0.1}]}]' as JSON),
              timestamp '2026-01-02'),
             (2, cast('[]' as JSON), timestamp '2026-01-02'),
-            (3, cast('[{"sku":"B","tax_lines":[]}]' as JSON), timestamp '2026-01-02')
+            (3, cast('[{"sku":"B","tax_lines":[]}]' as JSON), timestamp '2026-01-02'),
+            (4, cast('null' as JSON), timestamp '2026-01-02'),
+            (5, cast('[{"sku":"C","tax_lines":null}]' as JSON), timestamp '2026-01-02')
         ) v(id, line_items, __extract_run_datetime)
         """
     )
@@ -292,7 +295,9 @@ def test_empty_array_clears_top_level_and_nested_children() -> None:
           values
             (1, 'A', timestamp '2026-01-01'),
             (2, 'Z', timestamp '2026-01-01'),
-            (3, 'B', timestamp '2026-01-01')
+            (3, 'B', timestamp '2026-01-01'),
+            (4, 'gone', timestamp '2026-01-01'),
+            (5, 'C', timestamp '2026-01-01')
         ) v(id, line_items__sku, __extract_run_datetime)
         """
     )
@@ -303,19 +308,25 @@ def test_empty_array_clears_top_level_and_nested_children() -> None:
           values
             (1, 'A', 's', 0.1, timestamp '2026-01-01'),
             (2, 'Z', 'old', 0.2, timestamp '2026-01-01'),
-            (3, 'B', 'gone', 0.3, timestamp '2026-01-01')
+            (3, 'B', 'gone', 0.3, timestamp '2026-01-01'),
+            (4, 'gone', 'x', 0.4, timestamp '2026-01-01'),
+            (5, 'C', 'stale', 0.5, timestamp '2026-01-01')
         ) v(id, line_items__sku, line_items__tax_lines__title, line_items__tax_lines__rate,
             __extract_run_datetime)
         """
     )
 
-    # Top-level empty line_items → clear silver_line_items by parent id
+    # Top-level empty / JSON-null line_items → clear silver_line_items by parent id
     con.execute(
         """
         delete from silver_line_items as t
         where t.id in (
           select p.id from bronze_orders p
-          where (p.line_items is null or len(cast(p.line_items as JSON[])) = 0)
+          where (
+              p.line_items is null
+              or json_type(p.line_items) = 'NULL'
+              or len(cast(p.line_items as JSON[])) = 0
+            )
             and p.__extract_run_datetime > (
               select coalesce(max(__extract_run_datetime), timestamp '0001-01-01')
               from silver_line_items
@@ -326,9 +337,9 @@ def test_empty_array_clears_top_level_and_nested_children() -> None:
     li = con.execute(
         "select id, line_items__sku from silver_line_items order by id"
     ).fetchall()
-    assert li == [(1, "A"), (3, "B")]  # id=2 cleared; no key-only insert
+    assert li == [(1, "A"), (3, "B"), (5, "C")]  # id=2 [] and id=4 JSON null cleared
 
-    # Nested: empty tax_lines on a line item → clear by (id, sku)
+    # Nested: empty / JSON-null tax_lines on a line item → clear by (id, sku)
     con.execute(
         """
         delete from silver_tax_lines as t
@@ -338,19 +349,26 @@ def test_empty_array_clears_top_level_and_nested_children() -> None:
           from bronze_orders p
           cross join unnest(cast(p.line_items as JSON[])) with ordinality
             as t0(_rel, __rel_index)
-          where (json_extract(t0._rel, '$.tax_lines') is null
-                 or len(cast(json_extract(t0._rel, '$.tax_lines') as JSON[])) = 0)
+          where (
+              json_extract(t0._rel, '$.tax_lines') is null
+              or json_type(json_extract(t0._rel, '$.tax_lines')) = 'NULL'
+              or len(cast(json_extract(t0._rel, '$.tax_lines') as JSON[])) = 0
+            )
             and p.__extract_run_datetime > timestamp '2026-01-01'
         )
         """
     )
-    # Nested: empty ancestor line_items → clear all tax rows for parent
+    # Nested: empty / JSON-null ancestor line_items → clear all tax rows for parent
     con.execute(
         """
         delete from silver_tax_lines as t
         where t.id in (
           select p.id from bronze_orders p
-          where (p.line_items is null or len(cast(p.line_items as JSON[])) = 0)
+          where (
+              p.line_items is null
+              or json_type(p.line_items) = 'NULL'
+              or len(cast(p.line_items as JSON[])) = 0
+            )
             and p.__extract_run_datetime > timestamp '2026-01-01'
         )
         """
@@ -359,4 +377,4 @@ def test_empty_array_clears_top_level_and_nested_children() -> None:
         "select id, line_items__sku, line_items__tax_lines__title "
         "from silver_tax_lines order by id"
     ).fetchall()
-    assert tax == [(1, "A", "s")]  # id=2 ancestor-empty, id=3 self-empty; no inserts
+    assert tax == [(1, "A", "s")]  # 2/4 ancestor-empty, 3/5 self-empty; no inserts

@@ -10,6 +10,15 @@
   {% if target.name == 'bigquery' -%}
   (
     {{ col }} is null
+    or json_type(
+      safe.parse_json(
+        if(
+          typeof({{ col }}) = 'JSON',
+          to_json_string({{ col }}),
+          cast({{ col }} as string)
+        )
+      )
+    ) = 'null'
     or array_length(
       json_query_array(
         safe.parse_json(
@@ -25,6 +34,7 @@
   {%- else -%}
   (
     {{ col }} is null
+    or json_type({{ col }}) = 'NULL'
     or len(cast({{ col }} as JSON[])) = 0
   )
   {%- endif %}
