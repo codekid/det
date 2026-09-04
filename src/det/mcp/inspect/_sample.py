@@ -15,7 +15,8 @@ from det.plugins import load_plugins
 from det.runtime.coerce import CoerceError, coerce_record
 from det.runtime.config import PipelineConfig, resolve_path
 from det.runtime.lake import LakeRef
-from det.runtime.manifest import is_committed_raw_dir, read_manifest as read_raw_manifest
+from det.runtime.manifest import is_committed_raw_dir
+from det.runtime.manifest import read_manifest as read_raw_manifest
 from det.runtime.meta import resolve_interval
 from det.runtime.naming import apply_naming
 from det.runtime.registry import get_source

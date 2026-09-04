@@ -10,8 +10,8 @@ import yaml
 
 from det.destinations.models import to_partition_value
 from det.errors import DetConflictError
-from det.runtime.settings import DetSettings, use_settings
 from det.runtime.config import load_pipeline_config
+from det.runtime.settings import DetSettings, use_settings
 from det.runtime.silver_catchup import (
     catchup_select_from_manifest,
     catchup_vars_from_manifest,
@@ -364,7 +364,7 @@ def test_write_catchup_manifest_recovers_identical_orphan_sidecar(
     catchup_root: Path, monkeypatch
 ):
     """Identical .runs.jsonl without scm JSON is recoverable; different is not."""
-    from det.runtime.silver_catchup import catchup_content_digest, _runs_jsonl_bytes
+    from det.runtime.silver_catchup import _runs_jsonl_bytes, catchup_content_digest
 
     lake = catchup_root / "data" / "lake"
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))

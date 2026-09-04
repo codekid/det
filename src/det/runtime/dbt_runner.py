@@ -347,7 +347,8 @@ def run_dbt(
             ensure_bq_catchup_external_table,
         )
 
-        assert catchup_mid is not None
+        if catchup_mid is None:
+            raise ValueError("catch-up requires --catchup-manifest <scm_…>")
         manifest_path = catchup_manifest_file_path(
             manifest_id=catchup_mid, project_root=root, lake_path=catchup_lake
         )
