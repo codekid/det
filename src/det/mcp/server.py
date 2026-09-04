@@ -112,8 +112,8 @@ def create_server():
         pipeline: p.PipelineRefOpt = None,
         command: p.DbtCommand = "build",
         select: p.DbtSelectOpt = None,
-        catchup: bool = False,
-        catchup_manifest: str | None = None,
+        catchup: p.CatchupFlag = False,
+        catchup_manifest: p.CatchupManifestOpt = None,
     ) -> dict[str, Any]:
         """Preview the dbt CLI argv DET would run (dry_run=True)."""
         return t.dbt_dry_run(
