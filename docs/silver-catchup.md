@@ -42,8 +42,17 @@ Same membership rule either way; only which bronze intervals are considered
 Default is **Mode B** (backward compatible). Mode A cannot combine with `-s`/`-e`.
 Diff JSON includes `candidate_mode` (`extract_lookback` \| `interval` \| `full`).
 
+Mode A discovers **all** bronze extract runs in the lookback window up to the
+apply safety cap (`100_000`), independent of `--limit`. `--limit` only truncates
+displayed `catchup_runs` / `ok_intervals` / `stale_siblings_ignored`. Diff fields:
+`discovery_cap` = value that bounded discovery (Mode A always, and Mode B
+plan/apply `complete` mode: apply safety cap; Mode B inspect: `--limit`);
+`truncated` = discovery hit that cap (window may be incomplete);
+`display_truncated` = output lists were sliced for display.
+
 Mode A can miss historical holes with **no** recent bronze extract. Mode A
-`catchup_count=0` is not a forever census — run Mode B periodically.
+`catchup_count=0` is not a forever census — run Mode B periodically. When
+`truncated=true` on Mode A, the lookback window itself was not fully searched.
 
 ## Flow
 

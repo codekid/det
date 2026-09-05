@@ -50,7 +50,14 @@ def silver_catchup_diff_cmd(
             "lookback (e.g. 48h, 7d). Cannot combine with -s/-e."
         ),
     ),
-    limit: int = typer.Option(200, "--limit", help="Max runs listed per side (cap 200)"),
+    limit: int = typer.Option(
+        200,
+        "--limit",
+        help=(
+            "Max catchup/ok/stale rows to display (cap 200). Mode A lookback "
+            "discovers up to the apply safety cap independently of this limit."
+        ),
+    ),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
     lake_path_raw: str | None = typer.Option(
@@ -178,7 +185,14 @@ def silver_catchup_plan_cmd(
             "(e.g. 48h, 7d). Cannot combine with -s/-e."
         ),
     ),
-    limit: int = typer.Option(200, "--limit", help="Max runs considered per pipeline"),
+    limit: int = typer.Option(
+        200,
+        "--limit",
+        help=(
+            "Retained for approval-argv parity only; does not truncate plan "
+            "preview rows (plan always uses complete discovery)."
+        ),
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview immutable manifest only"),
     apply: bool = typer.Option(
         False,

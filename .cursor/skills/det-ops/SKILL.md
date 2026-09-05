@@ -59,7 +59,10 @@ When bronze has data but incremental silver appears behind (watermark hole):
 1. MCP `diff_bronze_silver` — `catchup_runs` are **latest bronze extract-run per
    interval** not yet in silver (DuckDB analytics, or BigQuery when
    `DET_DBT_TARGET=bigquery`). Prefer `extract_lookback="48h"` for routine
-   checks; omit for a full census. Ignore
+   checks; omit for a full census. Mode A discovers the full lookback window
+   (up to the apply safety cap); `--limit` / MCP `limit` only truncates
+   displayed rows (`display_truncated`). `truncated=true` means discovery hit
+   the safety cap — not a complete lookback. Ignore
    `stale_siblings_ignored` (older siblings; silver stays deduped).
 2. MCP `silver_catchup_dry_run` (same lookback / interval flags) → show immutable
    `manifest_id` / `content_digest` + `approval_plan` → **stop**.
