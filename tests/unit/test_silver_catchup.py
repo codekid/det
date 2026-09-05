@@ -16,6 +16,7 @@ from det.runtime.silver_catchup import (
     catchup_select_from_manifest,
     catchup_vars_from_manifest,
     diff_bronze_silver,
+    diff_bronze_silver_fleet,
     ensure_bq_catchup_external_table,
     list_silver_extract_runs,
     manifest_payload_from_catchup,
@@ -626,6 +627,42 @@ def test_plan_catchup_manifest_single(catchup_root: Path, monkeypatch):
     assert planned["manifest_id"].startswith("scm_")
     assert planned["content_digest"].startswith("sha256:")
     assert planned["manifest_relpath"].endswith(f"{planned['manifest_id']}.json")
+
+
+def test_fleet_aggregates_retained_catchup_count(catchup_root: Path, monkeypatch):
+    """Fleet catchup_count sums retained totals; flattened list may be display-sliced."""
+
+    def fake_diff(pipe_id, **kwargs):
+        if pipe_id == "a.events":
+            return {
+                "pipeline": pipe_id,
+                "catchup_runs": [{"pipeline": pipe_id, "extract_run_datetime": "t1"}],
+                "catchup_count": 3,
+                "truncated": False,
+                "display_truncated": True,
+            }
+        return {
+            "pipeline": pipe_id,
+            "catchup_runs": [{"pipeline": pipe_id, "extract_run_datetime": "t2"}],
+            "catchup_count": 2,
+            "truncated": True,
+            "display_truncated": False,
+        }
+
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.diff_bronze_silver", fake_diff
+    )
+    out = diff_bronze_silver_fleet(
+        project_root=catchup_root,
+        pipelines=["a.events", "b.events"],
+        limit=1,
+    )
+    assert len(out["catchup_runs"]) == 2
+    assert out["catchup_count"] == 5
+    assert out["truncated"] is True
+    assert out["display_truncated"] is True
+    assert out["results"][0]["catchup_count"] == 3
+    assert out["results"][1]["catchup_count"] == 2
 
 
 def test_plan_includes_all_catchup_rows_beyond_display_limit(

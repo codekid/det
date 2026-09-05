@@ -782,6 +782,9 @@ def diff_bronze_silver_fleet(
     stamp = detected_at or datetime.now(UTC).isoformat()
     per_pipeline: list[dict[str, Any]] = []
     catchup_all: list[dict[str, Any]] = []
+    catchup_count = 0
+    truncated = False
+    display_truncated = False
     for pipe_id in ids:
         one = diff_bronze_silver(
             pipe_id,
@@ -795,15 +798,21 @@ def diff_bronze_silver_fleet(
             complete=complete,
         )
         per_pipeline.append(one)
+        # Flatten displayed rows; count uses each pipeline's retained total.
         catchup_all.extend(one.get("catchup_runs") or [])
+        catchup_count += int(one.get("catchup_count") or 0)
+        truncated = truncated or bool(one.get("truncated"))
+        display_truncated = display_truncated or bool(one.get("display_truncated"))
     out: dict[str, Any] = {
         "pipelines": ids,
         "pipeline_count": len(ids),
         "catchup_runs": catchup_all,
-        "catchup_count": len(catchup_all),
+        "catchup_count": catchup_count,
         "results": per_pipeline,
         "detected_at": stamp,
         "complete": complete,
+        "truncated": truncated,
+        "display_truncated": display_truncated,
         "candidate_mode": (
             "extract_lookback"
             if extract_lookback and str(extract_lookback).strip()

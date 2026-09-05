@@ -189,8 +189,8 @@ def silver_catchup_plan_cmd(
         200,
         "--limit",
         help=(
-            "Display truncation for dry-run preview rows (cap 200). "
-            "Apply discovery uses the safety cap; Mode A lookback does too."
+            "Retained for approval-argv parity only; does not truncate plan "
+            "preview rows (plan always uses complete discovery)."
         ),
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview immutable manifest only"),

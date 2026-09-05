@@ -45,8 +45,9 @@ Diff JSON includes `candidate_mode` (`extract_lookback` \| `interval` \| `full`)
 Mode A discovers **all** bronze extract runs in the lookback window up to the
 apply safety cap (`100_000`), independent of `--limit`. `--limit` only truncates
 displayed `catchup_runs` / `ok_intervals` / `stale_siblings_ignored`. Diff fields:
-`truncated` = discovery hit the safety cap (lookback window may be incomplete);
-`display_truncated` = output lists were sliced for display.
+`discovery_cap` = value that bounded discovery (Mode A: apply safety cap; Mode B
+inspect: `--limit`); `truncated` = discovery hit that cap (window may be
+incomplete); `display_truncated` = output lists were sliced for display.
 
 Mode A can miss historical holes with **no** recent bronze extract. Mode A
 `catchup_count=0` is not a forever census — run Mode B periodically. When
