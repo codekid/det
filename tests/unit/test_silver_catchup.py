@@ -660,13 +660,95 @@ def test_plan_includes_all_catchup_rows_beyond_display_limit(
             analytics_db=db,
             limit=2,
         )
+    # Mode B inspect still clamps discovery to display limit.
     assert preview["truncated"] is True
+    assert preview["discovery_cap"] == 2
     assert len(preview["catchup_runs"]) == 2
     assert preview["catchup_count"] == 2  # bronze listing itself was clamped
     assert planned["diff"]["complete"] is True
     assert planned["diff"]["truncated"] is False
     assert len(planned["manifest"]["runs"]) == n
     assert planned["diff"]["catchup_count"] == n
+
+
+def test_lookback_discovers_beyond_display_limit(catchup_root: Path, monkeypatch):
+    """Mode A must search the lookback window past --limit (display-only)."""
+    from datetime import UTC, datetime, timedelta
+
+    lake = catchup_root / "data" / "lake"
+    monkeypatch.setenv("DET_LAKE_PATH", str(lake))
+    now = datetime.now(UTC).replace(microsecond=0)
+    n = 210
+    for i in range(n):
+        # Unique interval per run; all extract times inside 48h.
+        start = (now - timedelta(days=30) - timedelta(days=i)).isoformat()
+        end = (now - timedelta(days=29) - timedelta(days=i)).isoformat()
+        extract = (now - timedelta(minutes=n - i)).isoformat()
+        _write_bronze_run(
+            lake, interval_start=start, interval_end=end, extract_run=extract
+        )
+    # Leave one intentional hole: empty silver.
+    db = _silver_db(catchup_root, [])
+    settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
+        lake_override=str(lake)
+    )
+    with use_settings(settings):
+        out = diff_bronze_silver(
+            "example_api.events",
+            project_root=catchup_root,
+            analytics_db=db,
+            extract_lookback="48h",
+            limit=5,
+        )
+    assert out["candidate_mode"] == "extract_lookback"
+    assert out["discovery_cap"] >= n
+    assert out["truncated"] is False
+    assert out["catchup_count"] == n
+    assert len(out["catchup_runs"]) == 5
+    assert out["display_truncated"] is True
+
+
+def test_lookback_expand_across_intervals_beyond_display_limit(
+    catchup_root: Path, monkeypatch
+):
+    """Sibling expand must not stop after 200 rows when many intervals are touched."""
+    from datetime import UTC, datetime, timedelta
+
+    lake = catchup_root / "data" / "lake"
+    monkeypatch.setenv("DET_LAKE_PATH", str(lake))
+    now = datetime.now(UTC).replace(microsecond=0)
+    intervals = 50
+    siblings = 5
+    for i in range(intervals):
+        start = (now - timedelta(days=100 + i)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        end = start + timedelta(days=1)
+        for j in range(siblings):
+            extract = (now - timedelta(hours=1) - timedelta(minutes=i * siblings + j)).isoformat()
+            _write_bronze_run(
+                lake,
+                interval_start=start.isoformat(),
+                interval_end=end.isoformat(),
+                extract_run=extract,
+            )
+    db = _silver_db(catchup_root, [])
+    settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
+        lake_override=str(lake)
+    )
+    with use_settings(settings):
+        out = diff_bronze_silver(
+            "example_api.events",
+            project_root=catchup_root,
+            analytics_db=db,
+            extract_lookback="48h",
+            limit=10,
+        )
+    assert out["truncated"] is False
+    assert out["catchup_count"] == intervals
+    assert out["stale_siblings_count"] == intervals * (siblings - 1)
+    assert len(out["catchup_runs"]) == 10
+    assert out["display_truncated"] is True
 
 
 def test_duckdb_coverage_query_fails_closed_on_missing_interval_columns(

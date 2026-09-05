@@ -618,8 +618,9 @@ def diff_bronze_silver(
     display clamp and return every catch-up row. Raises if the safety cap is hit.
 
     ``extract_lookback`` (e.g. ``48h``) enables Mode A: candidates from recent
-    bronze extract runs, silver probed only for those intervals. Omit for Mode B
-    (full census or ``-s``/``-e`` interval window).
+    bronze extract runs, silver probed only for those intervals. Mode A always
+    discovers up to ``_APPLY_BRONZE_CAP``; ``limit`` only truncates displayed
+    rows. Omit lookback for Mode B (full census or ``-s``/``-e`` interval window).
     """
     root = project_root.resolve()
     if isinstance(pipeline, PipelineConfig):
@@ -628,14 +629,17 @@ def diff_bronze_silver(
         resolved = resolve_pipeline_ref(pipeline, project_root=root)
         config = load_pipeline_config(resolved.path)
 
-    if complete:
-        capped = _APPLY_BRONZE_CAP
+    lookback_set = bool(extract_lookback and str(extract_lookback).strip())
+    display_limit = clamp_list_limit(limit)
+    if complete or lookback_set:
+        discovery_cap = _APPLY_BRONZE_CAP
     else:
-        capped = clamp_list_limit(limit)
+        discovery_cap = display_limit
+
     bronze_runs, bronze_note, candidate_mode, lookback_raw = _load_bronze_candidates(
         config,
         root=root,
-        limit=capped,
+        limit=discovery_cap,
         interval_start=interval_start,
         interval_end=interval_end,
         extract_lookback=extract_lookback,
@@ -714,27 +718,29 @@ def diff_bronze_silver(
             )
 
     schema, table = silver_relation(config)
+    # Discovery incomplete when the safety/discovery cap was hit (not display slice).
+    truncated = len(bronze_runs) >= discovery_cap
     if complete:
         catchup_out = catchup
         ok_out = ok_intervals
         stale_out = stale_siblings
-        truncated = False
+        display_truncated = False
     else:
-        catchup_out = catchup[:capped]
-        ok_out = ok_intervals[:capped]
-        stale_out = stale_siblings[:capped]
-        truncated = (
-            len(catchup) > capped
-            or len(ok_intervals) > capped
-            or len(stale_siblings) > capped
-            or len(bronze_runs) >= capped
+        catchup_out = catchup[:display_limit]
+        ok_out = ok_intervals[:display_limit]
+        stale_out = stale_siblings[:display_limit]
+        display_truncated = (
+            len(catchup) > display_limit
+            or len(ok_intervals) > display_limit
+            or len(stale_siblings) > display_limit
         )
     out: dict[str, Any] = {
         "pipeline": config.name,
         "materialized": config.dbt.silver.materialized,
         "silver_schema": schema,
         "silver_table": table,
-        "limit": capped if not complete else len(bronze_runs),
+        "limit": display_limit if not complete else len(bronze_runs),
+        "discovery_cap": discovery_cap,
         "complete": complete,
         "candidate_mode": candidate_mode,
         "catchup_runs": catchup_out,
@@ -744,6 +750,7 @@ def diff_bronze_silver(
         "ok_count": len(ok_intervals),
         "stale_siblings_count": len(stale_siblings),
         "truncated": truncated,
+        "display_truncated": display_truncated,
     }
     if lookback_raw:
         out["extract_lookback"] = lookback_raw
