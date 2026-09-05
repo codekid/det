@@ -85,6 +85,13 @@ def test_writing_argv_classifier():
         ["det", "silver-catchup-plan", "-p", "x", "--dry-run"]
     )
     assert not is_writing_cli(["det", "silver-catchup-diff", "-p", "x"])
+    assert is_writing_cli(
+        ["det", "silver-catchup-cleanup", "--apply", "--older-than", "7d"]
+    )
+    assert not is_writing_cli(
+        ["det", "silver-catchup-cleanup", "--older-than", "7d"]
+    )
+    assert not is_writing_cli(["det", "silver-catchup-cleanup", "--list"])
     assert is_writing_cli(["det", "lock-release", "-p", "x", "-s", "2026-08-06", "--force"])
     assert is_writing_cli(["airflow", "dags", "trigger", "det_extract"])
     assert is_dry_run_cli(["det", "migrate", "--dry-run", "-p", "x"])

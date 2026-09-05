@@ -34,6 +34,7 @@ from det.runtime.approval import (
     run_write_argv,
     scaffold_dbt_write_argv,
     scaffold_ops_write_argv,
+    silver_catchup_cleanup_write_argv,
     silver_catchup_plan_write_argv,
 )
 
@@ -459,6 +460,26 @@ def test_dbt_write_argv_rejects_catchup_manifest_without_catchup():
         dbt_write_argv("noaa.storm_events", catchup=False, catchup_manifest=mid)
     with pytest.raises(ValueError, match="requires --catchup-manifest"):
         dbt_write_argv("noaa.storm_events", catchup=True, catchup_manifest=None)
+
+
+def test_silver_catchup_cleanup_write_argv():
+    mid = "scm_" + ("ab" * 8)
+    assert silver_catchup_cleanup_write_argv(manifest_id=mid) == [
+        "silver-catchup-cleanup",
+        "--apply",
+        "--manifest-id",
+        mid,
+    ]
+    assert silver_catchup_cleanup_write_argv(older_than="7d") == [
+        "silver-catchup-cleanup",
+        "--apply",
+        "--older-than",
+        "7d",
+    ]
+    with pytest.raises(ValueError, match="cannot combine"):
+        silver_catchup_cleanup_write_argv(manifest_id=mid, older_than="7d")
+    with pytest.raises(ValueError, match="exactly one"):
+        silver_catchup_cleanup_write_argv()
 
 
 def test_claim_is_exclusive(tmp_path: Path):
@@ -1442,6 +1463,15 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("-e",),
                 ),
+                "extract_lookback": (
+                    silver_catchup_plan_write_argv(
+                        "noaa.storm_events",
+                        extract_lookback="48h",
+                        manifest_id=mid,
+                        content_digest=digest,
+                    ),
+                    ("--extract-lookback", "48h"),
+                ),
                 "limit": (
                     silver_catchup_plan_write_argv(
                         "noaa.storm_events",
@@ -1504,6 +1534,22 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("--lake-path-ops",),
                 ),
+            }
+        elif command == "silver-catchup-cleanup":
+            mid = "scm_" + ("ab" * 8)
+            base = silver_catchup_cleanup_write_argv(manifest_id=mid)
+            checks = {
+                "manifest_id": (
+                    silver_catchup_cleanup_write_argv(
+                        manifest_id="scm_" + ("cd" * 8)
+                    ),
+                    ("--manifest-id", "scm_" + ("cd" * 8)),
+                ),
+                "older_than": (
+                    silver_catchup_cleanup_write_argv(older_than="7d"),
+                    ("--older-than", "7d"),
+                ),
+                "apply": (base, ("--apply",)),  # implicit: always present
             }
         elif command == "lock-release":
             base = lock_release_write_argv("noaa.storm_events", "2026-08-06")

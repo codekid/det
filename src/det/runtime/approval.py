@@ -821,6 +821,7 @@ def silver_catchup_plan_write_argv(
     all_pipelines: bool = False,
     interval_start: str | None = None,
     interval_end: str | None = None,
+    extract_lookback: str | None = None,
     limit: int = 200,
     manifest_id: str | None = None,
     content_digest: str | None = None,
@@ -836,7 +837,15 @@ def silver_catchup_plan_write_argv(
         argv.extend(["-p", _norm_pipeline(pipeline)])
     else:
         raise ValueError("pipeline required unless all_pipelines=True")
-    if interval_start:
+    lookback = (extract_lookback or "").strip()
+    if lookback:
+        if interval_start or interval_end:
+            raise ValueError(
+                "--extract-lookback cannot combine with -s/--interval-start "
+                "or -e/--interval-end"
+            )
+        argv.extend(["--extract-lookback", lookback])
+    elif interval_start:
         argv.extend(["-s", _require_interval(interval_start)])
         end = _norm_interval(interval_end)
         if end:
@@ -859,6 +868,29 @@ def silver_catchup_plan_write_argv(
             lake_path_ops=lake_path_ops,
         )
     )
+    return argv
+
+
+def silver_catchup_cleanup_write_argv(
+    *,
+    manifest_id: str | None = None,
+    older_than: str | None = None,
+) -> list[str]:
+    """Bound argv for ``det silver-catchup-cleanup --apply``."""
+    mid = (manifest_id or "").strip()
+    older = (older_than or "").strip()
+    if mid and older:
+        raise ValueError("--manifest-id cannot combine with --older-than")
+    if not mid and not older:
+        raise ValueError(
+            "silver-catchup-cleanup --apply approval requires "
+            "exactly one of --manifest-id or --older-than"
+        )
+    argv = ["silver-catchup-cleanup", "--apply"]
+    if mid:
+        argv.extend(["--manifest-id", mid])
+    else:
+        argv.extend(["--older-than", older])
     return argv
 
 

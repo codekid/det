@@ -150,6 +150,17 @@ def catchup_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def test_parse_extract_lookback():
+    from datetime import timedelta
+
+    from det.runtime.silver_catchup import parse_extract_lookback
+
+    assert parse_extract_lookback("48h") == timedelta(hours=48)
+    assert parse_extract_lookback("7d") == timedelta(days=7)
+    with pytest.raises(ValueError, match="look like"):
+        parse_extract_lookback("two-days")
+
+
 def test_diff_hole_behind_max_watermark(catchup_root: Path, monkeypatch):
     lake = catchup_root / "data" / "lake"
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
@@ -180,9 +191,126 @@ def test_diff_hole_behind_max_watermark(catchup_root: Path, monkeypatch):
             analytics_db=db,
         )
     assert out["catchup_count"] == 1
+    assert out["candidate_mode"] == "full"
     assert out["catchup_runs"][0]["extract_run_datetime"].startswith("2026-09-02T12:08")
     assert out["ok_count"] == 1
     assert out["stale_siblings_count"] == 0
+
+
+def test_extract_lookback_finds_old_interval_recent_run(
+    catchup_root: Path, monkeypatch
+):
+    """Mode A: recent extract of an old interval is a hole even if -s would miss it."""
+    from datetime import UTC, datetime, timedelta
+
+    lake = catchup_root / "data" / "lake"
+    monkeypatch.setenv("DET_LAKE_PATH", str(lake))
+    now = datetime.now(UTC).replace(microsecond=0)
+    recent = (now - timedelta(hours=1)).isoformat()
+    newer_ok = (now - timedelta(minutes=30)).isoformat()
+    old_start, old_end = "2026-01-01T00:00:00+00:00", "2026-01-02T00:00:00+00:00"
+    new_start, new_end = "2026-09-03T00:00:00+00:00", "2026-09-04T00:00:00+00:00"
+    _write_bronze_run(
+        lake, interval_start=old_start, interval_end=old_end, extract_run=recent
+    )
+    _write_bronze_run(
+        lake, interval_start=new_start, interval_end=new_end, extract_run=newer_ok
+    )
+    db = _silver_db(catchup_root, [(new_start, new_end, newer_ok)])
+    settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
+        lake_override=str(lake)
+    )
+    with use_settings(settings):
+        out = diff_bronze_silver(
+            "example_api.events",
+            project_root=catchup_root,
+            analytics_db=db,
+            extract_lookback="48h",
+        )
+    assert out["candidate_mode"] == "extract_lookback"
+    assert out["extract_lookback"] == "48h"
+    assert out["catchup_count"] == 1
+    assert out["ok_count"] == 1
+    assert out["catchup_runs"][0]["interval_start"].startswith("2026-01-01")
+
+    with use_settings(settings):
+        with pytest.raises(ValueError, match="cannot combine"):
+            diff_bronze_silver(
+                "example_api.events",
+                project_root=catchup_root,
+                analytics_db=db,
+                extract_lookback="48h",
+                interval_start="2026-01-01",
+            )
+
+
+def test_extract_lookback_excludes_stale_extract(
+    catchup_root: Path, monkeypatch
+):
+    """Mode A with a short lookback does not see an old extract_run."""
+    lake = catchup_root / "data" / "lake"
+    monkeypatch.setenv("DET_LAKE_PATH", str(lake))
+    old_run = "2026-01-15T12:00:00+00:00"
+    old_start, old_end = "2026-01-01T00:00:00+00:00", "2026-01-02T00:00:00+00:00"
+    _write_bronze_run(
+        lake, interval_start=old_start, interval_end=old_end, extract_run=old_run
+    )
+    db = _silver_db(catchup_root, [])
+    settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
+        lake_override=str(lake)
+    )
+    with use_settings(settings):
+        out = diff_bronze_silver(
+            "example_api.events",
+            project_root=catchup_root,
+            analytics_db=db,
+            extract_lookback="48h",
+        )
+        full = diff_bronze_silver(
+            "example_api.events",
+            project_root=catchup_root,
+            analytics_db=db,
+        )
+    assert out["candidate_mode"] == "extract_lookback"
+    assert out["catchup_count"] == 0
+    assert full["candidate_mode"] == "full"
+    assert full["catchup_count"] == 1
+
+
+def test_interval_mode_probes_silver_not_full_scan(
+    catchup_root: Path, monkeypatch
+):
+    """With -s/-e, silver is probed for candidate intervals only."""
+    lake = catchup_root / "data" / "lake"
+    monkeypatch.setenv("DET_LAKE_PATH", str(lake))
+    a_start, a_end = "2026-09-01T00:00:00+00:00", "2026-09-02T00:00:00+00:00"
+    b_start, b_end = "2026-09-02T00:00:00+00:00", "2026-09-03T00:00:00+00:00"
+    run_a = "2026-09-01T12:00:00+00:00"
+    run_b = "2026-09-02T12:00:00+00:00"
+    _write_bronze_run(
+        lake, interval_start=a_start, interval_end=a_end, extract_run=run_a
+    )
+    _write_bronze_run(
+        lake, interval_start=b_start, interval_end=b_end, extract_run=run_b
+    )
+    # Silver has B only; windowing to A should still report A's hole without
+    # needing B's silver rows in the probe set for correctness of A.
+    db = _silver_db(catchup_root, [(b_start, b_end, run_b)])
+    settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
+        lake_override=str(lake)
+    )
+    with use_settings(settings):
+        out = diff_bronze_silver(
+            "example_api.events",
+            project_root=catchup_root,
+            analytics_db=db,
+            interval_start=a_start,
+            interval_end=a_end,
+        )
+    assert out["candidate_mode"] == "interval"
+    assert out["catchup_count"] == 1
+    assert out["catchup_runs"][0]["interval_start"].startswith("2026-09-01")
+    assert out["ok_count"] == 0
 
 
 def test_diff_same_extract_run_timestamp_distinct_intervals(
@@ -242,6 +370,56 @@ def test_diff_latest_present_empty_catchup(catchup_root: Path, monkeypatch):
     assert out["stale_siblings_ignored"][0]["extract_run_datetime"].startswith(
         "2026-09-02T10:00"
     )
+
+
+def test_catchup_digest_normalizes_offset_equivalent_intervals():
+    """Digest/sidecar/coverage all UTC-normalize interval bounds."""
+    from det.runtime.lake import open_lake
+    from det.runtime.silver_catchup import (
+        _coverage_key,
+        _runs_jsonl_bytes,
+        assert_catchup_runs_sidecar_matches,
+        catchup_content_digest,
+    )
+
+    offset_run = {
+        "pipeline": "example_api.events",
+        "interval_start": "2026-09-04T07:00:00-05:00",
+        "interval_end": "2026-09-05T07:00:00-05:00",
+        "extract_run_datetime": "2026-09-04T10:00:00-05:00",
+    }
+    utc_equiv = {
+        "pipeline": "example_api.events",
+        "interval_start": "2026-09-04T12:00:00+00:00",
+        "interval_end": "2026-09-05T12:00:00+00:00",
+        "extract_run_datetime": "2026-09-04T15:00:00+00:00",
+    }
+    assert _coverage_key(
+        offset_run["interval_start"],
+        offset_run["interval_end"],
+        offset_run["extract_run_datetime"],
+    ) == _coverage_key(
+        utc_equiv["interval_start"],
+        utc_equiv["interval_end"],
+        utc_equiv["extract_run_datetime"],
+    )
+    digest = catchup_content_digest([offset_run])
+    assert digest == catchup_content_digest([utc_equiv])
+
+    payload = manifest_payload_from_catchup([offset_run])
+    assert payload["runs"][0]["interval_start"] == "2026-09-04T12:00:00+00:00"
+    assert payload["runs"][0]["interval_end"] == "2026-09-05T12:00:00+00:00"
+    assert payload["runs"][0]["extract_run_datetime"] == "2026-09-04T15:00:00+00:00"
+    assert payload["content_digest"] == digest
+
+    lake = open_lake("memory://catchup-norm-intervals", Path("/tmp"))
+    runs_path = lake / "ops" / "silver_catchup" / "scm_aabbccddeeff0011.runs.jsonl"
+    runs_path.parent.mkdir(parents=True, exist_ok=True)
+    runs_path.write_bytes(_runs_jsonl_bytes([offset_run]))
+    assert_catchup_runs_sidecar_matches(runs_path, expected_digest=digest)
+    # Sidecar bytes themselves are UTC-normalized.
+    assert b"+00:00" in runs_path.read_bytes()
+    assert b"-05:00" not in runs_path.read_bytes()
 
 
 def test_manifest_roundtrip_and_vars(catchup_root: Path, monkeypatch):
@@ -643,3 +821,176 @@ def test_catchup_bq_relation_is_manifest_scoped():
     assert catchup_bq_relation(
         project="proj", dataset="analytics", manifest_id=mid
     ) == f"`proj.analytics._det_catchup_runs_{mid}`"
+
+
+def test_parse_duration_shared_with_lookback():
+    from datetime import timedelta
+
+    from det.runtime.silver_catchup import parse_duration, parse_extract_lookback
+
+    assert parse_duration("30d", what="older-than") == timedelta(days=30)
+    assert parse_extract_lookback("48h") == parse_duration("48h", what="extract lookback")
+    with pytest.raises(ValueError, match="older-than"):
+        parse_duration("nope", what="older-than")
+
+
+def test_validate_bq_catchup_cleanup_scope():
+    from det.runtime.silver_catchup import validate_bq_catchup_cleanup_scope
+
+    validate_bq_catchup_cleanup_scope(
+        manifest_id="scm_" + ("ab" * 8), older_than=None, list_mode=False
+    )
+    validate_bq_catchup_cleanup_scope(
+        manifest_id=None, older_than="7d", list_mode=False
+    )
+    validate_bq_catchup_cleanup_scope(
+        manifest_id=None, older_than="7d", list_mode=True
+    )
+    with pytest.raises(ValueError, match="cannot combine"):
+        validate_bq_catchup_cleanup_scope(
+            manifest_id="scm_" + ("ab" * 8), older_than="7d", list_mode=False
+        )
+    with pytest.raises(ValueError, match="exactly one"):
+        validate_bq_catchup_cleanup_scope(
+            manifest_id=None, older_than=None, list_mode=False
+        )
+    with pytest.raises(ValueError, match="--list cannot combine"):
+        validate_bq_catchup_cleanup_scope(
+            manifest_id="scm_" + ("ab" * 8), older_than=None, list_mode=True
+        )
+
+
+def test_bq_project_dataset_location_requires_project(monkeypatch: pytest.MonkeyPatch):
+    from det.runtime.silver_catchup import _bq_project_dataset_location
+
+    monkeypatch.delenv("DET_GCP_PROJECT", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    with pytest.raises(ValueError, match="DET_GCP_PROJECT"):
+        _bq_project_dataset_location()
+
+
+class _FakeTableItem:
+    def __init__(self, table_id: str, created=None):
+        self.table_id = table_id
+        self.created = created
+
+
+class _FakeTable:
+    def __init__(self, created=None):
+        self.created = created
+
+
+class _FakeBqClient:
+    def __init__(self, items: list[_FakeTableItem], *, full: dict | None = None):
+        self._items = items
+        self._full = full or {}
+        self.deleted: list[str] = []
+        self.get_calls: list[str] = []
+
+    def list_tables(self, _dataset: str):
+        return list(self._items)
+
+    def get_table(self, table_id: str):
+        self.get_calls.append(table_id)
+        if table_id in self._full:
+            return self._full[table_id]
+        raise Exception("not found")
+
+    def delete_table(self, table_id: str, not_found_ok: bool = False):
+        self.deleted.append(table_id)
+
+
+def test_list_bq_catchup_external_tables_age_filter(monkeypatch: pytest.MonkeyPatch):
+    from datetime import UTC, datetime, timedelta
+
+    from det.runtime import silver_catchup as sc
+
+    mid_old = "scm_" + ("11" * 8)
+    mid_new = "scm_" + ("22" * 8)
+    mid_skip = "scm_" + ("33" * 8)
+    old_created = datetime.now(UTC) - timedelta(days=10)
+    new_created = datetime.now(UTC) - timedelta(hours=1)
+    items = [
+        _FakeTableItem(f"_det_catchup_runs_{mid_old}", created=old_created),
+        _FakeTableItem(f"_det_catchup_runs_{mid_new}", created=new_created),
+        # missing created on list item; get_table also missing → skip under older_than
+        _FakeTableItem(f"_det_catchup_runs_{mid_skip}", created=None),
+        _FakeTableItem("other_table", created=old_created),
+    ]
+    client = _FakeBqClient(
+        items,
+        full={
+            f"proj.analytics._det_catchup_runs_{mid_skip}": _FakeTable(created=None),
+        },
+    )
+    monkeypatch.setenv("DET_GCP_PROJECT", "proj")
+    monkeypatch.setenv("DET_BQ_DATASET", "analytics")
+    monkeypatch.setattr(sc, "_bq_client", lambda: (client, "proj", "analytics", "US"))
+
+    all_rows = sc.list_bq_catchup_external_tables()
+    assert {r["manifest_id"] for r in all_rows} == {mid_old, mid_new, mid_skip}
+
+    old_rows = sc.list_bq_catchup_external_tables(older_than="7d")
+    assert [r["manifest_id"] for r in old_rows] == [mid_old]
+
+
+def test_drop_bq_catchup_external_table_not_found_ok(monkeypatch: pytest.MonkeyPatch):
+    from det.runtime import silver_catchup as sc
+
+    mid = "scm_" + ("44" * 8)
+    client = _FakeBqClient([])
+    monkeypatch.setenv("DET_GCP_PROJECT", "proj")
+    monkeypatch.setattr(sc, "_bq_client", lambda: (client, "proj", "analytics", "US"))
+
+    out = sc.drop_bq_catchup_external_table(manifest_id=mid)
+    assert out["existed"] is False
+    assert out["dropped"] is False
+    assert client.deleted == [f"proj.analytics._det_catchup_runs_{mid}"]
+
+
+def test_plan_and_apply_bq_catchup_cleanup_older_than(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from datetime import UTC, datetime, timedelta
+
+    from det.runtime import silver_catchup as sc
+
+    mid = "scm_" + ("55" * 8)
+    old_created = datetime.now(UTC) - timedelta(days=30)
+    table_id = f"proj.analytics._det_catchup_runs_{mid}"
+    items = [_FakeTableItem(f"_det_catchup_runs_{mid}", created=old_created)]
+    client = _FakeBqClient(
+        items,
+        full={table_id: _FakeTable(created=old_created)},
+    )
+    monkeypatch.setenv("DET_GCP_PROJECT", "proj")
+    monkeypatch.setenv("DET_BQ_DATASET", "analytics")
+    monkeypatch.setattr(sc, "_bq_client", lambda: (client, "proj", "analytics", "US"))
+    monkeypatch.setattr(
+        sc, "_bq_project_dataset_location", lambda: ("proj", "analytics", "US")
+    )
+
+    planned = sc.plan_bq_catchup_cleanup(older_than="7d")
+    assert planned["mode"] == "older_than"
+    assert planned["target_count"] == 1
+    assert planned["targets"][0]["manifest_id"] == mid
+
+    applied = sc.apply_bq_catchup_cleanup(older_than="7d")
+    assert applied["dropped_count"] == 1
+    assert client.deleted == [table_id]
+
+def test_plan_bq_catchup_cleanup_single_missing(monkeypatch: pytest.MonkeyPatch):
+    from det.runtime import silver_catchup as sc
+
+    mid = "scm_" + ("66" * 8)
+    client = _FakeBqClient([])
+    monkeypatch.setenv("DET_GCP_PROJECT", "proj")
+    monkeypatch.setattr(sc, "_bq_client", lambda: (client, "proj", "analytics", "US"))
+    monkeypatch.setattr(
+        sc, "_bq_project_dataset_location", lambda: ("proj", "analytics", "US")
+    )
+
+    planned = sc.plan_bq_catchup_cleanup(manifest_id=mid)
+    assert planned["mode"] == "manifest_id"
+    assert planned["targets"][0]["existed"] is False
+    assert planned["target_count"] == 1

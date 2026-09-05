@@ -59,6 +59,16 @@ IntervalEndOpt = Annotated[
         )
     ),
 ]
+ExtractLookbackOpt = Annotated[
+    str | None,
+    Field(
+        description=(
+            "Catch-up Mode A: only intervals touched by bronze extract runs in "
+            "this lookback (e.g. 48h, 7d). Cannot combine with interval_start/end. "
+            "Omit for full census (Mode B)."
+        )
+    ),
+]
 ExtractRunOpt = Annotated[
     str | None,
     Field(
@@ -352,6 +362,24 @@ CatchupManifestOpt = Annotated[
         description=(
             "Immutable catch-up manifest id (scm_ + 16 hex) from "
             "silver_catchup_dry_run / silver-catchup-plan --apply; required when catchup=true"
+        )
+    ),
+]
+CatchupManifestIdOpt = Annotated[
+    str | None,
+    Field(
+        description=(
+            "Catch-up manifest id (scm_ + 16 hex) for BQ external-table cleanup; "
+            "mutually exclusive with older_than"
+        )
+    ),
+]
+OlderThanOpt = Annotated[
+    str | None,
+    Field(
+        description=(
+            "Drop BQ _det_catchup_runs_* tables older than this duration "
+            "(e.g. 7d, 48h); mutually exclusive with manifest_id"
         )
     ),
 ]

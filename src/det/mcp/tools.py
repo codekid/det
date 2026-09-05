@@ -606,6 +606,7 @@ def diff_bronze_silver(
     all_pipelines: bool = False,
     interval_start: str | None = None,
     interval_end: str | None = None,
+    extract_lookback: str | None = None,
     limit: int = DEFAULT_LIST_LIMIT,
     root: Path | None = None,
 ) -> dict[str, Any]:
@@ -621,6 +622,7 @@ def diff_bronze_silver(
             project_root=base,
             interval_start=interval_start,
             interval_end=interval_end,
+            extract_lookback=extract_lookback,
             limit=limit,
         )
     # Exactly-one scope is enforced above; pipeline is set when not fleet-wide.
@@ -629,6 +631,7 @@ def diff_bronze_silver(
         project_root=base,
         interval_start=interval_start,
         interval_end=interval_end,
+        extract_lookback=extract_lookback,
         limit=limit,
     )
 
@@ -639,6 +642,7 @@ def silver_catchup_dry_run(
     all_pipelines: bool = False,
     interval_start: str | None = None,
     interval_end: str | None = None,
+    extract_lookback: str | None = None,
     limit: int = DEFAULT_LIST_LIMIT,
     root: Path | None = None,
 ) -> dict[str, Any]:
@@ -656,6 +660,7 @@ def silver_catchup_dry_run(
         all_pipelines=all_pipelines,
         interval_start=interval_start,
         interval_end=interval_end,
+        extract_lookback=extract_lookback,
         limit=limit,
     )
     mid = str(planned["manifest_id"])
@@ -669,6 +674,7 @@ def silver_catchup_dry_run(
                 all_pipelines=all_pipelines,
                 interval_start=interval_start,
                 interval_end=interval_end,
+                extract_lookback=extract_lookback,
                 limit=limit,
                 manifest_id=mid,
                 content_digest=digest,
@@ -680,6 +686,45 @@ def silver_catchup_dry_run(
             f"--manifest-id {mid} --content-digest {digest} --approval <id>; "
             "then MCP dbt_dry_run(catchup=True, catchup_manifest=…) → approve → "
             f"det dbt --catchup --catchup-manifest {mid} --approval <dbt_id>."
+        ),
+    }
+
+
+def silver_catchup_cleanup_dry_run(
+    *,
+    manifest_id: str | None = None,
+    older_than: str | None = None,
+) -> dict[str, Any]:
+    """Preview BQ ``_det_catchup_runs_*`` drops + approval_plan (never writes)."""
+    _prepare_tool()
+    from det.runtime.approval import silver_catchup_cleanup_write_argv
+    from det.runtime.silver_catchup import plan_bq_catchup_cleanup
+
+    mid = str(manifest_id).strip() if manifest_id else ""
+    older = str(older_than).strip() if older_than else ""
+    planned = plan_bq_catchup_cleanup(
+        manifest_id=mid or None,
+        older_than=older or None,
+    )
+    return {
+        **planned,
+        "dry_run": True,
+        "approval_plan": _approval_plan(
+            "silver-catchup-cleanup",
+            silver_catchup_cleanup_write_argv(
+                manifest_id=mid or None,
+                older_than=older or None,
+            ),
+        ),
+        "next_steps": (
+            "Operator: det approve --plan <approval_plan> --approved-by <id>. "
+            "Agent (later turn): det silver-catchup-cleanup --apply "
+            + (
+                f"--manifest-id {mid}"
+                if mid
+                else f"--older-than {older}"
+            )
+            + " --approval <id>. Heal does not auto-drop these tables."
         ),
     }
 
