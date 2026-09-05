@@ -79,6 +79,10 @@ Implement `defaults`, `extract_to_raw`, `records_from_raw` (see
 `det.sources.base.SourcePlugin`). Optional migrate mapper: `@mapper("…")` in the
 same module. HTTP: `det.sources.http_json` / `http` helpers are fine; **never**
 `dlt.pipeline` / `pipeline.run` for landing (DET refuse-closes on `_dlt_*`).
+`check_url` only blocks bad schemes and **literal** private, loopback,
+link-local, and reserved IPs; treat extract **egress** (VPC allowlist / no
+metadata path) as the SSRF boundary—do not rely on DET to reject hostnames
+that resolve to those ranges.
 
 ## 4. Pipeline YAML + schema + secrets
 

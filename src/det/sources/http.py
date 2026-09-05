@@ -47,10 +47,12 @@ _ALLOWED_SCHEMES = frozenset({"http", "https"})
 def check_url(url: str) -> None:
     """Raise HttpError when *url* has a disallowed scheme or is a private/loopback host.
 
-    Only schemes ``http`` and ``https`` are permitted.  When the hostname is a
-    literal IP address (not a DNS name) it is checked against IANA-reserved
-    ranges (loopback, private, link-local, reserved).  DNS-resolved addresses
-    are **not** checked here; use network-level egress controls for that.
+    Defense-in-depth only: schemes ``http`` / ``https``, and IANA-reserved
+    ranges when the host is a **literal** IP (loopback, private, link-local,
+    reserved). Hostnames are not DNS-resolved here (rebinding / TOCTOU remain).
+
+    The security boundary for SSRF is VPC / cloud egress (allowlist, no path to
+    link-local metadata)—not this guard. See GitHub issue #52.
     """
     try:
         parsed = urllib.parse.urlparse(url)
