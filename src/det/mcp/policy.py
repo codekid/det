@@ -30,6 +30,7 @@ ALLOWED_MCP_TOOLS: frozenset[str] = frozenset(
         "diff_partitions",
         "diff_bronze_silver",
         "silver_catchup_dry_run",
+        "silver_catchup_cleanup_dry_run",
         "sample_raw",
         "validate_sample",
         "sample_bronze",
@@ -73,6 +74,7 @@ WRITING_CLI_COMMANDS: frozenset[str] = frozenset(
         "iceberg-register",
         "lock-release",
         "silver-catchup-plan",
+        "silver-catchup-cleanup",
     }
 )
 
@@ -207,6 +209,8 @@ def is_writing_cli(argv: Sequence[str]) -> bool:
     if name == "prune":
         return "--apply" in cmd
     if name == "silver-catchup-plan":
+        return "--apply" in cmd
+    if name == "silver-catchup-cleanup":
         return "--apply" in cmd
     if name in {"init-pipeline", "scaffold-dbt", "scaffold-ops"}:
         return "--dry-run" not in cmd

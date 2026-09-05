@@ -58,13 +58,14 @@ When bronze has data but incremental silver appears behind (watermark hole):
 
 1. MCP `diff_bronze_silver` — `catchup_runs` are **latest bronze extract-run per
    interval** not yet in silver (DuckDB analytics, or BigQuery when
-   `DET_DBT_TARGET=bigquery`). Ignore
+   `DET_DBT_TARGET=bigquery`). Prefer `extract_lookback="48h"` for routine
+   checks; omit for a full census. Ignore
    `stale_siblings_ignored` (older siblings; silver stays deduped).
-2. MCP `silver_catchup_dry_run` → show immutable `manifest_id` / `content_digest`
-   + `approval_plan` → **stop**.
+2. MCP `silver_catchup_dry_run` (same lookback / interval flags) → show immutable
+   `manifest_id` / `content_digest` + `approval_plan` → **stop**.
 3. After confirm: `det approve` then later
    `det silver-catchup-plan --apply --manifest-id <scm_…> --content-digest <sha256:…> --approval <id>`
-   (writes immutable `.json` + sibling `.runs.jsonl`).
+   (writes immutable `.json` + sibling `.runs.jsonl`; bind `--extract-lookback` if Mode A).
 4. MCP `dbt_dry_run` with `catchup=True` and `catchup_manifest=<scm_…>` → show its
    separate `approval_plan` → **stop**. After confirm: `det approve` then later
    `det dbt --catchup --catchup-manifest <scm_…> --approval <dbt_id>` (distinct id;
@@ -72,6 +73,14 @@ When bronze has data but incremental silver appears behind (watermark hole):
    table via `DET_CATCHUP_BQ_RELATION` when ops is `gs://`; local→BQ fails;
    not `--full-refresh`).
 5. Re-diff to verify `catchup_count=0`.
+6. After a **BigQuery** heal: MCP `silver_catchup_cleanup_dry_run`
+   (`manifest_id` or `older_than`, e.g. `"7d"`) → show `approval_plan` with
+   `--created-before` (frozen UTC cutoff) → **stop**.
+   After confirm: `det approve` then later
+   `det silver-catchup-cleanup --apply --manifest-id <scm_…> --approval <id>`
+   or `--created-before <iso> --apply --approval <id>`. Heal does not auto-drop
+   `_det_catchup_runs_*` tables. Use `--list` / `--list --older-than 7d` to
+   inspect. Skip for DuckDB heals.
 
 See [docs/silver-catchup.md](../../docs/silver-catchup.md).
 

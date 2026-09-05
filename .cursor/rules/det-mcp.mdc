@@ -20,7 +20,7 @@ plans, or scaffold/dbt previews.
 `describe_airflow_det_env`, `preview_backfill_conf`, `migrate_dry_run`,
 `list_runs`, `summarize_runs`,
 `prune_dry_run`, `dbt_dry_run`, `scaffold_dbt_dry_run`, `scaffold_ops_dry_run`,
-`init_pipeline_dry_run`, `silver_catchup_dry_run`,
+`init_pipeline_dry_run`, `silver_catchup_dry_run`, `silver_catchup_cleanup_dry_run`,
 `list_approvals`, `describe_approval`,
 `det://` resources, and prompts `det_ops` / `det_new_source` / `det_migrate` /
 `det_dbt` / `det_airflow` (skill playbooks).

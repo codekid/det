@@ -77,6 +77,7 @@ def walk_hive_runs(
     limit: int,
     interval_start: str | None = None,
     interval_end: str | None = None,
+    extract_run_since: str | None = None,
     normalize_iso: bool = True,
     require_committed: bool = False,
 ) -> list[dict[str, Any]]:
@@ -88,6 +89,7 @@ def walk_hive_runs(
     window: tuple[str, str] | None = None
     if interval_start is not None:
         window = resolve_interval(interval_start, interval_end)
+    since = identity_iso(extract_run_since) if extract_run_since else None
 
     for start_dir in sorted(dataset_dir.iterdir()):
         if not start_dir.is_dir():
@@ -114,7 +116,10 @@ def walk_hive_runs(
                     continue
                 if require_committed and not is_committed_raw_dir(run_dir):
                     continue
-                run_val = from_partition_value(run_raw) if normalize_iso else run_raw
+                run_iso = from_partition_value(run_raw)
+                if since is not None and run_iso < since:
+                    continue
+                run_val = run_iso if normalize_iso else run_raw
                 out.append(
                     run_dict(
                         interval_start=start_val,
@@ -135,15 +140,29 @@ def _list_bronze_sql_runs(
     limit: int,
     interval_start: str | None = None,
     interval_end: str | None = None,
+    extract_run_since: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Distinct bronze extract-run keys from DuckDB or Postgres. Returns (runs, note)."""
     dest = config.destination
     window: tuple[str, str] | None = None
     if interval_start is not None:
         window = resolve_interval(interval_start, interval_end)
+    since = identity_iso(extract_run_since) if extract_run_since else None
 
     schema, table = sql_names_for_config(config)
     qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
+
+    clauses: list[str] = []
+    params: list[Any] = []
+    if window is not None:
+        clauses.append("__interval_start_datetime >= ?")
+        params.append(window[0])
+        clauses.append("__interval_start_datetime < ?")
+        params.append(window[1])
+    if since is not None:
+        clauses.append("__extract_run_datetime >= ?")
+        params.append(since)
+    where = (" where " + " and ".join(clauses)) if clauses else ""
 
     if dest.type == "duckdb":
         db_path = duckdb_connection_path(dest, root)
@@ -161,34 +180,19 @@ def _list_bronze_sql_runs(
             ).fetchone()
             if not exists or exists[0] == 0:
                 return [], f"table not found: {schema}.{table}"
-            if window is None:
-                rows = con.execute(
-                    f"""
-                    select distinct
-                        __interval_start_datetime,
-                        __interval_end_datetime,
-                        __extract_run_datetime
-                    from {qualified}
-                    order by 1, 2, 3
-                    limit ?
-                    """,
-                    [limit],
-                ).fetchall()
-            else:
-                rows = con.execute(
-                    f"""
-                    select distinct
-                        __interval_start_datetime,
-                        __interval_end_datetime,
-                        __extract_run_datetime
-                    from {qualified}
-                    where __interval_start_datetime >= ?
-                      and __interval_start_datetime < ?
-                    order by 1, 2, 3
-                    limit ?
-                    """,
-                    [window[0], window[1], limit],
-                ).fetchall()
+            rows = con.execute(
+                f"""
+                select distinct
+                    __interval_start_datetime,
+                    __interval_end_datetime,
+                    __extract_run_datetime
+                from {qualified}
+                {where}
+                order by 1, 2, 3
+                limit ?
+                """,  # noqa: S608
+                [*params, limit],
+            ).fetchall()
         finally:
             con.close()
         return [
@@ -211,6 +215,7 @@ def _list_bronze_sql_runs(
             dsn = postgres_dsn(dest, backend="env")
         except (SecretError, ValueError) as exc:
             return [], str(exc)
+        where_pg = where.replace("?", "%s")
         _ro = "-c default_transaction_read_only=on"
         with psycopg.connect(dsn, options=_ro) as conn:
             with conn.cursor() as cur:
@@ -224,32 +229,19 @@ def _list_bronze_sql_runs(
                 exists = cur.fetchone()
                 if not exists or exists[0] == 0:
                     return [], f"table not found: {schema}.{table}"
-                if window is None:
-                    query = f"""
-                        select distinct
-                            __interval_start_datetime,
-                            __interval_end_datetime,
-                            __extract_run_datetime
-                        from {qualified}
-                        order by 1, 2, 3
-                        limit %s
-                        """
-                    cur.execute(query, (limit,))  # pyright: ignore[reportArgumentType]
-                else:
-                    query = f"""
-                        select distinct
-                            __interval_start_datetime,
-                            __interval_end_datetime,
-                            __extract_run_datetime
-                        from {qualified}
-                        where __interval_start_datetime >= %s
-                          and __interval_start_datetime < %s
-                        order by 1, 2, 3
-                        limit %s
-                        """
-                    cur.execute(
-                        query, (window[0], window[1], limit)
-                    )  # pyright: ignore[reportArgumentType]
+                query = f"""
+                    select distinct
+                        __interval_start_datetime,
+                        __interval_end_datetime,
+                        __extract_run_datetime
+                    from {qualified}
+                    {where_pg}
+                    order by 1, 2, 3
+                    limit %s
+                    """  # noqa: S608
+                cur.execute(
+                    query, (*params, limit)
+                )  # pyright: ignore[reportArgumentType]
                 rows = cur.fetchall()
         return [
             run_dict(
@@ -270,6 +262,7 @@ def _list_bronze_iceberg_runs(
     limit: int,
     interval_start: str | None = None,
     interval_end: str | None = None,
+    extract_run_since: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     from det.destinations.models import lake_root
     from det.ingestion.iceberg_writer import list_iceberg_extract_runs, load_iceberg_table
@@ -278,6 +271,7 @@ def _list_bronze_iceberg_runs(
     window: tuple[str, str] | None = None
     if interval_start is not None:
         window = resolve_interval(interval_start, interval_end)
+    since = identity_iso(extract_run_since) if extract_run_since else None
     try:
         ice = load_iceberg_table(
             lake=lake_root(config.destination, root),
@@ -293,6 +287,7 @@ def _list_bronze_iceberg_runs(
         ice,
         window_start=window[0] if window else None,
         window_end=window[1] if window else None,
+        extract_run_since=since,
         limit=limit,
     )
     return [
@@ -312,6 +307,7 @@ def list_bronze_runs(
     limit: int,
     interval_start: str | None = None,
     interval_end: str | None = None,
+    extract_run_since: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     dest = config.destination
     if dest.type == "filesystem":
@@ -321,6 +317,7 @@ def list_bronze_runs(
             limit=limit,
             interval_start=interval_start,
             interval_end=interval_end,
+            extract_run_since=extract_run_since,
             normalize_iso=True,
             require_committed=True,
         )
@@ -332,6 +329,7 @@ def list_bronze_runs(
             limit=limit,
             interval_start=interval_start,
             interval_end=interval_end,
+            extract_run_since=extract_run_since,
         )
     return _list_bronze_sql_runs(
         config,
@@ -339,4 +337,5 @@ def list_bronze_runs(
         limit=limit,
         interval_start=interval_start,
         interval_end=interval_end,
+        extract_run_since=extract_run_since,
     )

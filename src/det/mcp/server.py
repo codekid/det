@@ -28,6 +28,7 @@ def create_server():
             "Generate (dry-run): schema_from_sample_dry_run, mapper_from_diff_dry_run. "
             "scaffold_ops_dry_run previews ops dbt models (never writes). "
             "silver_catchup_dry_run previews ops/silver_catchup/<scm_id>.json (never writes). "
+            "silver_catchup_cleanup_dry_run previews BQ _det_catchup_runs_* drops (never writes). "
             "Airflow inspect (read-only): airflow_health, list_airflow_dags, "
             "list_airflow_dag_runs, describe_airflow_det_env, preview_backfill_conf. "
             "Configure via DET_AIRFLOW_BASE_URL/USER/PASSWORD (Compose defaults). "
@@ -179,6 +180,7 @@ def create_server():
         all_pipelines: bool = False,
         interval_start: p.IntervalStartOpt = None,
         interval_end: p.IntervalEndOpt = None,
+        extract_lookback: p.ExtractLookbackOpt = None,
         limit: p.ListLimit = t.DEFAULT_LIST_LIMIT,
     ) -> dict[str, Any]:
         """Latest bronze extract-run per interval vs silver (catch-up candidates)."""
@@ -187,6 +189,7 @@ def create_server():
             all_pipelines=all_pipelines,
             interval_start=interval_start,
             interval_end=interval_end,
+            extract_lookback=extract_lookback,
             limit=limit,
         )
 
@@ -196,6 +199,7 @@ def create_server():
         all_pipelines: bool = False,
         interval_start: p.IntervalStartOpt = None,
         interval_end: p.IntervalEndOpt = None,
+        extract_lookback: p.ExtractLookbackOpt = None,
         limit: p.ListLimit = t.DEFAULT_LIST_LIMIT,
     ) -> dict[str, Any]:
         """Preview silver catch-up manifest + approval_plan (never writes)."""
@@ -204,7 +208,19 @@ def create_server():
             all_pipelines=all_pipelines,
             interval_start=interval_start,
             interval_end=interval_end,
+            extract_lookback=extract_lookback,
             limit=limit,
+        )
+
+    @mcp.tool()
+    def silver_catchup_cleanup_dry_run(
+        manifest_id: p.CatchupManifestIdOpt = None,
+        older_than: p.OlderThanOpt = None,
+    ) -> dict[str, Any]:
+        """Preview BQ catch-up external table drops + approval_plan (never writes)."""
+        return t.silver_catchup_cleanup_dry_run(
+            manifest_id=manifest_id,
+            older_than=older_than,
         )
 
     @mcp.tool()

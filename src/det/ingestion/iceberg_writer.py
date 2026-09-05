@@ -482,6 +482,7 @@ def list_iceberg_extract_runs(
     *,
     window_start: str | None = None,
     window_end: str | None = None,
+    extract_run_since: str | None = None,
     limit: int | None = None,
 ) -> list[tuple[str, str, str]]:
     cols = (_START, _END, _RUN)
@@ -490,6 +491,7 @@ def list_iceberg_extract_runs(
     out: list[tuple[str, str, str]] = []
     as_dict = arrow.to_pydict()
     n = arrow.num_rows
+    since = identity_iso(extract_run_since) if extract_run_since else None
     for i in range(n):
         ident = (
             identity_iso(as_dict[cols[0]][i]),
@@ -502,6 +504,8 @@ def list_iceberg_extract_runs(
             end = window_end if window_end is not None else ident[0] + "\uffff"
             if not (window_start <= ident[0] < end):
                 continue
+        if since is not None and ident[2] < since:
+            continue
         seen.add(ident)
         out.append(ident)
     out.sort()

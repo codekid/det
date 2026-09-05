@@ -204,11 +204,19 @@ _BOUND_PARAMS: dict[str, frozenset[str]] = {
             "all_pipelines",
             "interval_start",
             "interval_end",
+            "extract_lookback",
             "limit",
             "apply",
             "manifest_id",
             "content_digest",
             *_LAKE_LAYER_PARAMS,
+        }
+    ),
+    "silver-catchup-cleanup": frozenset(
+        {
+            "manifest_id",
+            "created_before",
+            "apply",
         }
     ),
 }
@@ -228,6 +236,8 @@ _NEUTRAL_PARAMS: frozenset[str] = frozenset(
         "verbose",
         "validate_limit",
         "project_dir",
+        "list_tables",  # --list on silver-catchup-cleanup (read-only; rejected with --apply)
+        "older_than",  # preview/list only; apply approvals bind --created-before
     }
 )
 

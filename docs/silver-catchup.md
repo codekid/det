@@ -21,20 +21,40 @@ engine differs (DuckDB `read_json` vs BigQuery external table over sibling NDJSO
 - Coverage identity is
   `(interval_start, interval_end, extract_run_datetime)`. A run timestamp alone
   is not unique across intervals (parallel extracts can share a second).
+- Digest and `.runs.jsonl` UTC-normalize all three fields (same as coverage), so
+  offset-equivalent timestamps share one `content_digest`.
 - For each `(interval_start, interval_end)`, the **latest** bronze
   `__extract_run_datetime` must appear in silver **for that same interval**.
 - Older extract-run siblings for the same interval are **bronze history** only
   (informational `stale_siblings_ignored`). Silver stays deduped via
   `det_dedupe_latest_run` (latest run wins per `unique_key`).
 
+## Candidate discovery modes
+
+Same membership rule either way; only which bronze intervals are considered
+(and how silver is queried) changes.
+
+| Mode | Flag | Bronze candidates | Silver query | Use when |
+| --- | --- | --- | --- | --- |
+| **A — routine** | `--extract-lookback 48h` (or `7d`, …) | Intervals touched by bronze extract runs in the lookback (siblings expanded) | Probe only those intervals | Frequent / after load |
+| **B — census** | omit lookback; optional `-s`/`-e` | Full lake, or interval-start window | Full `DISTINCT` when unscoped; probe when `-s`/`-e` | Weekly audit / known date range |
+
+Default is **Mode B** (backward compatible). Mode A cannot combine with `-s`/`-e`.
+Diff JSON includes `candidate_mode` (`extract_lookback` \| `interval` \| `full`).
+
+Mode A can miss historical holes with **no** recent bronze extract. Mode A
+`catchup_count=0` is not a forever census — run Mode B periodically.
+
 ## Flow
 
 1. **Diff (read-only):** `det silver-catchup-diff -p <pipeline>` or
-   `--all-pipelines` (MCP: `diff_bronze_silver`). Reads DuckDB analytics silver,
+   `--all-pipelines` (MCP: `diff_bronze_silver`). Prefer
+   `--extract-lookback 48h` for routine checks. Reads DuckDB analytics silver,
    or BigQuery silver when `DET_DBT_TARGET=bigquery`.
 2. **Plan:** `det silver-catchup-plan --dry-run …` → immutable `manifest_id`
    (`scm_…` = silver catch-up manifest) + `content_digest` + `approval_plan`
-   (MCP: `silver_catchup_dry_run`).
+   (MCP: `silver_catchup_dry_run`). Pass the same lookback or `-s`/`-e` as the
+   diff (include the same `-e` when the diff used `-e`).
 3. **Apply manifest:** `det approve` then
    `det silver-catchup-plan --apply --manifest-id <scm_…> --content-digest <sha256:…> --approval <id>`
    writes create-once:
@@ -49,7 +69,17 @@ engine differs (DuckDB `read_json` vs BigQuery external table over sibling NDJSO
    - **BigQuery:** requires `gs://` scm path; registers external table
      `_det_catchup_runs_<scm_…>` over the sibling `.runs.jsonl`; sets
      `DET_CATCHUP_BQ_RELATION`. Local-lake → BQ raises.
-5. **Verify:** re-run the diff; `catchup_count` should be 0.
+5. **Verify:** re-run the diff (same mode/flags); `catchup_count` should be 0.
+6. **BQ cleanup (optional):** each BigQuery heal registers
+   `_det_catchup_runs_<scm_…>` and does **not** auto-drop it. After verify:
+   - `det silver-catchup-cleanup --list` / `--list --older-than 7d`
+   - MCP `silver_catchup_cleanup_dry_run` (`manifest_id` **or** `older_than`) →
+     `det approve` → later
+     `det silver-catchup-cleanup --apply --manifest-id <scm_…> --approval <id>`
+     or `--created-before <iso> --apply --approval <id>` (dry-run freezes the
+     cutoff from `--older-than`; relative duration is not re-evaluated at apply)
+   Age uses BQ table `created`. Tables without `created` are skipped under
+   retention filters. DuckDB heals never create these tables.
 
 Do **not** default to `--full-refresh` for large sources.
 

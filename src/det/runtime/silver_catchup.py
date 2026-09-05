@@ -18,7 +18,7 @@ import os
 import re
 import secrets
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -43,8 +43,45 @@ MANIFEST_ID_PREFIX = "scm_"
 CATCHUP_BQ_EXTERNAL_TABLE_PREFIX = "_det_catchup_runs_"
 _MANIFEST_ID_RE = re.compile(r"^scm_[0-9a-f]{16}$")
 _CONTENT_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_LOOKBACK_RE = re.compile(r"^(\d+)([hHdD])$")
 # Safety cap when building an apply manifest (display diffs stay at DEFAULT_LIST_LIMIT).
 _APPLY_BRONZE_CAP = 100_000
+_SILVER_PROBE_CHUNK = 200
+
+
+def parse_duration(text: str, *, what: str = "duration") -> timedelta:
+    """Parse ``Nh`` / ``Nd`` (hours/days). Fail closed on junk."""
+    raw = str(text or "").strip()
+    match = _LOOKBACK_RE.fullmatch(raw)
+    if not match:
+        raise ValueError(f"{what} must look like '48h' or '7d', got {text!r}")
+    n = int(match.group(1))
+    if n < 1:
+        raise ValueError(f"{what} must be >= 1, got {text!r}")
+    unit = match.group(2).lower()
+    if unit == "h":
+        return timedelta(hours=n)
+    return timedelta(days=n)
+
+
+def parse_extract_lookback(text: str) -> timedelta:
+    """Parse ``Nh`` / ``Nd`` extract-run lookback (hours/days)."""
+    return parse_duration(text, what="extract lookback")
+
+
+def validate_catchup_candidate_scope(
+    *,
+    interval_start: str | None,
+    interval_end: str | None,
+    extract_lookback: str | None,
+) -> None:
+    """Reject combining extract-run lookback with interval ``-s``/``-e``."""
+    if extract_lookback and str(extract_lookback).strip():
+        if interval_start is not None or interval_end is not None:
+            raise ValueError(
+                "--extract-lookback cannot combine with -s/--interval-start "
+                "or -e/--interval-end"
+            )
 
 
 def silver_relation(config: PipelineConfig) -> tuple[str, str]:
@@ -84,12 +121,17 @@ def catchup_runs_ref_from_manifest(manifest_ref: LakeRef) -> LakeRef:
 
 
 def _runs_jsonl_bytes(runs: Sequence[dict[str, Any]]) -> bytes:
+    """Serialize runs as NDJSON.
+
+    All three coverage fields are UTC-normalized via ``_norm_ts`` so digest
+    and sidecar match coverage membership (offset-equivalent instants collide).
+    """
     lines: list[str] = []
     for raw in runs:
         row = {
             "pipeline": str(raw.get("pipeline") or ""),
-            "interval_start": str(raw.get("interval_start") or ""),
-            "interval_end": str(raw.get("interval_end") or ""),
+            "interval_start": _norm_ts(raw.get("interval_start")),
+            "interval_end": _norm_ts(raw.get("interval_end")),
             "extract_run_datetime": _norm_ts(raw.get("extract_run_datetime")),
         }
         lines.append(json.dumps(row, separators=(",", ":"), sort_keys=True))
@@ -120,14 +162,19 @@ def validate_catchup_content_digest(digest: str) -> str:
 
 
 def catchup_content_digest(runs: Sequence[dict[str, Any]]) -> str:
-    """Digest over coverage keys only (stable across plan timestamps)."""
+    """Digest over coverage keys only (stable across plan timestamps).
+
+    All three coverage fields (``interval_start``, ``interval_end``,
+    ``extract_run_datetime``) are UTC-normalized via ``_norm_ts``, matching
+    ``_coverage_key`` membership.
+    """
     rows: list[dict[str, str]] = []
     for raw in runs:
         rows.append(
             {
                 "pipeline": str(raw.get("pipeline") or ""),
-                "interval_start": str(raw.get("interval_start") or ""),
-                "interval_end": str(raw.get("interval_end") or ""),
+                "interval_start": _norm_ts(raw.get("interval_start")),
+                "interval_end": _norm_ts(raw.get("interval_end")),
                 "extract_run_datetime": _norm_ts(raw.get("extract_run_datetime")),
             }
         )
@@ -224,11 +271,30 @@ def analytics_target_is_bigquery() -> bool:
     return (os.environ.get("DET_DBT_TARGET") or "").strip() == "bigquery"
 
 
+def _intervals_from_runs(
+    bronze_runs: Sequence[dict[str, Any]],
+) -> list[tuple[str, str]]:
+    seen: set[tuple[str, str]] = set()
+    out: list[tuple[str, str]] = []
+    for run in bronze_runs:
+        start = _norm_ts(run.get("interval_start"))
+        end = _norm_ts(run.get("interval_end"))
+        if not start or not end:
+            continue
+        key = (start, end)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
+
+
 def _list_silver_extract_runs_duckdb(
     config: PipelineConfig,
     *,
     project_root: Path,
     analytics_db: Path | None = None,
+    intervals: Sequence[tuple[str, str]] | None = None,
 ) -> tuple[set[tuple[str, str, str]], str | None]:
     schema, table = silver_relation(config)
     db_path = analytics_db if analytics_db is not None else analytics_duckdb_path(project_root)
@@ -238,6 +304,8 @@ def _list_silver_extract_runs_duckdb(
             "catch-up silver coverage uses DuckDB analytics; "
             f"DuckDB file not found: {db_path}",
         )
+    if intervals is not None and len(intervals) == 0:
+        return set(), None
     duckdb = require_duckdb()
     con = duckdb.connect(str(db_path), read_only=True)
     try:
@@ -260,15 +328,45 @@ def _list_silver_extract_runs_duckdb(
         # schema/table from silver_relation (pipeline ids), not caller SQL.
         qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
         try:
-            rows = con.execute(
-                f"""
-                select distinct
-                    "__interval_start_datetime",
-                    "__interval_end_datetime",
-                    "__extract_run_datetime"
-                from {qualified}
-                """  # noqa: S608
-            ).fetchall()
+            if intervals is None:
+                rows = con.execute(
+                    f"""
+                    select distinct
+                        "__interval_start_datetime",
+                        "__interval_end_datetime",
+                        "__extract_run_datetime"
+                    from {qualified}
+                    """  # noqa: S608
+                ).fetchall()
+            else:
+                rows = []
+                for i in range(0, len(intervals), _SILVER_PROBE_CHUNK):
+                    chunk = intervals[i : i + _SILVER_PROBE_CHUNK]
+                    ors = " or ".join(
+                        "("
+                        'cast("__interval_start_datetime" as timestamptz) '
+                        "= cast(? as timestamptz) and "
+                        'cast("__interval_end_datetime" as timestamptz) '
+                        "= cast(? as timestamptz)"
+                        ")"
+                        for _ in chunk
+                    )
+                    params: list[Any] = []
+                    for start, end in chunk:
+                        params.extend([start, end])
+                    rows.extend(
+                        con.execute(
+                            f"""
+                            select distinct
+                                "__interval_start_datetime",
+                                "__interval_end_datetime",
+                                "__extract_run_datetime"
+                            from {qualified}
+                            where {ors}
+                            """,  # noqa: S608
+                            params,
+                        ).fetchall()
+                    )
         except Exception as exc:
             # Missing interval columns (or other SELECT failures) must not look
             # like a valid empty silver — that would invent full catch-up holes.
@@ -288,6 +386,8 @@ def _list_silver_extract_runs_duckdb(
 
 def _list_silver_extract_runs_bigquery(
     config: PipelineConfig,
+    *,
+    intervals: Sequence[tuple[str, str]] | None = None,
 ) -> tuple[set[tuple[str, str, str]], str | None]:
     project = (
         os.environ.get("DET_GCP_PROJECT")
@@ -300,6 +400,8 @@ def _list_silver_extract_runs_bigquery(
             "catch-up silver coverage uses BigQuery; "
             "DET_GCP_PROJECT (or GOOGLE_CLOUD_PROJECT) is required",
         )
+    if intervals is not None and len(intervals) == 0:
+        return set(), None
     try:
         from google.cloud import bigquery  # pyright: ignore[reportAttributeAccessIssue]
     except ImportError:
@@ -310,16 +412,45 @@ def _list_silver_extract_runs_bigquery(
         )
     schema, table = silver_relation(config)
     qualified = f"`{project}.{schema}.{table}`"
-    sql = f"""
-        select distinct
-            `__interval_start_datetime`,
-            `__interval_end_datetime`,
-            `__extract_run_datetime`
-        from {qualified}
-    """  # noqa: S608
     try:
         client = bigquery.Client(project=project)
-        rows = list(client.query(sql).result())
+        if intervals is None:
+            sql = f"""
+                select distinct
+                    `__interval_start_datetime`,
+                    `__interval_end_datetime`,
+                    `__extract_run_datetime`
+                from {qualified}
+            """  # noqa: S608
+            rows = list(client.query(sql).result())
+        else:
+            rows = []
+            for i in range(0, len(intervals), _SILVER_PROBE_CHUNK):
+                chunk = intervals[i : i + _SILVER_PROBE_CHUNK]
+                ors = " or ".join(
+                    f"(`__interval_start_datetime` = @s{j} "
+                    f"and `__interval_end_datetime` = @e{j})"
+                    for j in range(len(chunk))
+                )
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        p
+                        for j, (start, end) in enumerate(chunk)
+                        for p in (
+                            bigquery.ScalarQueryParameter(f"s{j}", "TIMESTAMP", start),
+                            bigquery.ScalarQueryParameter(f"e{j}", "TIMESTAMP", end),
+                        )
+                    ]
+                )
+                sql = f"""
+                    select distinct
+                        `__interval_start_datetime`,
+                        `__interval_end_datetime`,
+                        `__extract_run_datetime`
+                    from {qualified}
+                    where {ors}
+                """  # noqa: S608
+                rows.extend(list(client.query(sql, job_config=job_config).result()))
     except Exception as exc:
         return set(), f"catch-up silver coverage uses BigQuery; {exc}"
     out: set[tuple[str, str, str]] = set()
@@ -335,6 +466,7 @@ def list_silver_extract_runs(
     *,
     project_root: Path,
     analytics_db: Path | None = None,
+    intervals: Sequence[tuple[str, str]] | None = None,
 ) -> tuple[set[tuple[str, str, str]], str | None]:
     """Distinct silver coverage keys ``(interval_start, interval_end, extract_run)``.
 
@@ -342,13 +474,20 @@ def list_silver_extract_runs(
     (``DET_GCP_PROJECT`` / custom schema from ``silver_relation``). Otherwise
     reads DuckDB analytics (``analytics_duckdb_path`` / ``DET_ANALYTICS_DUCKDB``).
 
+    When ``intervals`` is set, probes only those ``(start, end)`` pairs (Mode A
+    or interval-scoped Mode B). ``intervals=[]`` returns empty without scanning.
+    ``intervals=None`` keeps a full-table ``DISTINCT`` (unscoped Mode B).
+
     Extract-run timestamps alone are not unique across intervals (parallel runs can
     share a second-precision clock), so membership must include interval bounds.
     """
     if analytics_target_is_bigquery():
-        return _list_silver_extract_runs_bigquery(config)
+        return _list_silver_extract_runs_bigquery(config, intervals=intervals)
     return _list_silver_extract_runs_duckdb(
-        config, project_root=project_root, analytics_db=analytics_db
+        config,
+        project_root=project_root,
+        analytics_db=analytics_db,
+        intervals=intervals,
     )
 
 
@@ -374,12 +513,100 @@ def _latest_per_interval(
     return best
 
 
+def _expand_bronze_for_intervals(
+    config: PipelineConfig,
+    *,
+    root: Path,
+    intervals: Sequence[tuple[str, str]],
+    limit: int,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Re-list all bronze extract runs for each touched interval (siblings)."""
+    by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    note: str | None = None
+    for start, end in intervals:
+        runs, one_note = list_bronze_runs(
+            config,
+            root=root,
+            limit=limit,
+            interval_start=start,
+            interval_end=end,
+        )
+        if one_note:
+            note = one_note
+        for run in runs:
+            s = _norm_ts(run.get("interval_start"))
+            e = _norm_ts(run.get("interval_end"))
+            if s != start or e != end:
+                continue
+            ts = _norm_ts(run.get("extract_run_datetime"))
+            if not ts:
+                continue
+            key = (start, end, ts)
+            by_key[key] = {
+                **run,
+                "interval_start": start,
+                "interval_end": end,
+                "extract_run_datetime": ts,
+            }
+            if len(by_key) >= limit:
+                return list(by_key.values()), note
+    return list(by_key.values()), note
+
+
+def _load_bronze_candidates(
+    config: PipelineConfig,
+    *,
+    root: Path,
+    limit: int,
+    interval_start: str | None,
+    interval_end: str | None,
+    extract_lookback: str | None,
+) -> tuple[list[dict[str, Any]], str | None, str, str | None]:
+    """Return (bronze_runs, note, candidate_mode, lookback_raw)."""
+    lookback_raw = (
+        str(extract_lookback).strip() if extract_lookback is not None else ""
+    ) or None
+    validate_catchup_candidate_scope(
+        interval_start=interval_start,
+        interval_end=interval_end,
+        extract_lookback=lookback_raw,
+    )
+    if lookback_raw:
+        delta = parse_extract_lookback(lookback_raw)
+        since = identity_iso(datetime.now(UTC) - delta)
+        recent, note = list_bronze_runs(
+            config,
+            root=root,
+            limit=limit,
+            extract_run_since=since,
+        )
+        intervals = _intervals_from_runs(recent)
+        if not intervals:
+            return [], note, "extract_lookback", lookback_raw
+        expanded, expand_note = _expand_bronze_for_intervals(
+            config, root=root, intervals=intervals, limit=limit
+        )
+        return expanded, note or expand_note, "extract_lookback", lookback_raw
+
+    runs, note = list_bronze_runs(
+        config,
+        root=root,
+        limit=limit,
+        interval_start=interval_start,
+        interval_end=interval_end,
+    )
+    if interval_start is not None:
+        return runs, note, "interval", None
+    return runs, note, "full", None
+
+
 def diff_bronze_silver(
     pipeline: str | PipelineConfig,
     *,
     project_root: Path,
     interval_start: str | None = None,
     interval_end: str | None = None,
+    extract_lookback: str | None = None,
     limit: int = DEFAULT_LIST_LIMIT,
     analytics_db: Path | None = None,
     detected_at: str | None = None,
@@ -389,6 +616,10 @@ def diff_bronze_silver(
 
     When ``complete=True`` (manifest plan/apply), list bronze without the MCP
     display clamp and return every catch-up row. Raises if the safety cap is hit.
+
+    ``extract_lookback`` (e.g. ``48h``) enables Mode A: candidates from recent
+    bronze extract runs, silver probed only for those intervals. Omit for Mode B
+    (full census or ``-s``/``-e`` interval window).
     """
     root = project_root.resolve()
     if isinstance(pipeline, PipelineConfig):
@@ -401,20 +632,32 @@ def diff_bronze_silver(
         capped = _APPLY_BRONZE_CAP
     else:
         capped = clamp_list_limit(limit)
-    bronze_runs, bronze_note = list_bronze_runs(
+    bronze_runs, bronze_note, candidate_mode, lookback_raw = _load_bronze_candidates(
         config,
         root=root,
         limit=capped,
         interval_start=interval_start,
         interval_end=interval_end,
+        extract_lookback=extract_lookback,
     )
     if complete and len(bronze_runs) >= _APPLY_BRONZE_CAP:
         raise ValueError(
             "catch-up apply found too many bronze runs "
-            f"(>={_APPLY_BRONZE_CAP}); narrow -s/-e or raise the apply cap"
+            f"(>={_APPLY_BRONZE_CAP}); narrow -s/-e / --extract-lookback "
+            "or raise the apply cap"
         )
+
+    probe_intervals: list[tuple[str, str]] | None
+    if candidate_mode == "full":
+        probe_intervals = None
+    else:
+        probe_intervals = _intervals_from_runs(bronze_runs)
+
     silver_keys, silver_note = list_silver_extract_runs(
-        config, project_root=root, analytics_db=analytics_db
+        config,
+        project_root=root,
+        analytics_db=analytics_db,
+        intervals=probe_intervals,
     )
     if complete and silver_note:
         raise ValueError(
@@ -493,6 +736,7 @@ def diff_bronze_silver(
         "silver_table": table,
         "limit": capped if not complete else len(bronze_runs),
         "complete": complete,
+        "candidate_mode": candidate_mode,
         "catchup_runs": catchup_out,
         "ok_intervals": ok_out,
         "stale_siblings_ignored": stale_out,
@@ -501,6 +745,12 @@ def diff_bronze_silver(
         "stale_siblings_count": len(stale_siblings),
         "truncated": truncated,
     }
+    if lookback_raw:
+        out["extract_lookback"] = lookback_raw
+    if interval_start is not None:
+        out["interval_start"] = interval_start
+        if interval_end is not None:
+            out["interval_end"] = interval_end
     notes = [n for n in (bronze_note, silver_note) if n]
     if notes:
         out["note"] = "; ".join(notes)
@@ -513,6 +763,7 @@ def diff_bronze_silver_fleet(
     pipelines: Sequence[str] | None = None,
     interval_start: str | None = None,
     interval_end: str | None = None,
+    extract_lookback: str | None = None,
     limit: int = DEFAULT_LIST_LIMIT,
     analytics_db: Path | None = None,
     detected_at: str | None = None,
@@ -530,6 +781,7 @@ def diff_bronze_silver_fleet(
             project_root=root,
             interval_start=interval_start,
             interval_end=interval_end,
+            extract_lookback=extract_lookback,
             limit=limit,
             analytics_db=analytics_db,
             detected_at=stamp,
@@ -537,7 +789,7 @@ def diff_bronze_silver_fleet(
         )
         per_pipeline.append(one)
         catchup_all.extend(one.get("catchup_runs") or [])
-    return {
+    out: dict[str, Any] = {
         "pipelines": ids,
         "pipeline_count": len(ids),
         "catchup_runs": catchup_all,
@@ -545,7 +797,15 @@ def diff_bronze_silver_fleet(
         "results": per_pipeline,
         "detected_at": stamp,
         "complete": complete,
+        "candidate_mode": (
+            "extract_lookback"
+            if extract_lookback and str(extract_lookback).strip()
+            else ("interval" if interval_start is not None else "full")
+        ),
     }
+    if extract_lookback and str(extract_lookback).strip():
+        out["extract_lookback"] = str(extract_lookback).strip()
+    return out
 
 
 def manifest_payload_from_catchup(
@@ -561,8 +821,8 @@ def manifest_payload_from_catchup(
             {
                 "pipeline": str(raw["pipeline"]),
                 "extract_run_datetime": _norm_ts(raw["extract_run_datetime"]),
-                "interval_start": str(raw.get("interval_start") or ""),
-                "interval_end": str(raw.get("interval_end") or ""),
+                "interval_start": _norm_ts(raw.get("interval_start")),
+                "interval_end": _norm_ts(raw.get("interval_end")),
                 "detected_at": str(raw.get("detected_at") or stamp),
             }
         )
@@ -717,6 +977,293 @@ def catchup_bq_relation(*, project: str, dataset: str, manifest_id: str) -> str:
     return f"`{project}.{dataset}.{table}`"
 
 
+def _bq_project_dataset_location() -> tuple[str, str, str]:
+    """Resolve ``(project, dataset, location)`` for catch-up BQ helpers."""
+    project = (
+        os.environ.get("DET_GCP_PROJECT")
+        or os.environ.get("GOOGLE_CLOUD_PROJECT")
+        or ""
+    ).strip()
+    if not project:
+        raise ValueError(
+            "BigQuery catch-up requires DET_GCP_PROJECT (or GOOGLE_CLOUD_PROJECT)"
+        )
+    dataset = (os.environ.get("DET_BQ_DATASET") or "analytics").strip() or "analytics"
+    location = (os.environ.get("DET_BQ_LOCATION") or "US").strip() or "US"
+    return project, dataset, location
+
+
+def _bq_client() -> tuple[Any, str, str, str]:
+    try:
+        from google.cloud import bigquery  # pyright: ignore[reportAttributeAccessIssue]
+    except ImportError as exc:
+        raise RuntimeError(
+            'google-cloud-bigquery is required. Install: uv pip install -e ".[bigquery]"'
+        ) from exc
+    project, dataset, location = _bq_project_dataset_location()
+    return bigquery.Client(project=project), project, dataset, location
+
+
+def _as_utc(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def _manifest_id_from_catchup_table_name(table_id: str) -> str | None:
+    name = str(table_id or "").strip()
+    prefix = CATCHUP_BQ_EXTERNAL_TABLE_PREFIX
+    if not name.startswith(prefix):
+        return None
+    suffix = name[len(prefix) :]
+    if not _MANIFEST_ID_RE.fullmatch(suffix):
+        return None
+    return suffix
+
+
+def validate_bq_catchup_cleanup_scope(
+    *,
+    manifest_id: str | None,
+    older_than: str | None,
+    created_before: str | None = None,
+    list_mode: bool = False,
+) -> None:
+    """Reject illegal flag combinations for BQ catch-up cleanup."""
+    mid = bool(manifest_id and str(manifest_id).strip())
+    older = bool(older_than and str(older_than).strip())
+    before = bool(created_before and str(created_before).strip())
+    if older and before:
+        raise ValueError("--older-than cannot combine with --created-before")
+    if mid and older:
+        raise ValueError("--manifest-id cannot combine with --older-than")
+    if mid and before:
+        raise ValueError("--manifest-id cannot combine with --created-before")
+    if list_mode:
+        if mid:
+            raise ValueError("--list cannot combine with --manifest-id")
+        return
+    if not mid and not older and not before:
+        raise ValueError(
+            "exactly one of --manifest-id, --older-than, or --created-before "
+            "is required"
+        )
+
+
+def resolve_bq_catchup_cleanup_cutoff(
+    *,
+    older_than: str | None = None,
+    created_before: str | None = None,
+    now: datetime | None = None,
+) -> tuple[datetime | None, str | None, str | None]:
+    """Resolve an immutable UTC cutoff for retention cleanup.
+
+    Returns ``(cutoff_dt, created_before_iso, older_than_raw)``. Relative
+    ``older_than`` is converted once at plan time; apply should pass the
+    resulting ``created_before`` so the target set cannot drift.
+    """
+    older_raw = str(older_than).strip() if older_than is not None else ""
+    before_raw = str(created_before).strip() if created_before is not None else ""
+    if older_raw and before_raw:
+        raise ValueError("--older-than cannot combine with --created-before")
+    if before_raw:
+        iso = identity_iso(before_raw)
+        return datetime.fromisoformat(iso), iso, None
+    if older_raw:
+        delta = parse_duration(older_raw, what="older-than")
+        stamp = now if now is not None else datetime.now(UTC)
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=UTC)
+        else:
+            stamp = stamp.astimezone(UTC)
+        cutoff = stamp - delta
+        iso = identity_iso(cutoff)
+        return datetime.fromisoformat(iso), iso, older_raw
+    return None, None, None
+
+
+def list_bq_catchup_external_tables(
+    *,
+    older_than: str | None = None,
+    created_before: str | None = None,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """List ``_det_catchup_runs_*`` tables; optional age filter on BQ ``created``.
+
+    Prefer ``created_before`` (immutable ISO UTC) for approve→apply. Relative
+    ``older_than`` is for inspect/list and dry-run preview only.
+
+    When a cutoff is set, rows with missing ``created`` are skipped (never
+    treated as older).
+    """
+    cutoff, _cutoff_iso, _older = resolve_bq_catchup_cleanup_cutoff(
+        older_than=older_than, created_before=created_before, now=now
+    )
+    client, project, dataset, _location = _bq_client()
+    rows: list[dict[str, Any]] = []
+    for item in client.list_tables(f"{project}.{dataset}"):
+        table_name = str(getattr(item, "table_id", "") or "")
+        if not table_name.startswith(CATCHUP_BQ_EXTERNAL_TABLE_PREFIX):
+            continue
+        mid = _manifest_id_from_catchup_table_name(table_name)
+        created = _as_utc(getattr(item, "created", None))
+        if created is None:
+            # list_tables often omits created — fetch full metadata once.
+            try:
+                full = client.get_table(f"{project}.{dataset}.{table_name}")
+                created = _as_utc(getattr(full, "created", None))
+            except Exception:
+                created = None
+        if cutoff is not None:
+            if created is None or created > cutoff:
+                continue
+        relation = (
+            catchup_bq_relation(project=project, dataset=dataset, manifest_id=mid)
+            if mid
+            else f"`{project}.{dataset}.{table_name}`"
+        )
+        rows.append(
+            {
+                "table_id": table_name,
+                "relation": relation,
+                "created": created.isoformat() if created is not None else None,
+                "manifest_id": mid,
+            }
+        )
+    rows.sort(key=lambda r: (r.get("created") or "", r["table_id"]))
+    return rows
+
+
+def drop_bq_catchup_external_table(*, manifest_id: str) -> dict[str, Any]:
+    """Delete one manifest-scoped catch-up external table (``not_found_ok``)."""
+    mid = validate_catchup_manifest_id(manifest_id)
+    client, project, dataset, _location = _bq_client()
+    table_name = catchup_bq_external_table_name(mid)
+    table_id = f"{project}.{dataset}.{table_name}"
+    relation = catchup_bq_relation(project=project, dataset=dataset, manifest_id=mid)
+    existed = False
+    try:
+        client.get_table(table_id)
+        existed = True
+    except Exception:
+        existed = False
+    client.delete_table(table_id, not_found_ok=True)
+    logger.info(
+        "silver catchup BQ external table dropped",
+        relation=relation,
+        manifest_id=mid,
+        existed=existed,
+    )
+    return {
+        "manifest_id": mid,
+        "relation": relation,
+        "existed": existed,
+        "dropped": existed,
+    }
+
+
+def plan_bq_catchup_cleanup(
+    *,
+    manifest_id: str | None = None,
+    older_than: str | None = None,
+    created_before: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Dry-run payload: which ``_det_catchup_runs_*`` tables would be dropped.
+
+    Retention plans always emit ``created_before`` (UTC ISO) so approve→apply
+    can bind an immutable cutoff instead of a drifting relative duration.
+    """
+    validate_bq_catchup_cleanup_scope(
+        manifest_id=manifest_id,
+        older_than=older_than,
+        created_before=created_before,
+        list_mode=False,
+    )
+    mid_raw = str(manifest_id).strip() if manifest_id else ""
+    project, dataset, _location = _bq_project_dataset_location()
+    targets: list[dict[str, Any]] = []
+    cutoff_iso: str | None = None
+    older_raw: str | None = None
+    if mid_raw:
+        mid = validate_catchup_manifest_id(mid_raw)
+        relation = catchup_bq_relation(
+            project=project, dataset=dataset, manifest_id=mid
+        )
+        client, _, _, _ = _bq_client()
+        table_id = f"{project}.{dataset}.{catchup_bq_external_table_name(mid)}"
+        existed = False
+        created: str | None = None
+        try:
+            full = client.get_table(table_id)
+            existed = True
+            created_dt = _as_utc(getattr(full, "created", None))
+            created = created_dt.isoformat() if created_dt is not None else None
+        except Exception:
+            existed = False
+        targets.append(
+            {
+                "table_id": catchup_bq_external_table_name(mid),
+                "relation": relation,
+                "created": created,
+                "manifest_id": mid,
+                "existed": existed,
+            }
+        )
+        mode = "manifest_id"
+    else:
+        _cutoff, cutoff_iso, older_raw = resolve_bq_catchup_cleanup_cutoff(
+            older_than=older_than, created_before=created_before, now=now
+        )
+        listed = list_bq_catchup_external_tables(
+            created_before=cutoff_iso, now=now
+        )
+        for row in listed:
+            if not row.get("manifest_id"):
+                continue
+            targets.append({**row, "existed": True})
+        mode = "created_before"
+    return {
+        "mode": mode,
+        "manifest_id": mid_raw or None,
+        "older_than": older_raw,
+        "created_before": cutoff_iso,
+        "project": project,
+        "dataset": dataset,
+        "targets": targets,
+        "target_count": len(targets),
+    }
+
+
+def apply_bq_catchup_cleanup(
+    *,
+    manifest_id: str | None = None,
+    older_than: str | None = None,
+    created_before: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Drop planned catch-up external tables (single id or age-filtered set)."""
+    planned = plan_bq_catchup_cleanup(
+        manifest_id=manifest_id,
+        older_than=older_than,
+        created_before=created_before,
+        now=now,
+    )
+    results: list[dict[str, Any]] = []
+    for row in planned["targets"]:
+        mid = row.get("manifest_id")
+        if not mid:
+            continue
+        results.append(drop_bq_catchup_external_table(manifest_id=str(mid)))
+    dropped_count = sum(1 for r in results if r.get("dropped"))
+    return {
+        **planned,
+        "results": results,
+        "dropped_count": dropped_count,
+    }
+
+
 def ensure_bq_catchup_external_table(*, runs_uri: str, manifest_id: str) -> str:
     """Create/replace a manifest-scoped external table over GCS NDJSON.
 
@@ -731,25 +1278,9 @@ def ensure_bq_catchup_external_table(*, runs_uri: str, manifest_id: str) -> str:
             f"(got {uri!r}). Use a GCS ops lake; local-lake → BQ heal is unsupported."
         )
     mid = validate_catchup_manifest_id(manifest_id)
-    project = (
-        os.environ.get("DET_GCP_PROJECT")
-        or os.environ.get("GOOGLE_CLOUD_PROJECT")
-        or ""
-    ).strip()
-    if not project:
-        raise ValueError(
-            "BigQuery catch-up requires DET_GCP_PROJECT (or GOOGLE_CLOUD_PROJECT)"
-        )
-    dataset = (os.environ.get("DET_BQ_DATASET") or "analytics").strip() or "analytics"
-    location = (os.environ.get("DET_BQ_LOCATION") or "US").strip() or "US"
-    try:
-        from google.cloud import bigquery  # pyright: ignore[reportAttributeAccessIssue]
-    except ImportError as exc:
-        raise RuntimeError(
-            'google-cloud-bigquery is required. Install: uv pip install -e ".[bigquery]"'
-        ) from exc
+    client, project, dataset, location = _bq_client()
+    from google.cloud import bigquery  # pyright: ignore[reportAttributeAccessIssue]
 
-    client = bigquery.Client(project=project)
     _ensure_bq_dataset(client, project, dataset, location)
     table_name = catchup_bq_external_table_name(mid)
     table_id = f"{project}.{dataset}.{table_name}"
@@ -830,6 +1361,7 @@ def plan_catchup_manifest(
     all_pipelines: bool = False,
     interval_start: str | None = None,
     interval_end: str | None = None,
+    extract_lookback: str | None = None,
     limit: int = DEFAULT_LIST_LIMIT,
     analytics_db: Path | None = None,
     manifest_id: str | None = None,
@@ -854,6 +1386,7 @@ def plan_catchup_manifest(
             project_root=root,
             interval_start=interval_start,
             interval_end=interval_end,
+            extract_lookback=extract_lookback,
             analytics_db=analytics_db,
             complete=True,
         )
@@ -871,6 +1404,12 @@ def plan_catchup_manifest(
             "manifest_id": mid,
             "content_digest": payload["content_digest"],
             "manifest_relpath": rel,
+            "candidate_mode": fleet.get("candidate_mode"),
+            **(
+                {"extract_lookback": fleet["extract_lookback"]}
+                if fleet.get("extract_lookback")
+                else {}
+            ),
         }
     if pipeline is None:
         raise ValueError("pipeline is required unless all_pipelines=True")
@@ -879,6 +1418,7 @@ def plan_catchup_manifest(
         project_root=root,
         interval_start=interval_start,
         interval_end=interval_end,
+        extract_lookback=extract_lookback,
         analytics_db=analytics_db,
         complete=True,
     )
@@ -896,6 +1436,12 @@ def plan_catchup_manifest(
         "manifest_id": mid,
         "content_digest": payload["content_digest"],
         "manifest_relpath": rel,
+        "candidate_mode": one.get("candidate_mode"),
+        **(
+            {"extract_lookback": one["extract_lookback"]}
+            if one.get("extract_lookback")
+            else {}
+        ),
     }
 
 
