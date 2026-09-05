@@ -470,14 +470,15 @@ def test_silver_catchup_cleanup_write_argv():
         "--manifest-id",
         mid,
     ]
-    assert silver_catchup_cleanup_write_argv(older_than="7d") == [
+    before = "2026-08-28T12:00:00+00:00"
+    assert silver_catchup_cleanup_write_argv(created_before=before) == [
         "silver-catchup-cleanup",
         "--apply",
-        "--older-than",
-        "7d",
+        "--created-before",
+        before,
     ]
     with pytest.raises(ValueError, match="cannot combine"):
-        silver_catchup_cleanup_write_argv(manifest_id=mid, older_than="7d")
+        silver_catchup_cleanup_write_argv(manifest_id=mid, created_before=before)
     with pytest.raises(ValueError, match="exactly one"):
         silver_catchup_cleanup_write_argv()
 
@@ -1537,6 +1538,7 @@ def test_bound_params_encoded_in_write_argv_builders():
             }
         elif command == "silver-catchup-cleanup":
             mid = "scm_" + ("ab" * 8)
+            before = "2026-08-28T12:00:00+00:00"
             base = silver_catchup_cleanup_write_argv(manifest_id=mid)
             checks = {
                 "manifest_id": (
@@ -1545,9 +1547,9 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("--manifest-id", "scm_" + ("cd" * 8)),
                 ),
-                "older_than": (
-                    silver_catchup_cleanup_write_argv(older_than="7d"),
-                    ("--older-than", "7d"),
+                "created_before": (
+                    silver_catchup_cleanup_write_argv(created_before=before),
+                    ("--created-before", before),
                 ),
                 "apply": (base, ("--apply",)),  # implicit: always present
             }

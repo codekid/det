@@ -215,7 +215,7 @@ _BOUND_PARAMS: dict[str, frozenset[str]] = {
     "silver-catchup-cleanup": frozenset(
         {
             "manifest_id",
-            "older_than",
+            "created_before",
             "apply",
         }
     ),
@@ -237,6 +237,7 @@ _NEUTRAL_PARAMS: frozenset[str] = frozenset(
         "validate_limit",
         "project_dir",
         "list_tables",  # --list on silver-catchup-cleanup (read-only; rejected with --apply)
+        "older_than",  # preview/list only; apply approvals bind --created-before
     }
 )
 

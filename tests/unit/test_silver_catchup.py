@@ -844,11 +844,24 @@ def test_validate_bq_catchup_cleanup_scope():
         manifest_id=None, older_than="7d", list_mode=False
     )
     validate_bq_catchup_cleanup_scope(
+        manifest_id=None,
+        older_than=None,
+        created_before="2026-08-28T12:00:00+00:00",
+        list_mode=False,
+    )
+    validate_bq_catchup_cleanup_scope(
         manifest_id=None, older_than="7d", list_mode=True
     )
     with pytest.raises(ValueError, match="cannot combine"):
         validate_bq_catchup_cleanup_scope(
             manifest_id="scm_" + ("ab" * 8), older_than="7d", list_mode=False
+        )
+    with pytest.raises(ValueError, match="cannot combine"):
+        validate_bq_catchup_cleanup_scope(
+            manifest_id=None,
+            older_than="7d",
+            created_before="2026-08-28T12:00:00+00:00",
+            list_mode=False,
         )
     with pytest.raises(ValueError, match="exactly one"):
         validate_bq_catchup_cleanup_scope(
@@ -858,6 +871,25 @@ def test_validate_bq_catchup_cleanup_scope():
         validate_bq_catchup_cleanup_scope(
             manifest_id="scm_" + ("ab" * 8), older_than=None, list_mode=True
         )
+
+
+def test_resolve_bq_catchup_cleanup_cutoff_freezes_relative_duration():
+    from datetime import UTC, datetime, timedelta
+
+    from det.runtime.silver_catchup import resolve_bq_catchup_cleanup_cutoff
+
+    now = datetime(2026, 9, 4, 12, 0, tzinfo=UTC)
+    cutoff, iso, older = resolve_bq_catchup_cleanup_cutoff(older_than="7d", now=now)
+    assert older == "7d"
+    assert iso == "2026-08-28T12:00:00+00:00"
+    assert cutoff == datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
+    # Later "now" with the frozen ISO must not move the cutoff.
+    later = now + timedelta(days=3)
+    cutoff2, iso2, _ = resolve_bq_catchup_cleanup_cutoff(
+        created_before=iso, now=later
+    )
+    assert iso2 == iso
+    assert cutoff2 == cutoff
 
 
 def test_bq_project_dataset_location_requires_project(monkeypatch: pytest.MonkeyPatch):
@@ -954,9 +986,11 @@ def test_plan_and_apply_bq_catchup_cleanup_older_than(
     from datetime import UTC, datetime, timedelta
 
     from det.runtime import silver_catchup as sc
+    from det.runtime.approval import silver_catchup_cleanup_write_argv
 
     mid = "scm_" + ("55" * 8)
-    old_created = datetime.now(UTC) - timedelta(days=30)
+    now = datetime(2026, 9, 4, 12, 0, tzinfo=UTC)
+    old_created = now - timedelta(days=30)
     table_id = f"proj.analytics._det_catchup_runs_{mid}"
     items = [_FakeTableItem(f"_det_catchup_runs_{mid}", created=old_created)]
     client = _FakeBqClient(
@@ -970,13 +1004,27 @@ def test_plan_and_apply_bq_catchup_cleanup_older_than(
         sc, "_bq_project_dataset_location", lambda: ("proj", "analytics", "US")
     )
 
-    planned = sc.plan_bq_catchup_cleanup(older_than="7d")
-    assert planned["mode"] == "older_than"
+    planned = sc.plan_bq_catchup_cleanup(older_than="7d", now=now)
+    assert planned["mode"] == "created_before"
+    assert planned["created_before"] == "2026-08-28T12:00:00+00:00"
+    assert planned["older_than"] == "7d"
     assert planned["target_count"] == 1
     assert planned["targets"][0]["manifest_id"] == mid
 
-    applied = sc.apply_bq_catchup_cleanup(older_than="7d")
+    # Approval argv binds the frozen cutoff, not the relative duration.
+    argv = silver_catchup_cleanup_write_argv(
+        created_before=planned["created_before"]
+    )
+    assert "--created-before" in argv
+    assert "7d" not in argv
+
+    # Apply with the bound cutoff still selects the same table even if "now" moved.
+    later = now + timedelta(days=10)
+    applied = sc.apply_bq_catchup_cleanup(
+        created_before=planned["created_before"], now=later
+    )
     assert applied["dropped_count"] == 1
+    assert applied["created_before"] == planned["created_before"]
     assert client.deleted == [table_id]
 
 def test_plan_bq_catchup_cleanup_single_missing(monkeypatch: pytest.MonkeyPatch):

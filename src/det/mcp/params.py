@@ -378,8 +378,9 @@ OlderThanOpt = Annotated[
     str | None,
     Field(
         description=(
-            "Drop BQ _det_catchup_runs_* tables older than this duration "
-            "(e.g. 7d, 48h); mutually exclusive with manifest_id"
+            "Relative age for BQ catch-up cleanup preview (e.g. 7d, 48h). "
+            "Dry-run freezes created_before in approval_plan for apply; "
+            "mutually exclusive with manifest_id"
         )
     ),
 ]

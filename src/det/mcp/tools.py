@@ -706,25 +706,23 @@ def silver_catchup_cleanup_dry_run(
         manifest_id=mid or None,
         older_than=older or None,
     )
+    before = planned.get("created_before")
+    if mid:
+        write_argv = silver_catchup_cleanup_write_argv(manifest_id=mid)
+        apply_hint = f"--manifest-id {mid}"
+    else:
+        write_argv = silver_catchup_cleanup_write_argv(
+            created_before=str(before or "")
+        )
+        apply_hint = f"--created-before {before}"
     return {
         **planned,
         "dry_run": True,
-        "approval_plan": _approval_plan(
-            "silver-catchup-cleanup",
-            silver_catchup_cleanup_write_argv(
-                manifest_id=mid or None,
-                older_than=older or None,
-            ),
-        ),
+        "approval_plan": _approval_plan("silver-catchup-cleanup", write_argv),
         "next_steps": (
             "Operator: det approve --plan <approval_plan> --approved-by <id>. "
             "Agent (later turn): det silver-catchup-cleanup --apply "
-            + (
-                f"--manifest-id {mid}"
-                if mid
-                else f"--older-than {older}"
-            )
-            + " --approval <id>. Heal does not auto-drop these tables."
+            f"{apply_hint} --approval <id>. Heal does not auto-drop these tables."
         ),
     }
 

@@ -74,10 +74,11 @@ When bronze has data but incremental silver appears behind (watermark hole):
    not `--full-refresh`).
 5. Re-diff to verify `catchup_count=0`.
 6. After a **BigQuery** heal: MCP `silver_catchup_cleanup_dry_run`
-   (`manifest_id` or `older_than`, e.g. `"7d"`) → show `approval_plan` → **stop**.
+   (`manifest_id` or `older_than`, e.g. `"7d"`) → show `approval_plan` with
+   `--created-before` (frozen UTC cutoff) → **stop**.
    After confirm: `det approve` then later
    `det silver-catchup-cleanup --apply --manifest-id <scm_…> --approval <id>`
-   or `--older-than 7d --apply --approval <id>`. Heal does not auto-drop
+   or `--created-before <iso> --apply --approval <id>`. Heal does not auto-drop
    `_det_catchup_runs_*` tables. Use `--list` / `--list --older-than 7d` to
    inspect. Skip for DuckDB heals.
 

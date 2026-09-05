@@ -1027,35 +1027,80 @@ def validate_bq_catchup_cleanup_scope(
     *,
     manifest_id: str | None,
     older_than: str | None,
+    created_before: str | None = None,
     list_mode: bool = False,
 ) -> None:
     """Reject illegal flag combinations for BQ catch-up cleanup."""
     mid = bool(manifest_id and str(manifest_id).strip())
     older = bool(older_than and str(older_than).strip())
+    before = bool(created_before and str(created_before).strip())
+    if older and before:
+        raise ValueError("--older-than cannot combine with --created-before")
     if mid and older:
         raise ValueError("--manifest-id cannot combine with --older-than")
+    if mid and before:
+        raise ValueError("--manifest-id cannot combine with --created-before")
     if list_mode:
         if mid:
             raise ValueError("--list cannot combine with --manifest-id")
         return
-    if not mid and not older:
-        raise ValueError("exactly one of --manifest-id or --older-than is required")
+    if not mid and not older and not before:
+        raise ValueError(
+            "exactly one of --manifest-id, --older-than, or --created-before "
+            "is required"
+        )
+
+
+def resolve_bq_catchup_cleanup_cutoff(
+    *,
+    older_than: str | None = None,
+    created_before: str | None = None,
+    now: datetime | None = None,
+) -> tuple[datetime | None, str | None, str | None]:
+    """Resolve an immutable UTC cutoff for retention cleanup.
+
+    Returns ``(cutoff_dt, created_before_iso, older_than_raw)``. Relative
+    ``older_than`` is converted once at plan time; apply should pass the
+    resulting ``created_before`` so the target set cannot drift.
+    """
+    older_raw = str(older_than).strip() if older_than is not None else ""
+    before_raw = str(created_before).strip() if created_before is not None else ""
+    if older_raw and before_raw:
+        raise ValueError("--older-than cannot combine with --created-before")
+    if before_raw:
+        iso = identity_iso(before_raw)
+        return datetime.fromisoformat(iso), iso, None
+    if older_raw:
+        delta = parse_duration(older_raw, what="older-than")
+        stamp = now if now is not None else datetime.now(UTC)
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=UTC)
+        else:
+            stamp = stamp.astimezone(UTC)
+        cutoff = stamp - delta
+        iso = identity_iso(cutoff)
+        return datetime.fromisoformat(iso), iso, older_raw
+    return None, None, None
 
 
 def list_bq_catchup_external_tables(
-    *, older_than: str | None = None
+    *,
+    older_than: str | None = None,
+    created_before: str | None = None,
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """List ``_det_catchup_runs_*`` tables; optional age filter on BQ ``created``.
 
-    When ``older_than`` is set, rows with missing ``created`` are skipped (never
+    Prefer ``created_before`` (immutable ISO UTC) for approve→apply. Relative
+    ``older_than`` is for inspect/list and dry-run preview only.
+
+    When a cutoff is set, rows with missing ``created`` are skipped (never
     treated as older).
     """
-    delta: timedelta | None = None
-    older_raw = str(older_than).strip() if older_than is not None else ""
-    if older_raw:
-        delta = parse_duration(older_raw, what="older-than")
+    cutoff, _cutoff_iso, _older = resolve_bq_catchup_cleanup_cutoff(
+        older_than=older_than, created_before=created_before, now=now
+    )
     client, project, dataset, _location = _bq_client()
-    cutoff = datetime.now(UTC) - delta if delta is not None else None
     rows: list[dict[str, Any]] = []
     for item in client.list_tables(f"{project}.{dataset}"):
         table_name = str(getattr(item, "table_id", "") or "")
@@ -1122,15 +1167,25 @@ def plan_bq_catchup_cleanup(
     *,
     manifest_id: str | None = None,
     older_than: str | None = None,
+    created_before: str | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Dry-run payload: which ``_det_catchup_runs_*`` tables would be dropped."""
+    """Dry-run payload: which ``_det_catchup_runs_*`` tables would be dropped.
+
+    Retention plans always emit ``created_before`` (UTC ISO) so approve→apply
+    can bind an immutable cutoff instead of a drifting relative duration.
+    """
     validate_bq_catchup_cleanup_scope(
-        manifest_id=manifest_id, older_than=older_than, list_mode=False
+        manifest_id=manifest_id,
+        older_than=older_than,
+        created_before=created_before,
+        list_mode=False,
     )
     mid_raw = str(manifest_id).strip() if manifest_id else ""
-    older_raw = str(older_than).strip() if older_than else ""
     project, dataset, _location = _bq_project_dataset_location()
     targets: list[dict[str, Any]] = []
+    cutoff_iso: str | None = None
+    older_raw: str | None = None
     if mid_raw:
         mid = validate_catchup_manifest_id(mid_raw)
         relation = catchup_bq_relation(
@@ -1158,16 +1213,22 @@ def plan_bq_catchup_cleanup(
         )
         mode = "manifest_id"
     else:
-        listed = list_bq_catchup_external_tables(older_than=older_raw)
+        _cutoff, cutoff_iso, older_raw = resolve_bq_catchup_cleanup_cutoff(
+            older_than=older_than, created_before=created_before, now=now
+        )
+        listed = list_bq_catchup_external_tables(
+            created_before=cutoff_iso, now=now
+        )
         for row in listed:
             if not row.get("manifest_id"):
                 continue
             targets.append({**row, "existed": True})
-        mode = "older_than"
+        mode = "created_before"
     return {
         "mode": mode,
         "manifest_id": mid_raw or None,
-        "older_than": older_raw or None,
+        "older_than": older_raw,
+        "created_before": cutoff_iso,
         "project": project,
         "dataset": dataset,
         "targets": targets,
@@ -1179,10 +1240,15 @@ def apply_bq_catchup_cleanup(
     *,
     manifest_id: str | None = None,
     older_than: str | None = None,
+    created_before: str | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Drop planned catch-up external tables (single id or age-filtered set)."""
     planned = plan_bq_catchup_cleanup(
-        manifest_id=manifest_id, older_than=older_than
+        manifest_id=manifest_id,
+        older_than=older_than,
+        created_before=created_before,
+        now=now,
     )
     results: list[dict[str, Any]] = []
     for row in planned["targets"]:

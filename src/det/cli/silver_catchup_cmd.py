@@ -396,8 +396,18 @@ def silver_catchup_cleanup_cmd(
         None,
         "--older-than",
         help=(
-            "Drop tables whose BQ created time is older than this duration "
-            "(e.g. 7d, 48h). Cannot combine with --manifest-id."
+            "Preview/list: relative age (e.g. 7d, 48h). Dry-run freezes a "
+            "--created-before cutoff for approve→apply. Cannot combine with "
+            "--manifest-id or --created-before."
+        ),
+    ),
+    created_before: str | None = typer.Option(
+        None,
+        "--created-before",
+        help=(
+            "Immutable UTC ISO cutoff from dry-run (drop tables with "
+            "created <= this). Required for approved --apply retention; "
+            "cannot combine with --older-than or --manifest-id."
         ),
     ),
     apply: bool = typer.Option(
@@ -414,9 +424,13 @@ def silver_catchup_cleanup_cmd(
     """List or drop BigQuery catch-up external tables (_det_catchup_runs_<scm_…>).
 
     Heal does not auto-drop these tables. After verify, clean up by manifest id
-    or retention (--older-than). DuckDB heals never create these tables.
+    or retention (--older-than dry-run → --created-before apply). DuckDB heals
+    never create these tables.
     """
-    from det.runtime.approval import silver_catchup_cleanup_write_argv
+    from det.runtime.approval import (
+        require_approvals_enabled,
+        silver_catchup_cleanup_write_argv,
+    )
     from det.runtime.silver_catchup import (
         apply_bq_catchup_cleanup,
         list_bq_catchup_external_tables,
@@ -426,6 +440,7 @@ def silver_catchup_cleanup_cmd(
 
     mid = str(manifest_id).strip() if manifest_id else ""
     older = str(older_than).strip() if older_than else ""
+    before = str(created_before).strip() if created_before else ""
     if list_tables and apply:
         raise typer.BadParameter(
             "--list cannot combine with --apply",
@@ -436,15 +451,16 @@ def silver_catchup_cleanup_cmd(
             "--list cannot combine with --manifest-id",
             param_hint="--list/--manifest-id",
         )
-    if not list_tables and not mid and not older:
+    if not list_tables and not mid and not older and not before:
         raise typer.BadParameter(
-            "require --list, --manifest-id, or --older-than",
-            param_hint="--list/--manifest-id/--older-than",
+            "require --list, --manifest-id, --older-than, or --created-before",
+            param_hint="--list/--manifest-id/--older-than/--created-before",
         )
     try:
         validate_bq_catchup_cleanup_scope(
             manifest_id=mid or None,
             older_than=older or None,
+            created_before=before or None,
             list_mode=list_tables,
         )
     except ValueError as exc:
@@ -452,7 +468,10 @@ def silver_catchup_cleanup_cmd(
 
     if list_tables:
         try:
-            rows = list_bq_catchup_external_tables(older_than=older or None)
+            rows = list_bq_catchup_external_tables(
+                older_than=older or None,
+                created_before=before or None,
+            )
         except (ValueError, RuntimeError) as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from exc
@@ -460,6 +479,7 @@ def silver_catchup_cleanup_cmd(
             "tables": rows,
             "table_count": len(rows),
             "older_than": older or None,
+            "created_before": before or None,
         }
         if as_json:
             typer.echo(json.dumps(payload, indent=2, default=str))
@@ -467,6 +487,7 @@ def silver_catchup_cleanup_cmd(
             typer.echo(
                 f"OK silver-catchup-cleanup list count={len(rows)}"
                 + (f" older_than={older}" if older else "")
+                + (f" created_before={before}" if before else "")
             )
             for row in rows:
                 created = row.get("created") or "?"
@@ -476,10 +497,20 @@ def silver_catchup_cleanup_cmd(
     claimed = False
     root = _project_root(None)
     if apply:
-        gate_argv = silver_catchup_cleanup_write_argv(
-            manifest_id=mid or None,
-            older_than=older or None,
-        )
+        need_bound = bool(approval) or require_approval or require_approvals_enabled()
+        if need_bound and older and not before and not mid:
+            raise typer.BadParameter(
+                "approved --apply retention requires --created-before from "
+                "dry-run (relative --older-than would drift)",
+                param_hint="--created-before",
+            )
+        if mid:
+            gate_argv = silver_catchup_cleanup_write_argv(manifest_id=mid)
+        elif before:
+            gate_argv = silver_catchup_cleanup_write_argv(created_before=before)
+        else:
+            # Ungated local apply with relative --older-than (accepts drift).
+            gate_argv = ["silver-catchup-cleanup", "--apply"]
         claimed = _gate_approval(
             root,
             "silver-catchup-cleanup",
@@ -492,7 +523,8 @@ def silver_catchup_cleanup_cmd(
             try:
                 result = apply_bq_catchup_cleanup(
                     manifest_id=mid or None,
-                    older_than=older or None,
+                    older_than=older or None if not before else None,
+                    created_before=before or None,
                 )
             except (ValueError, RuntimeError) as exc:
                 typer.echo(str(exc), err=True)
@@ -515,6 +547,7 @@ def silver_catchup_cleanup_cmd(
         planned = plan_bq_catchup_cleanup(
             manifest_id=mid or None,
             older_than=older or None,
+            created_before=before or None,
         )
     except (ValueError, RuntimeError) as exc:
         typer.echo(str(exc), err=True)
@@ -525,7 +558,12 @@ def silver_catchup_cleanup_cmd(
         typer.echo(
             f"DRY-RUN silver-catchup-cleanup targets={planned.get('target_count', 0)} "
             f"mode={planned.get('mode')}"
-            + (f" older_than={older}" if older else "")
+            + (
+                f" created_before={planned.get('created_before')}"
+                if planned.get("created_before")
+                else ""
+            )
+            + (f" older_than={planned.get('older_than')}" if planned.get("older_than") else "")
             + (f" manifest_id={mid}" if mid else "")
         )
         for row in planned.get("targets") or []:

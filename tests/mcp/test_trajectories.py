@@ -86,7 +86,13 @@ def test_writing_argv_classifier():
     )
     assert not is_writing_cli(["det", "silver-catchup-diff", "-p", "x"])
     assert is_writing_cli(
-        ["det", "silver-catchup-cleanup", "--apply", "--older-than", "7d"]
+        [
+            "det",
+            "silver-catchup-cleanup",
+            "--apply",
+            "--created-before",
+            "2026-08-28T12:00:00+00:00",
+        ]
     )
     assert not is_writing_cli(
         ["det", "silver-catchup-cleanup", "--older-than", "7d"]

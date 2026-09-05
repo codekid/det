@@ -874,23 +874,29 @@ def silver_catchup_plan_write_argv(
 def silver_catchup_cleanup_write_argv(
     *,
     manifest_id: str | None = None,
-    older_than: str | None = None,
+    created_before: str | None = None,
 ) -> list[str]:
-    """Bound argv for ``det silver-catchup-cleanup --apply``."""
+    """Bound argv for ``det silver-catchup-cleanup --apply``.
+
+    Retention apply binds ``--created-before`` (immutable UTC ISO from dry-run),
+    never a relative ``--older-than`` duration that would drift at execution.
+    """
     mid = (manifest_id or "").strip()
-    older = (older_than or "").strip()
-    if mid and older:
-        raise ValueError("--manifest-id cannot combine with --older-than")
-    if not mid and not older:
+    before = (created_before or "").strip()
+    if mid and before:
+        raise ValueError("--manifest-id cannot combine with --created-before")
+    if not mid and not before:
         raise ValueError(
             "silver-catchup-cleanup --apply approval requires "
-            "exactly one of --manifest-id or --older-than"
+            "exactly one of --manifest-id or --created-before"
         )
     argv = ["silver-catchup-cleanup", "--apply"]
     if mid:
         argv.extend(["--manifest-id", mid])
     else:
-        argv.extend(["--older-than", older])
+        from det.runtime.meta import identity_iso
+
+        argv.extend(["--created-before", identity_iso(before)])
     return argv
 
 

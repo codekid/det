@@ -76,9 +76,10 @@ Mode A can miss historical holes with **no** recent bronze extract. Mode A
    - MCP `silver_catchup_cleanup_dry_run` (`manifest_id` **or** `older_than`) →
      `det approve` → later
      `det silver-catchup-cleanup --apply --manifest-id <scm_…> --approval <id>`
-     or `--older-than 7d --apply --approval <id>`
+     or `--created-before <iso> --apply --approval <id>` (dry-run freezes the
+     cutoff from `--older-than`; relative duration is not re-evaluated at apply)
    Age uses BQ table `created`. Tables without `created` are skipped under
-   `--older-than`. DuckDB heals never create these tables.
+   retention filters. DuckDB heals never create these tables.
 
 Do **not** default to `--full-refresh` for large sources.
 
