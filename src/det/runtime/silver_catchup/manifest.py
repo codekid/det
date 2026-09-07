@@ -13,10 +13,10 @@ GCS; not full-refresh).
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from det.errors import DetConflictError
 from det.logging import get_logger
@@ -45,14 +45,15 @@ from det.runtime.silver_catchup.paths import (
     catchup_runs_ref,
     resolve_ops_lake,
 )
+from det.runtime.silver_catchup.types import CatchupManifestPayload, CatchupRunRow
 
 logger = get_logger(__name__)
 
 
-def load_catchup_runs_from_jsonl(runs_path: LakeRef) -> list[dict[str, Any]]:
+def load_catchup_runs_from_jsonl(runs_path: LakeRef) -> list[CatchupRunRow]:
     """Parse sibling ``.runs.jsonl`` into run dicts (one JSON object per line)."""
     text = runs_path.read_text(encoding="utf-8")
-    rows: list[dict[str, Any]] = []
+    rows: list[CatchupRunRow] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
             continue
@@ -66,7 +67,7 @@ def load_catchup_runs_from_jsonl(runs_path: LakeRef) -> list[dict[str, Any]]:
             raise ValueError(
                 f"catch-up runs NDJSON line {line_no} must be an object: {runs_path}"
             )
-        rows.append(raw)
+        rows.append(cast(CatchupRunRow, raw))
     return rows
 
 
@@ -86,13 +87,13 @@ def assert_catchup_runs_sidecar_matches(
 
 
 def manifest_payload_from_catchup(
-    catchup_runs: Sequence[dict[str, Any]],
+    catchup_runs: Sequence[CatchupRunRow | Mapping[str, Any]],
     *,
     detected_at: str | None = None,
     manifest_id: str | None = None,
-) -> dict[str, Any]:
+) -> CatchupManifestPayload:
     stamp = detected_at or datetime.now(UTC).isoformat()
-    rows: list[dict[str, Any]] = []
+    rows: list[CatchupRunRow] = []
     for raw in catchup_runs:
         rows.append(
             {
@@ -115,7 +116,7 @@ def manifest_payload_from_catchup(
 
 
 def write_catchup_manifest(
-    payload: dict[str, Any],
+    payload: CatchupManifestPayload | Mapping[str, Any],
     *,
     project_root: Path,
     settings: DetSettings | None = None,
@@ -144,11 +145,16 @@ def write_catchup_manifest(
         raise DetConflictError(
             f"catch-up manifest already exists (immutable): {path}"
         )
-    body = dict(payload)
-    body["manifest_id"] = mid
-    body["content_digest"] = digest
+    runs = list(payload.get("runs") or [])
+    body: CatchupManifestPayload = {
+        "manifest_version": int(payload.get("manifest_version") or MANIFEST_VERSION),
+        "manifest_id": mid,
+        "content_digest": digest,
+        "updated_at": str(payload.get("updated_at") or ""),
+        "runs": cast(list[CatchupRunRow], runs),
+    }
     serialized = (json.dumps(body, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    runs_bytes = _runs_jsonl_bytes(body.get("runs") or [])
+    runs_bytes = _runs_jsonl_bytes(body["runs"])
     try:
         runs_path.create_exclusive(runs_bytes)
     except FileExistsError as exc:
@@ -164,7 +170,7 @@ def write_catchup_manifest(
         raise DetConflictError(
             f"catch-up manifest already exists (immutable): {path}"
         ) from exc
-    n_runs = len(body.get("runs") or [])
+    n_runs = len(body["runs"])
     logger.info(
         "silver catchup manifest written",
         path=str(path),
@@ -181,7 +187,7 @@ def read_catchup_manifest(
     project_root: Path,
     settings: DetSettings | None = None,
     lake_path: str | None = None,
-) -> dict[str, Any] | None:
+) -> CatchupManifestPayload | None:
     """Load one immutable catch-up manifest by id."""
     mid = validate_catchup_manifest_id(manifest_id)
     ops = resolve_ops_lake(
@@ -193,11 +199,11 @@ def read_catchup_manifest(
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"catch-up manifest must be a JSON object: {path}")
-    return raw
+    return cast(CatchupManifestPayload, raw)
 
 
 def assert_catchup_digest_matches(
-    payload: dict[str, Any],
+    payload: CatchupManifestPayload | Mapping[str, Any],
     *,
     expected_digest: str,
 ) -> None:
@@ -211,7 +217,10 @@ def assert_catchup_digest_matches(
             "Re-run silver_catchup_dry_run / --dry-run and re-approve."
         )
 
-def catchup_vars_from_manifest(payload: dict[str, Any]) -> dict[str, Any]:
+
+def catchup_vars_from_manifest(
+    payload: CatchupManifestPayload | Mapping[str, Any],
+) -> dict[str, Any]:
     """Tiny dbt ``--vars`` pointer: id only (heal set stays in the scm file)."""
     mid = validate_catchup_manifest_id(str(payload.get("manifest_id") or ""))
     return {
@@ -221,7 +230,7 @@ def catchup_vars_from_manifest(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def catchup_select_from_manifest(
-    payload: dict[str, Any],
+    payload: CatchupManifestPayload | Mapping[str, Any],
     *,
     project_root: Path,
 ) -> list[str]:

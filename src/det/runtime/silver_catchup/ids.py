@@ -16,13 +16,14 @@ import hashlib
 import json
 import re
 import secrets
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import timedelta
 from typing import Any
 
 from det.runtime.config import PipelineConfig
 from det.runtime.ids import dbt_model_slug, parse_canonical_id
 from det.runtime.meta import identity_iso
+from det.runtime.silver_catchup.types import CatchupRunRow
 
 MANIFEST_VERSION = 1
 MANIFEST_ID_PREFIX = "scm_"
@@ -102,11 +103,12 @@ def _coverage_key(
         return None
     return (start, end, ts)
 
-def _runs_jsonl_bytes(runs: Sequence[dict[str, Any]]) -> bytes:
+def _runs_jsonl_bytes(runs: Sequence[CatchupRunRow | Mapping[str, Any]]) -> bytes:
     """Serialize runs as NDJSON.
 
     All three coverage fields are UTC-normalized via ``_norm_ts`` so digest
     and sidecar match coverage membership (offset-equivalent instants collide).
+    Coverage keys only — ``detected_at`` is omitted from the sidecar.
     """
     lines: list[str] = []
     for raw in runs:
@@ -143,7 +145,7 @@ def validate_catchup_content_digest(digest: str) -> str:
     return text
 
 
-def catchup_content_digest(runs: Sequence[dict[str, Any]]) -> str:
+def catchup_content_digest(runs: Sequence[CatchupRunRow | Mapping[str, Any]]) -> str:
     """Digest over coverage keys only (stable across plan timestamps).
 
     All three coverage fields (``interval_start``, ``interval_end``,
