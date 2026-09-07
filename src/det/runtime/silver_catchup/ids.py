@@ -23,7 +23,7 @@ from typing import Any
 from det.runtime.config import PipelineConfig
 from det.runtime.ids import dbt_model_slug, parse_canonical_id
 from det.runtime.meta import identity_iso
-from det.runtime.silver_catchup.types import CatchupRunRow
+from det.runtime.silver_catchup.types import CatchupRunRow, CatchupSidecarRunRow
 
 MANIFEST_VERSION = 1
 MANIFEST_ID_PREFIX = "scm_"
@@ -103,7 +103,9 @@ def _coverage_key(
         return None
     return (start, end, ts)
 
-def _runs_jsonl_bytes(runs: Sequence[CatchupRunRow | Mapping[str, Any]]) -> bytes:
+def _runs_jsonl_bytes(
+    runs: Sequence[CatchupRunRow | CatchupSidecarRunRow | Mapping[str, Any]],
+) -> bytes:
     """Serialize runs as NDJSON.
 
     All three coverage fields are UTC-normalized via ``_norm_ts`` so digest
@@ -145,7 +147,9 @@ def validate_catchup_content_digest(digest: str) -> str:
     return text
 
 
-def catchup_content_digest(runs: Sequence[CatchupRunRow | Mapping[str, Any]]) -> str:
+def catchup_content_digest(
+    runs: Sequence[CatchupRunRow | CatchupSidecarRunRow | Mapping[str, Any]],
+) -> str:
     """Digest over coverage keys only (stable across plan timestamps).
 
     All three coverage fields (``interval_start``, ``interval_end``,

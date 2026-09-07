@@ -9,18 +9,23 @@ from __future__ import annotations
 from typing import Literal, NotRequired, TypedDict
 
 
-class CatchupRunRow(TypedDict):
-    """One heal candidate (coverage key + optional detection stamp).
-
-    Sidecar ``.runs.jsonl`` lines omit ``detected_at``; the scm manifest
-    ``runs`` array always includes it.
-    """
+class CatchupSidecarRunRow(TypedDict):
+    """Coverage keys only — what ``.runs.jsonl`` stores (no ``detected_at``)."""
 
     pipeline: str
     interval_start: str
     interval_end: str
     extract_run_datetime: str
-    detected_at: NotRequired[str]
+
+
+class CatchupRunRow(TypedDict):
+    """Manifest ``runs[]`` entry — coverage keys plus required detection stamp."""
+
+    pipeline: str
+    interval_start: str
+    interval_end: str
+    extract_run_datetime: str
+    detected_at: str
 
 
 class CatchupManifestPayload(TypedDict):

@@ -45,15 +45,19 @@ from det.runtime.silver_catchup.paths import (
     catchup_runs_ref,
     resolve_ops_lake,
 )
-from det.runtime.silver_catchup.types import CatchupManifestPayload, CatchupRunRow
+from det.runtime.silver_catchup.types import (
+    CatchupManifestPayload,
+    CatchupRunRow,
+    CatchupSidecarRunRow,
+)
 
 logger = get_logger(__name__)
 
 
-def load_catchup_runs_from_jsonl(runs_path: LakeRef) -> list[CatchupRunRow]:
-    """Parse sibling ``.runs.jsonl`` into run dicts (one JSON object per line)."""
+def load_catchup_runs_from_jsonl(runs_path: LakeRef) -> list[CatchupSidecarRunRow]:
+    """Parse sibling ``.runs.jsonl`` into coverage-key rows (no ``detected_at``)."""
     text = runs_path.read_text(encoding="utf-8")
-    rows: list[CatchupRunRow] = []
+    rows: list[CatchupSidecarRunRow] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
             continue
@@ -67,7 +71,7 @@ def load_catchup_runs_from_jsonl(runs_path: LakeRef) -> list[CatchupRunRow]:
             raise ValueError(
                 f"catch-up runs NDJSON line {line_no} must be an object: {runs_path}"
             )
-        rows.append(cast(CatchupRunRow, raw))
+        rows.append(cast(CatchupSidecarRunRow, raw))
     return rows
 
 
@@ -86,22 +90,35 @@ def assert_catchup_runs_sidecar_matches(
         )
 
 
+def _require_detected_at(value: object, *, where: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"catch-up {where} requires non-empty detected_at")
+    return text
+
+
 def manifest_payload_from_catchup(
-    catchup_runs: Sequence[CatchupRunRow | Mapping[str, Any]],
+    catchup_runs: Sequence[CatchupRunRow | CatchupSidecarRunRow | Mapping[str, Any]],
     *,
     detected_at: str | None = None,
     manifest_id: str | None = None,
 ) -> CatchupManifestPayload:
-    stamp = detected_at or datetime.now(UTC).isoformat()
+    stamp = _require_detected_at(
+        detected_at or datetime.now(UTC).isoformat(),
+        where="manifest",
+    )
     rows: list[CatchupRunRow] = []
-    for raw in catchup_runs:
+    for i, raw in enumerate(catchup_runs):
         rows.append(
             {
                 "pipeline": str(raw["pipeline"]),
                 "extract_run_datetime": _norm_ts(raw["extract_run_datetime"]),
                 "interval_start": _norm_ts(raw.get("interval_start")),
                 "interval_end": _norm_ts(raw.get("interval_end")),
-                "detected_at": str(raw.get("detected_at") or stamp),
+                "detected_at": _require_detected_at(
+                    raw.get("detected_at") or stamp,
+                    where=f"runs[{i}]",
+                ),
             }
         )
     mid = validate_catchup_manifest_id(manifest_id or new_catchup_manifest_id())
@@ -145,13 +162,28 @@ def write_catchup_manifest(
         raise DetConflictError(
             f"catch-up manifest already exists (immutable): {path}"
         )
-    runs = list(payload.get("runs") or [])
+    runs_raw = list(payload.get("runs") or [])
+    runs: list[CatchupRunRow] = []
+    for i, raw in enumerate(runs_raw):
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"catch-up manifest runs[{i}] must be an object")
+        runs.append(
+            {
+                "pipeline": str(raw.get("pipeline") or ""),
+                "interval_start": _norm_ts(raw.get("interval_start")),
+                "interval_end": _norm_ts(raw.get("interval_end")),
+                "extract_run_datetime": _norm_ts(raw.get("extract_run_datetime")),
+                "detected_at": _require_detected_at(
+                    raw.get("detected_at"), where=f"runs[{i}]"
+                ),
+            }
+        )
     body: CatchupManifestPayload = {
         "manifest_version": int(payload.get("manifest_version") or MANIFEST_VERSION),
         "manifest_id": mid,
         "content_digest": digest,
         "updated_at": str(payload.get("updated_at") or ""),
-        "runs": cast(list[CatchupRunRow], runs),
+        "runs": runs,
     }
     serialized = (json.dumps(body, indent=2, sort_keys=True) + "\n").encode("utf-8")
     runs_bytes = _runs_jsonl_bytes(body["runs"])

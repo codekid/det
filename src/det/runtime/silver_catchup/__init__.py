@@ -73,6 +73,7 @@ from det.runtime.silver_catchup.types import (
     CatchupCleanupTarget,
     CatchupManifestPayload,
     CatchupRunRow,
+    CatchupSidecarRunRow,
 )
 
 __all__ = [
@@ -84,6 +85,7 @@ __all__ = [
     "CatchupCleanupTarget",
     "CatchupManifestPayload",
     "CatchupRunRow",
+    "CatchupSidecarRunRow",
     "MANIFEST_ID_PREFIX",
     "MANIFEST_VERSION",
     "_bq_client",
