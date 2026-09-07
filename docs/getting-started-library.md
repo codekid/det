@@ -210,9 +210,11 @@ DET does not expire/compact Iceberg tables. Declare knobs under
 plans into **your** Airflow/Spark job:
 
 ```python
+from pathlib import Path
+
 from det import iter_iceberg_maintain_plans
 
-for plan in iter_iceberg_maintain_plans("."):
+for plan in iter_iceberg_maintain_plans(Path(".")):
     if not plan.actionable:
         continue  # hadoop / unset catalog
     # Your submit: SET TBLPROPERTIES from plan.table_properties;
