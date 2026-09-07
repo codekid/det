@@ -90,11 +90,82 @@ def assert_catchup_runs_sidecar_matches(
         )
 
 
-def _require_detected_at(value: object, *, where: str) -> str:
+def _require_nonempty(value: object, *, where: str, field: str) -> str:
     text = str(value or "").strip()
     if not text:
-        raise ValueError(f"catch-up {where} requires non-empty detected_at")
+        raise ValueError(f"catch-up {where} requires non-empty {field}")
     return text
+
+
+def _coerce_catchup_run_row(raw: object, *, where: str) -> CatchupRunRow:
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"catch-up {where} must be an object")
+    return {
+        "pipeline": _require_nonempty(
+            raw.get("pipeline"), where=where, field="pipeline"
+        ),
+        "interval_start": _require_nonempty(
+            _norm_ts(raw.get("interval_start")),
+            where=where,
+            field="interval_start",
+        ),
+        "interval_end": _require_nonempty(
+            _norm_ts(raw.get("interval_end")),
+            where=where,
+            field="interval_end",
+        ),
+        "extract_run_datetime": _require_nonempty(
+            _norm_ts(raw.get("extract_run_datetime")),
+            where=where,
+            field="extract_run_datetime",
+        ),
+        "detected_at": _require_nonempty(
+            raw.get("detected_at"), where=where, field="detected_at"
+        ),
+    }
+
+
+def _coerce_catchup_manifest_payload(
+    raw: Mapping[str, Any],
+    *,
+    source: str,
+) -> CatchupManifestPayload:
+    """Validate a persisted or inbound scm payload into ``CatchupManifestPayload``.
+
+    Legacy rule: omitted ``manifest_version`` is treated as
+    ``MANIFEST_VERSION`` (1). Any other version is rejected.
+    """
+    if "manifest_version" not in raw:
+        version = MANIFEST_VERSION
+    else:
+        try:
+            version = int(raw["manifest_version"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"catch-up {source} manifest_version must be an int, "
+                f"got {raw.get('manifest_version')!r}"
+            ) from exc
+    if version != MANIFEST_VERSION:
+        raise ValueError(
+            f"catch-up {source} unsupported manifest_version {version}; "
+            f"supported: {MANIFEST_VERSION}"
+        )
+    runs_raw = raw.get("runs")
+    if not isinstance(runs_raw, list):
+        raise ValueError(f"catch-up {source} runs must be a list")
+    runs = [
+        _coerce_catchup_run_row(row, where=f"runs[{i}]")
+        for i, row in enumerate(runs_raw)
+    ]
+    return {
+        "manifest_version": version,
+        "manifest_id": validate_catchup_manifest_id(str(raw.get("manifest_id") or "")),
+        "content_digest": validate_catchup_content_digest(
+            str(raw.get("content_digest") or "")
+        ),
+        "updated_at": str(raw.get("updated_at") or ""),
+        "runs": runs,
+    }
 
 
 def manifest_payload_from_catchup(
@@ -103,21 +174,32 @@ def manifest_payload_from_catchup(
     detected_at: str | None = None,
     manifest_id: str | None = None,
 ) -> CatchupManifestPayload:
-    stamp = _require_detected_at(
+    stamp = _require_nonempty(
         detected_at or datetime.now(UTC).isoformat(),
         where="manifest",
+        field="detected_at",
     )
     rows: list[CatchupRunRow] = []
     for i, raw in enumerate(catchup_runs):
+        where = f"runs[{i}]"
         rows.append(
             {
                 "pipeline": str(raw["pipeline"]),
                 "extract_run_datetime": _norm_ts(raw["extract_run_datetime"]),
-                "interval_start": _norm_ts(raw.get("interval_start")),
-                "interval_end": _norm_ts(raw.get("interval_end")),
-                "detected_at": _require_detected_at(
+                "interval_start": _require_nonempty(
+                    _norm_ts(raw.get("interval_start")),
+                    where=where,
+                    field="interval_start",
+                ),
+                "interval_end": _require_nonempty(
+                    _norm_ts(raw.get("interval_end")),
+                    where=where,
+                    field="interval_end",
+                ),
+                "detected_at": _require_nonempty(
                     raw.get("detected_at") or stamp,
-                    where=f"runs[{i}]",
+                    where=where,
+                    field="detected_at",
                 ),
             }
         )
@@ -163,21 +245,10 @@ def write_catchup_manifest(
             f"catch-up manifest already exists (immutable): {path}"
         )
     runs_raw = list(payload.get("runs") or [])
-    runs: list[CatchupRunRow] = []
-    for i, raw in enumerate(runs_raw):
-        if not isinstance(raw, Mapping):
-            raise ValueError(f"catch-up manifest runs[{i}] must be an object")
-        runs.append(
-            {
-                "pipeline": str(raw.get("pipeline") or ""),
-                "interval_start": _norm_ts(raw.get("interval_start")),
-                "interval_end": _norm_ts(raw.get("interval_end")),
-                "extract_run_datetime": _norm_ts(raw.get("extract_run_datetime")),
-                "detected_at": _require_detected_at(
-                    raw.get("detected_at"), where=f"runs[{i}]"
-                ),
-            }
-        )
+    runs = [
+        _coerce_catchup_run_row(raw, where=f"runs[{i}]")
+        for i, raw in enumerate(runs_raw)
+    ]
     body: CatchupManifestPayload = {
         "manifest_version": int(payload.get("manifest_version") or MANIFEST_VERSION),
         "manifest_id": mid,
@@ -231,7 +302,7 @@ def read_catchup_manifest(
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"catch-up manifest must be a JSON object: {path}")
-    return cast(CatchupManifestPayload, raw)
+    return _coerce_catchup_manifest_payload(raw, source=str(path))
 
 
 def assert_catchup_digest_matches(
