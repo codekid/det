@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import threading
 from typing import Any
 
 from det.runtime.lake.backends.base import _Backend
@@ -13,6 +14,18 @@ _MEMORY_DIRS: dict[str, set[str]] = {}
 # Parallel generation counters for memory:// CAS (store_id → key → version str).
 _MEMORY_VERSIONS: dict[str, dict[str, str]] = {}
 _MEMORY_GENS: dict[str, int] = {}
+# One lock per store_id so all backends sharing a memory:// store serialize CAS.
+_MEMORY_LOCKS: dict[str, threading.Lock] = {}
+_MEMORY_LOCKS_GUARD = threading.Lock()
+
+
+def _memory_store_lock(store_id: str) -> threading.Lock:
+    with _MEMORY_LOCKS_GUARD:
+        lock = _MEMORY_LOCKS.get(store_id)
+        if lock is None:
+            lock = threading.Lock()
+            _MEMORY_LOCKS[store_id] = lock
+        return lock
 
 
 class _MemoryBackend(_Backend):
@@ -158,12 +171,13 @@ class _MemoryBackend(_Backend):
         parent = self.parent(key)
         if parent:
             self.mkdir(parent, parents=True, exist_ok=True)
-        if key in self.store:
-            raise FileExistsError(key)
-        self.store[key] = data
-        version = self._bump()
-        self._versions[key] = version
-        return version
+        with _memory_store_lock(self._store_id):
+            if key in self.store:
+                raise FileExistsError(key)
+            self.store[key] = data
+            version = self._bump()
+            self._versions[key] = version
+            return version
 
     def object_version(self, key: str) -> str | None:
         key = key.strip("/")

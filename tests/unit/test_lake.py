@@ -150,6 +150,55 @@ def test_memory_create_exclusive_rejects_preexisting_same_bytes(tmp_path: Path):
         other.create_exclusive(body)
 
 
+def test_memory_create_exclusive_serializes_concurrent_creators(tmp_path: Path):
+    """Exactly one of two racing exclusive creates on the same key may win."""
+    import threading
+
+    # Repeat so a missing lock fails reliably rather than by chance.
+    for i in range(30):
+        clear_memory_lakes()
+        lake_a = open_lake("memory://excl-race", tmp_path)
+        lake_b = open_lake("memory://excl-race", tmp_path)
+        key = f"race-{i}.bin"
+        target_a = lake_a / key
+        target_b = lake_b / key
+        barrier = threading.Barrier(2)
+        results: list[object] = []
+        guard = threading.Lock()
+
+        def worker(
+            target: LakeRef,
+            payload: bytes,
+            *,
+            _barrier: threading.Barrier = barrier,
+            _guard: threading.Lock = guard,
+            _results: list[object] = results,
+        ) -> None:
+            _barrier.wait()
+            try:
+                version = target.create_exclusive(payload)
+                with _guard:
+                    _results.append(("ok", version, payload))
+            except FileExistsError as exc:
+                with _guard:
+                    _results.append(("exists", exc))
+
+        t1 = threading.Thread(target=worker, args=(target_a, b"one"))
+        t2 = threading.Thread(target=worker, args=(target_b, b"two"))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        wins = [r for r in results if isinstance(r, tuple) and r[0] == "ok"]
+        losses = [r for r in results if isinstance(r, tuple) and r[0] == "exists"]
+        assert len(results) == 2
+        assert len(wins) == 1, results
+        assert len(losses) == 1, results
+        assert target_a.read_bytes() == wins[0][2]
+        assert target_b.read_bytes() == wins[0][2]
+
+
 def test_memory_failed_extract_deletes_prefix(project_root: Path, tmp_path: Path):
     schema_src = project_root / "schemas/example_api/events/events.schema.yaml"
     schema_dst = tmp_path / "schemas/example_api/events/events.schema.yaml"

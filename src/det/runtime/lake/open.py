@@ -13,6 +13,7 @@ from det.runtime.lake.backends.local import _LocalBackend
 from det.runtime.lake.backends.memory import (
     _MEMORY_DIRS,
     _MEMORY_GENS,
+    _MEMORY_LOCKS,
     _MEMORY_STORES,
     _MEMORY_VERSIONS,
     _MemoryBackend,
@@ -90,6 +91,7 @@ def clear_memory_lakes() -> None:
     _MEMORY_DIRS.clear()
     _MEMORY_VERSIONS.clear()
     _MEMORY_GENS.clear()
+    _MEMORY_LOCKS.clear()
 
 
 def reset_lake_mode_warning_for_tests() -> None:
