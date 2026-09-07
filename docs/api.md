@@ -67,6 +67,7 @@ buckets (or prefixes) + re-extract; there is no layout migrator.
 | --- | --- |
 | `DetSettings` | Frozen embedder settings (`from_env`, lake, locks, secrets callable) |
 | `PipelineConfig`, `load_pipeline`, `load_pipeline_config` | Pipeline YAML model; `load_pipeline` accepts canonical id / path / config |
+| `IcebergMaintainPlan`, `iter_iceberg_maintain_plans` | Pure Iceberg maintain/reconcile plans for external Airflow/Spark runners |
 | `Interval`, `SourceRow`, `SourcePlugin` | Source protocol |
 | `mapper`, `merge_source_config`, `identity_mapper` | Config merge and migrate mappers |
 

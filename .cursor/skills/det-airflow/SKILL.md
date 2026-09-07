@@ -98,6 +98,26 @@ cd airflow && docker compose exec airflow-scheduler \
 
 DET interval is half-open `[start, end)`.
 
+## Iceberg maintain (reference DAG)
+
+`det_iceberg_maintain` (`dags/det_iceberg_maintain_dag.py`) calls SemVer
+`iter_iceberg_maintain_plans`, then **maps one submit task per actionable
+pipeline** (skipped/hadoop plans are not mapped). DET does **not** GC or
+compact; Spark/Athena against `rest`/`glue` does.
+
+| Env | Role |
+| --- | --- |
+| `DET_ICEBERG_MAINTAIN_SCHEDULE` | Airflow schedule (default `@weekly`) |
+| `DET_ICEBERG_MAINTAIN_SUBMIT` | `module:function(plan: dict)` — one plan per mapped TI |
+| `DET_ICEBERG_MAINTAIN_MAX_ACTIVE` | Max concurrent mapped submits (default `4`) |
+| `DET_ICEBERG_MAINTAIN_POOL` | Airflow pool name (default `default_pool`; use a dedicated `iceberg_maintain` pool in prod) |
+| `DET_ICEBERG_MAINTAIN_*` | Fleet maintain defaults (see `docs/iceberg-catalog.md`) |
+
+Without `DET_ICEBERG_MAINTAIN_SUBMIT`, only `build_plans` runs (logs, returns
+empty expand list). Partition shape changes stay on
+`det migrate --recreate-iceberg`. Embedders should prefer the plan API in
+**their** DAG; this file is a reference.
+
 ## Lake debugging
 
 Use MCP lake inspect (`diagnose_pipeline`, `diff_partitions`, `list_runs`, …) against

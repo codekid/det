@@ -182,6 +182,7 @@ class DetBackend:
             json_schema=json_schema,
             chunk_rows=chunk_rows,
             partition=config.destination.iceberg_partition,
+            table_properties=config.destination.iceberg_table_properties,
             run_identity=run_identity,
             on_chunk=on_chunk,
         )

@@ -146,6 +146,56 @@ metadata will diverge.
   `DET_REQUIRE_APPROVAL=1` (CLI/agent Path B; leave unset on the Airflow
   scheduler)
 
+## `destination.iceberg` (pipeline YAML)
+
+Closed block (`extra=forbid`); only valid when `destination.type: iceberg`.
+`ingestion.chunk_rows` stays under `ingestion` (all destinations).
+
+```yaml
+destination:
+  type: iceberg
+  partition: extract_run
+  iceberg:
+    table_properties:
+      write.target-file-size-bytes: "536870912"
+    maintain:
+      expire_older_than: 7d
+      expire: true
+      rewrite_data: false
+      rewrite_manifests: false
+      remove_orphans_older_than: 3d
+      z_order: []
+```
+
+| Owner | What |
+| --- | --- |
+| **DET** | Applies `table_properties` on **create_table** only. Does not mutate live props, expire snapshots, or compact. |
+| **External runner** (Airflow/Spark/Athena) | Reconcile `table_properties` on existing tables (`SET TBLPROPERTIES` — metadata only; new file-size targets apply to **future** writes). Expire / rewrite / remove orphans from `maintain` (+ fleet `DET_ICEBERG_MAINTAIN_*` defaults). |
+| **DET migrate** | Partition/schema shape changes → `det migrate --recreate-iceberg`. Not the maintain DAG. |
+
+`det prune` remains **logical** extract-run sibling retention. Snapshot GC is
+separate physical maintenance.
+
+Plan API (SemVer): `iter_iceberg_maintain_plans(project_root)` returns per-pipeline
+plans (`actionable=False` when catalog is unset/`hadoop`). Reference DAG
+[`dags/det_iceberg_maintain_dag.py`](../dags/det_iceberg_maintain_dag.py):
+`build_plans` → mapped `submit_one` (one plan each), capped by
+`DET_ICEBERG_MAINTAIN_MAX_ACTIVE` (default 4) and optional pool
+`DET_ICEBERG_MAINTAIN_POOL`. Submit hook is `module:function(plan: dict)`.
+Embedders wire the plan API into **their** runner — see
+[getting-started-library.md](getting-started-library.md).
+
+Fleet env defaults (when pipeline omits `maintain`, or for keys omitted from a
+partial `maintain` block):
+
+| Env | Default role |
+| --- | --- |
+| `DET_ICEBERG_MAINTAIN_EXPIRE_OLDER_THAN` | e.g. `7d` |
+| `DET_ICEBERG_MAINTAIN_EXPIRE` | `true` / `false` |
+| `DET_ICEBERG_MAINTAIN_REWRITE_DATA` | `true` / `false` |
+| `DET_ICEBERG_MAINTAIN_REWRITE_MANIFESTS` | `true` / `false` |
+| `DET_ICEBERG_MAINTAIN_REMOVE_ORPHANS_OLDER_THAN` | e.g. `3d` |
+
 ## Related
 
 - [lake-layout.md](lake-layout.md) — hive paths; catalog swap does not bump layout
