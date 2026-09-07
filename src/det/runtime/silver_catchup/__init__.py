@@ -66,10 +66,26 @@ from det.runtime.silver_catchup.paths import (
     manifest_relpath_for_root,
     resolve_ops_lake,
 )
+from det.runtime.silver_catchup.types import (
+    CatchupCleanupApplyResult,
+    CatchupCleanupDropResult,
+    CatchupCleanupPlan,
+    CatchupCleanupTarget,
+    CatchupManifestPayload,
+    CatchupRunRow,
+    CatchupSidecarRunRow,
+)
 
 __all__ = [
     "CATCHUP_BQ_EXTERNAL_TABLE_PREFIX",
     "CATCHUP_DIR",
+    "CatchupCleanupApplyResult",
+    "CatchupCleanupDropResult",
+    "CatchupCleanupPlan",
+    "CatchupCleanupTarget",
+    "CatchupManifestPayload",
+    "CatchupRunRow",
+    "CatchupSidecarRunRow",
     "MANIFEST_ID_PREFIX",
     "MANIFEST_VERSION",
     "_bq_client",

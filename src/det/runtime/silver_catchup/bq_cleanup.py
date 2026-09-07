@@ -13,7 +13,6 @@ GCS; not full-refresh).
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
 
 from det.logging import get_logger
 from det.runtime.meta import identity_iso
@@ -27,6 +26,12 @@ from det.runtime.silver_catchup.bq_heal import (
 from det.runtime.silver_catchup.ids import (
     parse_duration,
     validate_catchup_manifest_id,
+)
+from det.runtime.silver_catchup.types import (
+    CatchupCleanupApplyResult,
+    CatchupCleanupDropResult,
+    CatchupCleanupPlan,
+    CatchupCleanupTarget,
 )
 
 logger = get_logger(__name__)
@@ -95,7 +100,7 @@ def list_bq_catchup_external_tables(
     older_than: str | None = None,
     created_before: str | None = None,
     now: datetime | None = None,
-) -> list[dict[str, Any]]:
+) -> list[CatchupCleanupTarget]:
     """List ``_det_catchup_runs_*`` tables; optional age filter on BQ ``created``.
 
     Prefer ``created_before`` (immutable ISO UTC) for approve→apply. Relative
@@ -110,7 +115,7 @@ def list_bq_catchup_external_tables(
     from det.runtime import silver_catchup as _sc
 
     client, project, dataset, _location = _sc._bq_client()
-    rows: list[dict[str, Any]] = []
+    rows: list[CatchupCleanupTarget] = []
     for item in client.list_tables(f"{project}.{dataset}"):
         table_name = str(getattr(item, "table_id", "") or "")
         if not table_name.startswith(CATCHUP_BQ_EXTERNAL_TABLE_PREFIX):
@@ -143,7 +148,8 @@ def list_bq_catchup_external_tables(
     rows.sort(key=lambda r: (r.get("created") or "", r["table_id"]))
     return rows
 
-def drop_bq_catchup_external_table(*, manifest_id: str) -> dict[str, Any]:
+
+def drop_bq_catchup_external_table(*, manifest_id: str) -> CatchupCleanupDropResult:
     """Delete one manifest-scoped catch-up external table (``not_found_ok``)."""
     mid = validate_catchup_manifest_id(manifest_id)
     from det.runtime import silver_catchup as _sc
@@ -172,13 +178,14 @@ def drop_bq_catchup_external_table(*, manifest_id: str) -> dict[str, Any]:
         "dropped": existed,
     }
 
+
 def plan_bq_catchup_cleanup(
     *,
     manifest_id: str | None = None,
     older_than: str | None = None,
     created_before: str | None = None,
     now: datetime | None = None,
-) -> dict[str, Any]:
+) -> CatchupCleanupPlan:
     """Dry-run payload: which ``_det_catchup_runs_*`` tables would be dropped.
 
     Retention plans always emit ``created_before`` (UTC ISO) so approve→apply
@@ -194,7 +201,7 @@ def plan_bq_catchup_cleanup(
     from det.runtime import silver_catchup as _sc
 
     project, dataset, _location = _sc._bq_project_dataset_location()
-    targets: list[dict[str, Any]] = []
+    targets: list[CatchupCleanupTarget] = []
     cutoff_iso: str | None = None
     older_raw: str | None = None
     if mid_raw:
@@ -246,13 +253,14 @@ def plan_bq_catchup_cleanup(
         "target_count": len(targets),
     }
 
+
 def apply_bq_catchup_cleanup(
     *,
     manifest_id: str | None = None,
     older_than: str | None = None,
     created_before: str | None = None,
     now: datetime | None = None,
-) -> dict[str, Any]:
+) -> CatchupCleanupApplyResult:
     """Drop planned catch-up external tables (single id or age-filtered set).
 
     Retention apply requires immutable ``created_before`` (from plan/dry-run).
@@ -276,7 +284,7 @@ def apply_bq_catchup_cleanup(
         created_before=before_raw or None,
         now=now,
     )
-    results: list[dict[str, Any]] = []
+    results: list[CatchupCleanupDropResult] = []
     for row in planned["targets"]:
         mid = row.get("manifest_id")
         if not mid:

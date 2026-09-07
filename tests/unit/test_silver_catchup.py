@@ -485,6 +485,146 @@ def test_manifest_roundtrip_and_vars(catchup_root: Path, monkeypatch):
     assert still == loaded
 
 
+def test_manifest_rejects_incomplete_run_rows(catchup_root: Path, monkeypatch):
+    with pytest.raises(ValueError, match="interval_start"):
+        manifest_payload_from_catchup(
+            [
+                {
+                    "pipeline": "example_api.events",
+                    "extract_run_datetime": "2026-09-02T12:08:00+00:00",
+                    "interval_start": None,
+                    "interval_end": "2026-09-02T00:00:00+00:00",
+                }
+            ]
+        )
+
+    lake = catchup_root / "data" / "lake"
+    monkeypatch.setenv("DET_LAKE_PATH", str(lake))
+    settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
+        lake_override=str(lake)
+    )
+    good = manifest_payload_from_catchup(
+        [
+            {
+                "pipeline": "example_api.events",
+                "extract_run_datetime": "2026-09-02T12:08:00+00:00",
+                "interval_start": "2026-09-01T00:00:00+00:00",
+                "interval_end": "2026-09-02T00:00:00+00:00",
+            }
+        ]
+    )
+    from det.runtime.silver_catchup import catchup_content_digest
+
+    bad = {**good, "runs": [{**good["runs"][0], "pipeline": ""}]}
+    bad["content_digest"] = catchup_content_digest(bad["runs"])
+    with use_settings(settings):
+        with pytest.raises(ValueError, match="pipeline"):
+            write_catchup_manifest(
+                bad, project_root=catchup_root, settings=settings
+            )
+        unsupported = {**good, "manifest_version": 99}
+        with pytest.raises(ValueError, match="unsupported manifest_version"):
+            write_catchup_manifest(
+                unsupported, project_root=catchup_root, settings=settings
+            )
+
+
+@pytest.mark.parametrize("bad_version", [True, "1", 1.5])
+def test_manifest_rejects_coerced_manifest_version(
+    catchup_root: Path, monkeypatch, bad_version
+):
+    lake = catchup_root / "data" / "lake"
+    monkeypatch.setenv("DET_LAKE_PATH", str(lake))
+    settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
+        lake_override=str(lake)
+    )
+    good = manifest_payload_from_catchup(
+        [
+            {
+                "pipeline": "example_api.events",
+                "extract_run_datetime": "2026-09-02T12:08:00+00:00",
+                "interval_start": "2026-09-01T00:00:00+00:00",
+                "interval_end": "2026-09-02T00:00:00+00:00",
+            }
+        ]
+    )
+    with use_settings(settings):
+        with pytest.raises(ValueError, match="manifest_version must be an int"):
+            write_catchup_manifest(
+                {**good, "manifest_version": bad_version},
+                project_root=catchup_root,
+                settings=settings,
+            )
+
+
+def test_read_catchup_manifest_validates_payload(catchup_root: Path, monkeypatch):
+    from det.runtime.silver_catchup import MANIFEST_VERSION, catchup_content_digest
+
+    lake = catchup_root / "data" / "lake"
+    monkeypatch.setenv("DET_LAKE_PATH", str(lake))
+    settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
+        lake_override=str(lake)
+    )
+    mid = "scm_aabbccddeeff0011"
+    run = {
+        "pipeline": "example_api.events",
+        "extract_run_datetime": "2026-09-02T12:08:00+00:00",
+        "interval_start": "2026-09-01T00:00:00+00:00",
+        "interval_end": "2026-09-02T00:00:00+00:00",
+        "detected_at": "2026-09-02T13:00:00+00:00",
+    }
+    digest = catchup_content_digest([run])
+    ops = lake / "ops" / "silver_catchup"
+    ops.mkdir(parents=True, exist_ok=True)
+
+    legacy = {
+        "manifest_id": mid,
+        "content_digest": digest,
+        "updated_at": run["detected_at"],
+        "runs": [run],
+    }
+    (ops / f"{mid}.json").write_text(
+        json.dumps(legacy, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    with use_settings(settings):
+        loaded = read_catchup_manifest(
+            manifest_id=mid, project_root=catchup_root, settings=settings
+        )
+    assert loaded is not None
+    assert loaded["manifest_version"] == MANIFEST_VERSION
+    assert loaded["runs"][0]["detected_at"] == run["detected_at"]
+
+    bad_mid = "scm_bbccddeeff001122"
+    broken = {
+        "manifest_version": MANIFEST_VERSION,
+        "manifest_id": bad_mid,
+        "content_digest": digest,
+        "updated_at": run["detected_at"],
+        "runs": [{k: v for k, v in run.items() if k != "detected_at"}],
+    }
+    (ops / f"{bad_mid}.json").write_text(
+        json.dumps(broken, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    with use_settings(settings):
+        with pytest.raises(ValueError, match="detected_at"):
+            read_catchup_manifest(
+                manifest_id=bad_mid, project_root=catchup_root, settings=settings
+            )
+
+    unsupported_mid = "scm_ccddeeff00112233"
+    unsupported = {**legacy, "manifest_id": unsupported_mid, "manifest_version": 99}
+    (ops / f"{unsupported_mid}.json").write_text(
+        json.dumps(unsupported, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    with use_settings(settings):
+        with pytest.raises(ValueError, match="unsupported manifest_version"):
+            read_catchup_manifest(
+                manifest_id=unsupported_mid,
+                project_root=catchup_root,
+                settings=settings,
+            )
+
+
 def test_write_catchup_manifest_sidecar_failure_leaves_no_commit(
     catchup_root: Path, monkeypatch
 ):
