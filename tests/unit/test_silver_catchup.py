@@ -1146,6 +1146,12 @@ def test_plan_and_apply_bq_catchup_cleanup_older_than(
     assert applied["created_before"] == planned["created_before"]
     assert client.deleted == [table_id]
 
+    with pytest.raises(ValueError, match="rejects --older-than"):
+        sc.apply_bq_catchup_cleanup(older_than="7d", now=later)
+    with pytest.raises(ValueError, match="requires --manifest-id or --created-before"):
+        sc.apply_bq_catchup_cleanup()
+
+
 def test_plan_bq_catchup_cleanup_single_missing(monkeypatch: pytest.MonkeyPatch):
     from det.runtime import silver_catchup as sc
 

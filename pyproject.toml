@@ -1,6 +1,6 @@
 [project]
 name = "det-elt"
-version = "0.7.0"
+version = "0.7.1"
 description = "DET — Data Extract Tool: config-driven extraction runtime with pluggable ingestion"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -54,10 +54,13 @@ postgres = [
     "psycopg[binary]>=3.1",
 ]
 s3 = [
-    "s3fs>=2024.0.0",
+    # MinIO CAS soaks use this s3fs generation. botocore>=1.36.0 matches s3fs
+    # exclusive-write guidance (botocore > 1.35.20), not a PutObject API shape claim.
+    "s3fs>=2025.12.0",
+    "botocore>=1.36.0",
 ]
 gcs = [
-    "gcsfs>=2024.0.0",
+    "gcsfs>=2025.12.0",
 ]
 iceberg = [
     "pyiceberg>=0.8",
@@ -183,11 +186,11 @@ include = [
     "src/det/runtime/secrets.py",
     "src/det/runtime/sql_types.py",
     "src/det/runtime/approval.py",
-    "src/det/runtime/lake.py",
+    "src/det/runtime/lake",
     "src/det/runtime/manifest.py",
     "src/det/runtime/lease",
     "src/det/runtime/registry.py",
-    "src/det/runtime/config.py",
+    "src/det/runtime/config",
     "src/det/runtime/pipelines.py",
     "src/det/runtime/load_rows.py",
     "src/det/runtime/settings.py",

@@ -395,4 +395,37 @@ def test_biglake_register_dry_run_returns_iam_hint(
     assert payload["iam_hint"]["bucket"] == "b"
     assert payload["approval_plan"]["command"] == "biglake-register"
     assert "--apply" in payload["approval_plan"]["argv"]
+    assert "--skip-ops" not in payload["approval_plan"]["argv"]
     assert "no BigLake tables created" in payload["note"]
+
+
+def test_biglake_register_dry_run_pipeline_implies_skip_ops_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Pipeline-scoped plans never include ops; approval argv must match."""
+    _write_pipeline(tmp_path)
+    plan = BigLakeRegisterPlan(
+        project="proj",
+        location="US",
+        connection="det-lake-conn",
+        lake_uri="gs://b/lake",
+        tables=(),
+    )
+    monkeypatch.setattr(
+        "det.runtime.biglake_register.build_biglake_register_plan",
+        lambda **kwargs: plan,
+    )
+    monkeypatch.setattr(
+        "det.runtime.biglake_register._lookup_connection_sa",
+        lambda *a, **k: None,
+    )
+
+    payload = biglake_register_dry_run(
+        pipeline="example_api.events",
+        lake_path="gs://b/lake",
+        root=tmp_path,
+    )
+    argv = payload["approval_plan"]["argv"]
+    assert "--pipeline" in argv
+    assert "example_api.events" in argv
+    assert "--skip-ops" in argv

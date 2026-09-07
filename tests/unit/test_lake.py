@@ -135,6 +135,70 @@ def test_memory_manifest_commit_and_visibility(tmp_path: Path):
     assert not tmp.exists()
 
 
+def test_memory_create_exclusive_rejects_preexisting_same_bytes(tmp_path: Path):
+    """Pre-existing keys must raise even when payload identity matches."""
+    lake = open_lake("memory://excl", tmp_path)
+    target = lake / "obj.bin"
+    empty = b""
+    target.create_exclusive(empty)
+    with pytest.raises(FileExistsError):
+        target.create_exclusive(empty)
+    body = b"same-object"
+    other = lake / "obj2.bin"
+    other.create_exclusive(body)
+    with pytest.raises(FileExistsError):
+        other.create_exclusive(body)
+
+
+def test_memory_create_exclusive_serializes_concurrent_creators(tmp_path: Path):
+    """Exactly one of two racing exclusive creates on the same key may win."""
+    import threading
+
+    # Repeat so a missing lock fails reliably rather than by chance.
+    for i in range(30):
+        clear_memory_lakes()
+        lake_a = open_lake("memory://excl-race", tmp_path)
+        lake_b = open_lake("memory://excl-race", tmp_path)
+        key = f"race-{i}.bin"
+        target_a = lake_a / key
+        target_b = lake_b / key
+        barrier = threading.Barrier(2)
+        results: list[object] = []
+        guard = threading.Lock()
+
+        def worker(
+            target: LakeRef,
+            payload: bytes,
+            *,
+            _barrier: threading.Barrier = barrier,
+            _guard: threading.Lock = guard,
+            _results: list[object] = results,
+        ) -> None:
+            _barrier.wait()
+            try:
+                version = target.create_exclusive(payload)
+                with _guard:
+                    _results.append(("ok", version, payload))
+            except FileExistsError as exc:
+                with _guard:
+                    _results.append(("exists", exc))
+
+        t1 = threading.Thread(target=worker, args=(target_a, b"one"))
+        t2 = threading.Thread(target=worker, args=(target_b, b"two"))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        wins = [r for r in results if isinstance(r, tuple) and r[0] == "ok"]
+        losses = [r for r in results if isinstance(r, tuple) and r[0] == "exists"]
+        assert len(results) == 2
+        assert len(wins) == 1, results
+        assert len(losses) == 1, results
+        assert target_a.read_bytes() == wins[0][2]
+        assert target_b.read_bytes() == wins[0][2]
+
+
 def test_memory_failed_extract_deletes_prefix(project_root: Path, tmp_path: Path):
     schema_src = project_root / "schemas/example_api/events/events.schema.yaml"
     schema_dst = tmp_path / "schemas/example_api/events/events.schema.yaml"
@@ -187,6 +251,51 @@ def test_memory_listing_stays_under_dataset(tmp_path: Path):
     # Listing the dataset prefix must not surface sibling datasets.
     walked = [p.name for p in dataset.rglob("*")]
     assert walked == ["keep.txt"]
+
+
+def test_glob_embedded_doublestar_matches_zero_or_more_dirs(tmp_path: Path):
+    """``a/**/b.txt`` matches both ``a/b.txt`` and ``a/x/b.txt`` (pathlib-style)."""
+    lake = open_lake("memory://doublestar", tmp_path)
+    (lake / "a" / "b.txt").write_text("direct", encoding="utf-8")
+    (lake / "a" / "x" / "b.txt").write_text("nested", encoding="utf-8")
+    (lake / "a" / "x" / "y" / "b.txt").write_text("deep", encoding="utf-8")
+    (lake / "other" / "b.txt").write_text("skip", encoding="utf-8")
+
+    matched = sorted(p.as_posix() for p in lake.glob("a/**/b.txt"))
+    assert any(p.endswith("a/b.txt") for p in matched)
+    assert any(p.endswith("a/x/b.txt") for p in matched)
+    assert any(p.endswith("a/x/y/b.txt") for p in matched)
+    assert not any(p.endswith("other/b.txt") for p in matched)
+
+    # Same coverage via rglob / matcher helpers.
+    from det.runtime.lake import _match_rglob
+
+    assert _match_rglob("a/**/b.txt", "a/b.txt", "b.txt")
+    assert _match_rglob("a/**/b.txt", "a/x/b.txt", "b.txt")
+    assert not _match_rglob("a/**/b.txt", "other/b.txt", "b.txt")
+
+
+def test_glob_doublestar_with_character_class(tmp_path: Path):
+    """``**/[ab].txt`` matches a/b names at any depth; ``[!a].txt`` excludes ``a``."""
+    from det.runtime.lake import _match_rglob
+
+    lake = open_lake("memory://charclass", tmp_path)
+    (lake / "a.txt").write_text("a", encoding="utf-8")
+    (lake / "b.txt").write_text("b", encoding="utf-8")
+    (lake / "c.txt").write_text("c", encoding="utf-8")
+    (lake / "nested" / "a.txt").write_text("na", encoding="utf-8")
+    (lake / "nested" / "x" / "b.txt").write_text("nb", encoding="utf-8")
+
+    matched = sorted(p.name for p in lake.glob("**/[ab].txt"))
+    assert matched == ["a.txt", "a.txt", "b.txt", "b.txt"]
+    assert _match_rglob("**/[ab].txt", "a.txt", "a.txt")
+    assert _match_rglob("**/[ab].txt", "nested/x/b.txt", "b.txt")
+    assert not _match_rglob("**/[ab].txt", "c.txt", "c.txt")
+
+    assert _match_rglob("**/[!a].txt", "b.txt", "b.txt")
+    assert _match_rglob("**/[!a].txt", "nested/c.txt", "c.txt")
+    assert not _match_rglob("**/[!a].txt", "a.txt", "a.txt")
+    assert not _match_rglob("**/[!a].txt", "nested/a.txt", "a.txt")
 
 
 def test_http_get_file_memory_upload_and_retry_deletes(
@@ -428,11 +537,17 @@ def test_local_iter_excludes_cas_sidecars(tmp_path: Path):
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / "x.json"
     target.create_exclusive(b"body")
+    # Orphaned atomic-write temps must not appear as lake objects.
+    (Path(folder._key) / ".x.json.tmp.12345.deadbeef").write_bytes(b"tmp")
+    (Path(folder._key) / "..x.json.detgen.tmp.12345.abadcafe").write_bytes(b"tmp")
+    (Path(folder._key) / "keep.tmp.not_a_sidecar").write_bytes(b"real")
     names = {Path(p).name for p in folder.iterdir()}
     assert "x.json" in names
+    assert "keep.tmp.not_a_sidecar" in names
     assert not any(n.endswith(".detcas") or n.endswith(".detgen") for n in names)
+    assert not any(".tmp." in n and n.startswith(".") for n in names)
     files = {p.name for p in folder.rglob("*") if p.is_file()}
-    assert files == {"x.json"}
+    assert files == {"x.json", "keep.tmp.not_a_sidecar"}
 
 
 def test_local_cas_serializes_concurrent_replace(tmp_path: Path):

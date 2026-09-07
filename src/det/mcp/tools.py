@@ -1,4 +1,8 @@
-"""Read-only inspect and dry-run tool implementations for DET MCP."""
+"""Read-only inspect and dry-run tool implementations for DET MCP.
+
+Dry-run and ops tools live in :mod:`det.mcp.dry_run` and :mod:`det.mcp.ops_tools`;
+this module is the stable import façade used by the MCP server and tests.
+"""
 
 from __future__ import annotations
 
@@ -6,97 +10,66 @@ import json
 from pathlib import Path
 from typing import Any
 
+from det.mcp import _helpers as h
 from det.mcp import airflow_inspect as af
-from det.mcp import generate as gen
-from det.mcp import inspect as insp
-from det.mcp.context import PathSandboxError, project_root, resolve_under_root
-from det.mcp.reload import refresh_det_runtime
-from det.runtime.lake import LakeRef
-from det.runtime.lake import relpath as lake_relpath
+from det.mcp.context import PathSandboxError, resolve_under_root
+from det.mcp.dry_run import (
+    biglake_register_dry_run,
+    dbt_dry_run,
+    diff_bronze_silver,
+    iceberg_register_dry_run,
+    init_pipeline_dry_run,
+    migrate_dry_run,
+    prune_dry_run,
+    scaffold_dbt_dry_run,
+    scaffold_ops_dry_run,
+    silver_catchup_cleanup_dry_run,
+    silver_catchup_dry_run,
+)
+from det.mcp.ops_tools import (
+    check,
+    cube_load,
+    cube_meta,
+    describe_approval,
+    describe_model,
+    list_approvals,
+    list_models,
+    list_runs,
+    query_analytics,
+    summarize_runs,
+)
 
-DEFAULT_LIST_LIMIT = insp.DEFAULT_LIST_LIMIT
-DEFAULT_SAMPLE_LIMIT = insp.DEFAULT_SAMPLE_LIMIT
-MAX_SAMPLE_LIMIT = insp.MAX_SAMPLE_LIMIT
-
-
-def _prepare_tool() -> None:
-    """Evict stale det.* modules so long-lived MCP sees disk edits."""
-    import importlib
-
-    import det.mcp.generate as generate_mod
-    import det.mcp.inspect as inspect_mod
-
-    refresh_det_runtime()
-    # Re-bind inspect/generate so their imports of registry/plugins/runtime are fresh.
-    global insp, gen
-    insp = importlib.reload(inspect_mod)
-    gen = importlib.reload(generate_mod)
-
-
-def _root(root: Path | None = None) -> Path:
-    return root.resolve() if root is not None else project_root()
-
-
-def _approval_plan(command: str, argv: list[str]) -> dict[str, Any]:
-    from det.runtime.approval import make_plan
-
-    return make_plan(command, argv).to_dict()
-
-
-def _pipeline_path(pipeline: str, root: Path) -> Path:
-    """Resolve a pipeline name (``noaa.storm_events``), path, or nested stem."""
-    from det.runtime.pipelines import resolve_pipeline_ref
-
-    return resolve_pipeline_ref(pipeline, project_root=root).path
-
-
-def _canonical_id(pipeline: str, root: Path) -> str:
-    """Resolved pipeline identity for approval plans.
-
-    Approval digests must be built from the same identity the CLI uses, so both
-    surfaces go through ``resolve_pipeline_ref`` rather than reading ``name:``
-    from the config (which is not validated against the file's location).
-    """
-    from det.runtime.pipelines import resolve_pipeline_ref
-
-    return resolve_pipeline_ref(pipeline, project_root=root).canonical_id
-
-
-def _require_catchup_scope(*, pipeline: str | None, all_pipelines: bool) -> None:
-    """Require exactly one of ``pipeline`` or ``all_pipelines=True`` (CLI parity)."""
-    if all_pipelines == (pipeline is not None):
-        raise ValueError("exactly one of pipeline / all_pipelines=True is required")
-
-
-def _load_pipeline(pipeline: str, root: Path):
-    from det.runtime.config import load_pipeline_config
-    from det.runtime.pipelines import resolve_pipeline_ref
-
-    resolved = resolve_pipeline_ref(pipeline, project_root=root)
-    return load_pipeline_config(resolved.path), resolved.path
-
-
-def _rel(path: Path | LakeRef, root: Path) -> str:
-    return lake_relpath(path, root)
+# Back-compat aliases for helpers historically defined on this module.
+DEFAULT_LIST_LIMIT = h.DEFAULT_LIST_LIMIT
+DEFAULT_SAMPLE_LIMIT = h.DEFAULT_SAMPLE_LIMIT
+MAX_SAMPLE_LIMIT = h.MAX_SAMPLE_LIMIT
+_prepare_tool = h.prepare_tool
+_root = h.root
+_approval_plan = h.approval_plan
+_pipeline_path = h.pipeline_path
+_canonical_id = h.canonical_id
+_require_catchup_scope = h.require_catchup_scope
+_load_pipeline = h.load_pipeline
+_rel = h.rel
 
 
 def list_pipelines(*, root: Path | None = None) -> dict[str, Any]:
-    _prepare_tool()
+    h.prepare_tool()
     from det.runtime.pipelines import list_pipeline_ids
 
-    base = _root(root)
+    base = h.root(root)
     return {"project_root": str(base), "pipelines": list_pipeline_ids(base)}
 
 
 def list_sources_tool(*, root: Path | None = None) -> dict[str, Any]:
-    _prepare_tool()
+    h.prepare_tool()
     from det.plugins import load_plugins
     from det.runtime.discovery import probe_source_load_errors
     from det.runtime.registry import list_sources
 
-    _ = _root(root)
+    _ = h.root(root)
     load_plugins()
-    base = _root(root)
+    base = h.root(root)
     return {
         "sources": list_sources(project_root=base),
         "errors": probe_source_load_errors(project_root=base),
@@ -104,11 +77,11 @@ def list_sources_tool(*, root: Path | None = None) -> dict[str, Any]:
 
 
 def list_mappers_tool(*, root: Path | None = None) -> dict[str, Any]:
-    _prepare_tool()
+    h.prepare_tool()
     from det.plugins import load_plugins
     from det.runtime.registry import describe_mappers, list_mappers
 
-    base = _root(root)
+    base = h.root(root)
     load_plugins()
     mappers = describe_mappers(project_root=base)
     return {
@@ -127,16 +100,16 @@ def _connection_display(destination: Any) -> str | None:
 
 
 def describe_pipeline(pipeline: str, *, root: Path | None = None) -> dict[str, Any]:
-    _prepare_tool()
+    h.prepare_tool()
     from det.runtime.ids import sql_names_for_config
 
-    base = _root(root)
-    config, path = _load_pipeline(pipeline, base)
+    base = h.root(root)
+    config, path = h.load_pipeline(pipeline, base)
     silver = config.dbt.silver
     sql_schema, sql_table = sql_names_for_config(config)
     return {
         "name": config.name,
-        "path": _rel(path, base),
+        "path": h.rel(path, base),
         "source": {"type": config.source.type},
         "schema": config.schema_path,
         "destination": {
@@ -204,19 +177,19 @@ def list_raw_partitions(
     limit: int = DEFAULT_LIST_LIMIT,
     root: Path | None = None,
 ) -> dict[str, Any]:
-    _prepare_tool()
+    h.prepare_tool()
     from det.destinations.models import raw_dataset_dir
 
-    base = _root(root)
-    config, _ = _load_pipeline(pipeline, base)
+    base = h.root(root)
+    config, _ = h.load_pipeline(pipeline, base)
     dataset_dir = raw_dataset_dir(config, base)
     capped = max(1, min(int(limit), DEFAULT_LIST_LIMIT))
-    runs = insp.walk_hive_runs(
+    runs = h.insp.walk_hive_runs(
         dataset_dir, root=base, limit=capped, require_committed=True, normalize_iso=False
     )
     return {
         "pipeline": config.name,
-        "dataset_dir": _rel(dataset_dir, base),
+        "dataset_dir": h.rel(dataset_dir, base),
         "limit": capped,
         "truncated": len(runs) >= capped,
         "runs": runs,
@@ -229,12 +202,12 @@ def list_bronze_partitions(
     limit: int = DEFAULT_LIST_LIMIT,
     root: Path | None = None,
 ) -> dict[str, Any]:
-    _prepare_tool()
+    h.prepare_tool()
     from det.destinations.models import bronze_dataset_dir
     from det.runtime.ids import sql_names_for_config
 
-    base = _root(root)
-    config, _ = _load_pipeline(pipeline, base)
+    base = h.root(root)
+    config, _ = h.load_pipeline(pipeline, base)
     dest = config.destination
     if dest.type == "iceberg":
         from det.destinations.models import lake_root
@@ -256,7 +229,7 @@ def list_bronze_partitions(
                 "destination_type": "iceberg",
                 "schema": sql_schema,
                 "table": sql_table,
-                "location": _rel(dataset_dir, base),
+                "location": h.rel(dataset_dir, base),
                 "runs": [],
                 "note": str(exc),
             }
@@ -274,7 +247,7 @@ def list_bronze_partitions(
             "destination_type": "iceberg",
             "schema": sql_schema,
             "table": sql_table,
-            "location": _rel(dataset_dir, base),
+            "location": h.rel(dataset_dir, base),
             "limit": capped,
             "truncated": len(runs) >= capped,
             "runs": runs,
@@ -303,7 +276,7 @@ def list_bronze_partitions(
 
     dataset_dir = bronze_dataset_dir(config, base)
     capped = max(1, min(int(limit), DEFAULT_LIST_LIMIT))
-    runs = insp.walk_hive_runs(
+    runs = h.insp.walk_hive_runs(
         dataset_dir,
         root=base,
         limit=capped,
@@ -313,7 +286,7 @@ def list_bronze_partitions(
     return {
         "pipeline": config.name,
         "destination_type": "filesystem",
-        "dataset_dir": _rel(dataset_dir, base),
+        "dataset_dir": h.rel(dataset_dir, base),
         "limit": capped,
         "truncated": len(runs) >= capped,
         "runs": runs,
@@ -322,263 +295,39 @@ def list_bronze_partitions(
 
 def read_manifest(run_path: str, *, root: Path | None = None) -> dict[str, Any]:
     """Read meta/manifest.json for a raw extract-run directory under the lake."""
-    _prepare_tool()
-    base = _root(root)
+    h.prepare_tool()
+    base = h.root(root)
     run_dir = resolve_under_root(run_path, root=base)
     if not run_dir.is_dir():
         raise FileNotFoundError(f"run path is not a directory: {run_dir}")
 
     manifest = run_dir / "meta" / "manifest.json"
     if not manifest.is_file():
-        raise FileNotFoundError(f"manifest not found: {_rel(manifest, base)}")
+        raise FileNotFoundError(f"manifest not found: {h.rel(manifest, base)}")
 
     # Must live under a lake raw/ tree (…/raw/<dataset>/…/meta/manifest.json).
     parts = manifest.resolve().parts
     if "raw" not in parts or "meta" not in parts:
         raise PathSandboxError(
-            f"manifest must be under a lake raw/…/meta/ path: {_rel(manifest, base)}"
+            f"manifest must be under a lake raw/…/meta/ path: {h.rel(manifest, base)}"
         )
 
     raw = json.loads(manifest.read_text(encoding="utf-8"))
     return {
-        "path": _rel(manifest, base),
+        "path": h.rel(manifest, base),
         "manifest": raw,
-    }
-
-
-def prune_dry_run(
-    pipeline: str,
-    *,
-    interval_start: str,
-    interval_end: str | None = None,
-    keep: int = 1,
-    root: Path | None = None,
-) -> dict[str, Any]:
-    _prepare_tool()
-    from det.runtime.prune import BronzePruner
-
-    base = _root(root)
-    config, _ = _load_pipeline(pipeline, base)
-    plan = BronzePruner(base).plan(
-        config,
-        interval_start=interval_start,
-        interval_end=interval_end,
-        keep=keep,
-    )
-    from det.runtime.approval import prune_write_argv
-
-    return {
-        "pipeline": config.name,
-        "keep": keep,
-        "approval_plan": _approval_plan(
-            "prune",
-            prune_write_argv(
-                _canonical_id(pipeline, base),
-                interval_start,
-                interval_end=interval_end,
-                keep=keep,
-            ),
-        ),
-        "remove_count": plan.remove_count,
-        "to_remove": [
-            {
-                "interval_start": r.interval_start,
-                "interval_end": r.interval_end,
-                "extract_run_datetime": r.extract_run_datetime,
-                "path": _rel(r.path, base) if r.path is not None else None,
-            }
-            for r in plan.to_remove
-        ],
-        "to_keep": [
-            {
-                "interval_start": r.interval_start,
-                "interval_end": r.interval_end,
-                "extract_run_datetime": r.extract_run_datetime,
-                "path": _rel(r.path, base) if r.path is not None else None,
-            }
-            for r in plan.to_keep
-        ],
-    }
-
-
-def dbt_dry_run(
-    pipeline: str | None = None,
-    *,
-    command: str = "build",
-    select: list[str] | None = None,
-    catchup: bool = False,
-    catchup_manifest: str | None = None,
-    root: Path | None = None,
-) -> dict[str, Any]:
-    _prepare_tool()
-    from det.runtime.dbt_runner import analytics_exclude, run_dbt
-
-    base = _root(root)
-    pipeline_arg: Path | str | None = None
-    if pipeline is not None:
-        pipeline_arg = _pipeline_path(pipeline, base)
-    if catchup and not (catchup_manifest and str(catchup_manifest).strip()):
-        raise ValueError("catchup requires catchup_manifest (scm_… id)")
-    if catchup_manifest and str(catchup_manifest).strip() and not catchup:
-        raise ValueError("catchup_manifest requires catchup=true")
-    result = run_dbt(
-        project_root=base,
-        command=command,  # type: ignore[arg-type]
-        select=select,
-        exclude=analytics_exclude(select),
-        pipeline=pipeline_arg,
-        catchup=catchup,
-        catchup_manifest=catchup_manifest,
-        dry_run=True,
-    )
-    from det.runtime.approval import dbt_write_argv
-
-    return {
-        "dry_run": True,
-        "command": result.command,
-        "select": list(result.select),
-        "project_dir": _rel(result.project_dir, base),
-        "lake_path": result.lake_path,
-        "bronze_source": result.bronze_source,
-        "catchup": catchup,
-        "catchup_manifest": catchup_manifest,
-        "approval_plan": _approval_plan(
-            "dbt",
-            dbt_write_argv(
-                _canonical_id(pipeline, base) if pipeline is not None else None,
-                command=command,
-                select=select,
-                catchup=catchup,
-                catchup_manifest=catchup_manifest,
-            ),
-        ),
-    }
-
-
-def scaffold_dbt_dry_run(
-    pipeline: str,
-    *,
-    force: bool = False,
-    root: Path | None = None,
-) -> dict[str, Any]:
-    _prepare_tool()
-    from det.scaffold.dbt import scaffold_dbt
-
-    base = _root(root)
-    config, _ = _load_pipeline(pipeline, base)
-    from det.runtime.approval import scaffold_dbt_write_argv
-
-    result = scaffold_dbt(config, project_root=base, force=force, dry_run=True)
-    return {
-        "dry_run": True,
-        "dataset": result.dataset,
-        "approval_plan": _approval_plan(
-            "scaffold-dbt",
-            scaffold_dbt_write_argv(_canonical_id(pipeline, base), force=force),
-        ),
-        "actions": [
-            {
-                "action": a.action,
-                "path": _rel(a.path, base),
-                "detail": a.detail,
-            }
-            for a in result.actions
-        ],
-    }
-
-
-def scaffold_ops_dry_run(
-    *,
-    force: bool = False,
-    root: Path | None = None,
-) -> dict[str, Any]:
-    """Preview scaffold-ops file actions without writing."""
-    _prepare_tool()
-    from det.runtime.approval import scaffold_ops_write_argv
-    from det.scaffold.ops import scaffold_ops
-
-    base = _root(root)
-    result = scaffold_ops(project_root=base, force=force, dry_run=True)
-    return {
-        "dry_run": True,
-        "dataset": result.dataset,
-        "approval_plan": _approval_plan(
-            "scaffold-ops",
-            scaffold_ops_write_argv(force=force),
-        ),
-        "actions": [
-            {
-                "action": a.action,
-                "path": _rel(a.path, base),
-                "detail": a.detail,
-            }
-            for a in result.actions
-        ],
-    }
-
-
-def init_pipeline_dry_run(
-    name: str,
-    source_type: str,
-    *,
-    destination_type: str = "iceberg",
-    connection: str | None = None,
-    lake_path: str | None = None,
-    skip_dbt: bool = False,
-    root: Path | None = None,
-) -> dict[str, Any]:
-    _prepare_tool()
-    from det.scaffold.init_pipeline import init_pipeline
-
-    base = _root(root)
-    result = init_pipeline(
-        name=name,
-        source_type=source_type,
-        project_root=base,
-        dry_run=True,
-        skip_dbt=skip_dbt,
-        destination_type=destination_type,
-        lake_path=lake_path,
-        connection=connection,
-    )
-    from det.runtime.approval import init_pipeline_write_argv
-
-    return {
-        "dry_run": True,
-        "name": result.name,
-        "pipeline_path": _rel(result.pipeline_path, base),
-        "schema_path": _rel(result.schema_path, base),
-        "approval_plan": _approval_plan(
-            "init-pipeline",
-            init_pipeline_write_argv(
-                name,
-                source_type,
-                destination_type=destination_type,
-                connection=connection,
-                lake_path=lake_path,
-                skip_dbt=skip_dbt,
-            ),
-        ),
-        "actions": [
-            {
-                "action": a.action,
-                "path": _rel(a.path, base),
-                "detail": a.detail,
-            }
-            for a in result.actions
-        ],
     }
 
 
 def lake_path_for_pipeline(pipeline: str, *, root: Path | None = None) -> str:
     """Display path for the lake (ops root in layout 2; unified root in layout 1)."""
-    _prepare_tool()
+    h.prepare_tool()
     from det.destinations.models import lake_roots_for
 
-    base = _root(root)
-    config, _ = _load_pipeline(pipeline, base)
+    base = h.root(root)
+    config, _ = h.load_pipeline(pipeline, base)
     roots = lake_roots_for(base, destination=config.destination)
-    return _rel(roots.ops, base)
+    return h.rel(roots.ops, base)
 
 
 def diff_partitions(
@@ -590,141 +339,14 @@ def diff_partitions(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Compare raw vs bronze extract-run coverage (hive and/or SQL meta)."""
-    _prepare_tool()
-    return insp.diff_partitions(
+    h.prepare_tool()
+    return h.insp.diff_partitions(
         pipeline,
         interval_start=interval_start,
         interval_end=interval_end,
         limit=limit,
         root=root,
     )
-
-
-def diff_bronze_silver(
-    pipeline: str | None = None,
-    *,
-    all_pipelines: bool = False,
-    interval_start: str | None = None,
-    interval_end: str | None = None,
-    extract_lookback: str | None = None,
-    limit: int = DEFAULT_LIST_LIMIT,
-    root: Path | None = None,
-) -> dict[str, Any]:
-    """Latest bronze extract-run per interval vs silver coverage (read-only)."""
-    _prepare_tool()
-    from det.runtime.silver_catchup import diff_bronze_silver as _diff
-    from det.runtime.silver_catchup import diff_bronze_silver_fleet
-
-    _require_catchup_scope(pipeline=pipeline, all_pipelines=all_pipelines)
-    base = _root(root)
-    if all_pipelines:
-        return diff_bronze_silver_fleet(
-            project_root=base,
-            interval_start=interval_start,
-            interval_end=interval_end,
-            extract_lookback=extract_lookback,
-            limit=limit,
-        )
-    # Exactly-one scope is enforced above; pipeline is set when not fleet-wide.
-    return _diff(
-        pipeline,  # type: ignore[arg-type]
-        project_root=base,
-        interval_start=interval_start,
-        interval_end=interval_end,
-        extract_lookback=extract_lookback,
-        limit=limit,
-    )
-
-
-def silver_catchup_dry_run(
-    pipeline: str | None = None,
-    *,
-    all_pipelines: bool = False,
-    interval_start: str | None = None,
-    interval_end: str | None = None,
-    extract_lookback: str | None = None,
-    limit: int = DEFAULT_LIST_LIMIT,
-    root: Path | None = None,
-) -> dict[str, Any]:
-    """Preview immutable ops/silver_catchup/<id>.json + approval_plan (never writes)."""
-    _prepare_tool()
-    from det.runtime.approval import silver_catchup_plan_write_argv
-    from det.runtime.silver_catchup import plan_catchup_manifest
-
-    _require_catchup_scope(pipeline=pipeline, all_pipelines=all_pipelines)
-    base = _root(root)
-    pipe_id = _canonical_id(pipeline, base) if pipeline is not None else None
-    planned = plan_catchup_manifest(
-        project_root=base,
-        pipeline=pipe_id,
-        all_pipelines=all_pipelines,
-        interval_start=interval_start,
-        interval_end=interval_end,
-        extract_lookback=extract_lookback,
-        limit=limit,
-    )
-    mid = str(planned["manifest_id"])
-    digest = str(planned["content_digest"])
-    return {
-        **planned,
-        "approval_plan": _approval_plan(
-            "silver-catchup-plan",
-            silver_catchup_plan_write_argv(
-                pipeline=pipe_id,
-                all_pipelines=all_pipelines,
-                interval_start=interval_start,
-                interval_end=interval_end,
-                extract_lookback=extract_lookback,
-                limit=limit,
-                manifest_id=mid,
-                content_digest=digest,
-            ),
-        ),
-        "next_steps": (
-            "Operator: det approve --plan <approval_plan> --approved-by <id>. "
-            "Agent (later turn): det silver-catchup-plan --apply "
-            f"--manifest-id {mid} --content-digest {digest} --approval <id>; "
-            "then MCP dbt_dry_run(catchup=True, catchup_manifest=…) → approve → "
-            f"det dbt --catchup --catchup-manifest {mid} --approval <dbt_id>."
-        ),
-    }
-
-
-def silver_catchup_cleanup_dry_run(
-    *,
-    manifest_id: str | None = None,
-    older_than: str | None = None,
-) -> dict[str, Any]:
-    """Preview BQ ``_det_catchup_runs_*`` drops + approval_plan (never writes)."""
-    _prepare_tool()
-    from det.runtime.approval import silver_catchup_cleanup_write_argv
-    from det.runtime.silver_catchup import plan_bq_catchup_cleanup
-
-    mid = str(manifest_id).strip() if manifest_id else ""
-    older = str(older_than).strip() if older_than else ""
-    planned = plan_bq_catchup_cleanup(
-        manifest_id=mid or None,
-        older_than=older or None,
-    )
-    before = planned.get("created_before")
-    if mid:
-        write_argv = silver_catchup_cleanup_write_argv(manifest_id=mid)
-        apply_hint = f"--manifest-id {mid}"
-    else:
-        write_argv = silver_catchup_cleanup_write_argv(
-            created_before=str(before or "")
-        )
-        apply_hint = f"--created-before {before}"
-    return {
-        **planned,
-        "dry_run": True,
-        "approval_plan": _approval_plan("silver-catchup-cleanup", write_argv),
-        "next_steps": (
-            "Operator: det approve --plan <approval_plan> --approved-by <id>. "
-            "Agent (later turn): det silver-catchup-cleanup --apply "
-            f"{apply_hint} --approval <id>. Heal does not auto-drop these tables."
-        ),
-    }
 
 
 def sample_raw(
@@ -739,8 +361,8 @@ def sample_raw(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Sample raw wire/rows at a load stage (wire|rows|named|coerced)."""
-    _prepare_tool()
-    return insp.sample_raw(
+    h.prepare_tool()
+    return h.insp.sample_raw(
         pipeline,
         stage=stage,  # type: ignore[arg-type]
         limit=limit,
@@ -764,8 +386,8 @@ def validate_sample(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Coerce + JSON Schema check on a capped raw sample (errors as data)."""
-    _prepare_tool()
-    return insp.validate_sample(
+    h.prepare_tool()
+    return h.insp.validate_sample(
         pipeline,
         limit=limit,
         max_errors=max_errors,
@@ -788,8 +410,8 @@ def sample_bronze(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Sample landed bronze rows (filesystem JSONL or SQL LIMIT). Inspection only."""
-    _prepare_tool()
-    return insp.sample_bronze(
+    h.prepare_tool()
+    return h.insp.sample_bronze(
         pipeline,
         limit=limit,
         run_path=run_path,
@@ -809,8 +431,8 @@ def diagnose_pipeline(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Composite coverage + validation diagnose with suggested CLI commands."""
-    _prepare_tool()
-    return insp.diagnose_pipeline(
+    h.prepare_tool()
+    return h.insp.diagnose_pipeline(
         pipeline,
         interval_start=interval_start,
         interval_end=interval_end,
@@ -832,8 +454,8 @@ def schema_from_sample_dry_run(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Infer bronze JSON Schema from sample rows (dry-run; never writes)."""
-    _prepare_tool()
-    return gen.schema_from_sample_dry_run(
+    h.prepare_tool()
+    return h.gen.schema_from_sample_dry_run(
         pipeline,
         run_path=run_path,
         interval_start=interval_start,
@@ -854,8 +476,8 @@ def mapper_from_diff_dry_run(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Diff two schemas and draft a mapper stub (dry-run; never writes)."""
-    _prepare_tool()
-    return gen.mapper_from_diff_dry_run(
+    h.prepare_tool()
+    return h.gen.mapper_from_diff_dry_run(
         from_schema,
         to_schema,
         mapper_name,
@@ -898,468 +520,49 @@ def preview_backfill_conf(
     return af.preview_backfill_conf(interval_start, interval_end, root=root)
 
 
-def migrate_dry_run(
-    pipeline: str,
-    to_bronze: str,
-    schema: str,
-    mapper: str,
-    interval_start: str | None = None,
-    *,
-    interval_end: str | None = None,
-    from_raw: str | None = None,
-    validate_limit: int = MAX_SAMPLE_LIMIT,
-    confirm_full_validate: bool = False,
-    wire_version: int | None = None,
-    recreate_iceberg: bool = False,
-    all_raw: bool = False,
-    all_raw_runs: bool = False,
-    root: Path | None = None,
-) -> dict[str, Any]:
-    """Preview det migrate: parse/map/validate raw partitions; never writes bronze."""
-    _prepare_tool()
-    from det.mcp.inspect._common import resolve_migrate_validate_limit
-    from det.runtime.approval import migrate_write_argv
-    from det.runtime.full_validate import assert_full_validate_allowed
-    from det.runtime.migrate import (
-        DEFAULT_MIGRATE_VALIDATE_MAX_ROWS,
-        BronzeMigrator,
-        MigratePlan,
-    )
-    from det.runtime.pipelines import resolve_pipeline_ref
-
-    if all_raw:
-        if interval_start is not None or interval_end is not None:
-            raise ValueError("--all-raw cannot be combined with interval_start/end")
-        if not recreate_iceberg:
-            raise ValueError("--all-raw requires recreate_iceberg")
-    elif interval_start is None:
-        raise ValueError("interval_start is required unless all_raw")
-
-    base = _root(root)
-    resolved_limit = resolve_migrate_validate_limit(validate_limit)
-    validate_max_rows: int | None = None
-    if resolved_limit is None:
-        assert_full_validate_allowed(confirm=confirm_full_validate)
-        validate_max_rows = DEFAULT_MIGRATE_VALIDATE_MAX_ROWS
-    resolved = resolve_pipeline_ref(pipeline, project_root=base)
-    schema_path = Path(schema)
-    if not schema_path.is_absolute():
-        schema_path = base / schema_path
-    plan = BronzeMigrator(base).migrate(
-        pipeline=resolved.path,
-        to_bronze=to_bronze,
-        schema_path=schema_path,
-        mapper_name=mapper,
-        interval_start=interval_start,
-        interval_end=interval_end,
-        from_raw=from_raw,
-        dry_run=True,
-        validate_limit=resolved_limit,
-        validate_max_rows=validate_max_rows,
-        wire_version=wire_version,
-        recreate_iceberg=recreate_iceberg,
-        all_raw=all_raw,
-        all_raw_runs=all_raw_runs,
-    )
-    if not isinstance(plan, MigratePlan):
-        raise TypeError(f"expected MigratePlan, got {type(plan).__name__}")
-    out = plan.to_dict()
-    out["validate_limit"] = validate_limit
-    if confirm_full_validate:
-        out["confirm_full_validate"] = True
-    if validate_max_rows is not None:
-        out["validate_max_rows"] = validate_max_rows
-    out["pipeline"] = resolved.canonical_id
-    out["approval_plan"] = _approval_plan(
-        "migrate",
-        migrate_write_argv(
-            resolved.canonical_id,
-            to_bronze,
-            schema,
-            mapper,
-            interval_start,
-            interval_end=interval_end,
-            from_raw=from_raw,
-            wire_version=wire_version,
-            recreate_iceberg=recreate_iceberg,
-            all_raw=all_raw,
-            all_raw_runs=all_raw_runs,
-        ),
-    )
-    bits: list[str] = []
-    if recreate_iceberg:
-        bits.append(" --recreate-iceberg")
-    if all_raw:
-        bits.append(" --all-raw")
-    if all_raw_runs:
-        bits.append(" --all-raw-runs")
-    flag_bit = "".join(bits)
-    if all_raw:
-        scope = ""
-    else:
-        scope = f" -s {interval_start}"
-    out["note"] = (
-        "Dry-run only — no bronze written. Apply with "
-        f"`det migrate -p {resolved.canonical_id} --to-bronze {to_bronze} "
-        f"--schema {schema} --mapper {mapper}{scope}{flag_bit}` after user confirms."
-    )
-    return out
-
-
-_RECEIPT_SECRET_KEYS = frozenset(
-    {
-        "connection",
-        "password",
-        "dsn",
-        "secret",
-        "token",
-        "api_key",
-        "apikey",
-    }
-)
-_RECEIPT_NOTE = (
-    "Receipts are observability for extract/load attempts. "
-    "meta/manifest.json is the authority for landed partitions."
-)
-
-
-def _runs_lake(pipeline: str | None, root: Path):
-    from det.destinations.models import lake_root
-    from det.logging import sanitize_lake_uri
-    from det.runtime.config import load_pipeline_config
-    from det.runtime.lake import open_lake, pick_lake_spec
-    from det.runtime.pipelines import resolve_pipeline_ref
-
-    if pipeline:
-        resolved = resolve_pipeline_ref(pipeline, project_root=root)
-        resolve_under_root(resolved.path, root=root)
-        config = load_pipeline_config(resolved.path)
-        lake = lake_root(config.destination, root)
-        return lake, config.name, sanitize_lake_uri(str(lake))
-    spec = pick_lake_spec(destination_path=None)
-    lake = open_lake(spec, root)
-    return lake, None, sanitize_lake_uri(str(lake))
-
-
-def _public_receipt(row: dict[str, Any], *, root: Path) -> dict[str, Any]:
-    from det.logging import sanitize_lake_uri
-
-    out = {
-        key: value
-        for key, value in row.items()
-        if key.lower() not in _RECEIPT_SECRET_KEYS
-        and not key.lower().endswith(("_password", "_secret", "_token", "_dsn", "_connection"))
-    }
-    path = out.get("path")
-    if isinstance(path, str):
-        if "://" in path:
-            out["path"] = sanitize_lake_uri(path)
-        else:
-            try:
-                out["path"] = _rel(Path(path), root)
-            except Exception:
-                out["path"] = path
-    return out
-
-
-def list_runs(
-    pipeline: str | None = None,
-    *,
-    since: str | None = None,
-    until: str | None = None,
-    status: str | None = None,
-    command: str | None = None,
-    limit: int = DEFAULT_LIST_LIMIT,
-    root: Path | None = None,
-) -> dict[str, Any]:
-    """
-    List extract/load run receipts (observability).
-
-    Manifest remains the authority for landed partitions. Never returns a
-    destination connection.
-    """
-    _prepare_tool()
-    from det.mcp.inspect import clamp_list_limit
-    from det.runtime.receipts import list_receipts
-
-    base = _root(root)
-    lake, pipe_id, lake_display = _runs_lake(pipeline, base)
-    capped = clamp_list_limit(limit)
-    rows = list_receipts(
-        lake,
-        pipeline=pipe_id,
-        since=since,
-        until=until,
-        status=status,
-        command=command,
-        limit=capped,
-    )
-    public = [_public_receipt(row, root=base) for row in rows]
-    return {
-        "pipeline": pipe_id,
-        "lake": lake_display,
-        "limit": capped,
-        "truncated": len(rows) >= capped,
-        "note": _RECEIPT_NOTE,
-        "runs": public,
-    }
-
-
-def list_models(*, root: Path | None = None) -> dict[str, Any]:
-    """List dbt models (stg/silver/gold/ops) from dbt/models YAML + SQL."""
-    _prepare_tool()
-    from det.mcp.catalog import list_dbt_models
-
-    return list_dbt_models(root=_root(root))
-
-
-def describe_model(name: str, *, root: Path | None = None) -> dict[str, Any]:
-    """Describe one dbt model: schema, grain, columns from YAML."""
-    _prepare_tool()
-    from det.mcp.catalog import describe_dbt_model
-
-    return describe_dbt_model(name, root=_root(root))
-
-
-def query_analytics(
-    sql: str,
-    *,
-    warehouse: str = "analytics",
-    limit: int = DEFAULT_SAMPLE_LIMIT,
-    root: Path | None = None,
-) -> dict[str, Any]:
-    """Capped read-only SELECT on analytics or ops DuckDB (not certified metrics)."""
-    _prepare_tool()
-    from det.mcp.query_sql import Warehouse
-    from det.mcp.query_sql import query_analytics as run_query
-
-    if warehouse not in {"analytics", "ops"}:
-        return {
-            "ok": False,
-            "error": "invalid_warehouse",
-            "detail": "warehouse must be analytics or ops",
-            "rows": [],
-        }
-    wh: Warehouse = "ops" if warehouse == "ops" else "analytics"
-    return run_query(sql, warehouse=wh, limit=limit, root=_root(root))
-
-
-def cube_meta(*, root: Path | None = None) -> dict[str, Any]:
-    """Cube Core meta (cubes/measures/dimensions). Start Cube with make cube-up."""
-    _prepare_tool()
-    from det.mcp.cube_client import cube_meta as fetch_meta
-
-    return fetch_meta(root=_root(root))
-
-
-def cube_load(
-    measures: list[str],
-    *,
-    dimensions: list[str] | None = None,
-    filters: list[dict[str, Any]] | None = None,
-    limit: int = DEFAULT_SAMPLE_LIMIT,
-    root: Path | None = None,
-) -> dict[str, Any]:
-    """Run a Cube REST load query (certified gold/ops metrics)."""
-    _prepare_tool()
-    from det.mcp.cube_client import cube_load as run_load
-
-    return run_load(
-        measures=measures,
-        dimensions=dimensions,
-        filters=filters,
-        limit=limit,
-        root=_root(root),
-    )
-
-
-def check(
-    pipeline: str | None = None,
-    *,
-    root: Path | None = None,
-) -> dict[str, Any]:
-    """
-    Pipeline structure check (schema file, source plugin, optional dbt models).
-
-    Same payload as ``det check --json``. Never writes; not a substitute for
-    extract/load.
-    """
-    _prepare_tool()
-    from det.runtime.check import findings_payload
-    from det.scaffold.check_dbt import check_project_with_dbt
-
-    base = _root(root)
-    findings = check_project_with_dbt(base, pipeline=pipeline)
-    return findings_payload(findings)
-
-
-def list_approvals(
-    status: str | None = None,
-    *,
-    root: Path | None = None,
-) -> dict[str, Any]:
-    """Approval records (MCP never creates these files).
-
-    Defaults to unused, unexpired. Pass ``status="claimed"`` to find an approval
-    left stuck by a crashed run — claimed records never expire, so they do not
-    appear in the default listing.
-    """
-    _prepare_tool()
-    from det.runtime.approval import list_approval_records
-
-    valid = {"unused", "claimed", "consumed", "expired", "all"}
-    wanted = (status or "unused").strip().lower()
-    if wanted not in valid:
-        raise ValueError(f"status must be one of {sorted(valid)}, got {status!r}")
-
-    base = _root(root)
-    statuses = None if wanted == "all" else (wanted,)
-    return {
-        "project_root": str(base),
-        "status": wanted,
-        "approvals": list_approval_records(base, statuses=statuses),
-    }
-
-
-def describe_approval(approval_id: str, *, root: Path | None = None) -> dict[str, Any]:
-    """Load one approval record; expired is derived at read time."""
-    _prepare_tool()
-    from det.runtime.approval import ApprovalError, effective_status, load_approval
-
-    base = _root(root)
-    try:
-        record = dict(load_approval(base, approval_id))
-    except ApprovalError as exc:
-        if exc.code == "approval_not_found":
-            raise FileNotFoundError(str(exc)) from exc
-        raise
-    record["status"] = effective_status(record)
-    return record
-
-
-def summarize_runs(
-    pipeline: str | None = None,
-    *,
-    since: str | None = None,
-    until: str | None = None,
-    status: str | None = None,
-    command: str | None = None,
-    root: Path | None = None,
-) -> dict[str, Any]:
-    """
-    Summarize extract/load run receipts (counts, error codes, p50/p95).
-
-    Numbers only — no SLO thresholds. Manifest remains the data authority.
-    """
-    _prepare_tool()
-    from det.runtime.receipts import summarize_receipts
-
-    base = _root(root)
-    lake, pipe_id, lake_display = _runs_lake(pipeline, base)
-    payload = summarize_receipts(
-        lake,
-        pipeline=pipe_id,
-        since=since,
-        until=until,
-        status=status,
-        command=command,
-    )
-    payload["pipeline"] = pipe_id
-    payload["lake"] = lake_display
-    payload["note"] = _RECEIPT_NOTE
-    return payload
-
-
-def biglake_register_dry_run(
-    *,
-    pipeline: str | None = None,
-    lake_path: str | None = None,
-    project: str | None = None,
-    location: str | None = None,
-    connection: str | None = None,
-    skip_ops: bool = False,
-    root: Path | None = None,
-) -> dict[str, Any]:
-    """Preview BigLake registration plan (never creates BQ resources)."""
-    _prepare_tool()
-    from det.runtime.biglake_register import (
-        biglake_register_write_argv,
-        build_biglake_register_plan,
-        build_iam_hint,
-    )
-
-    base = _root(root)
-    pipe_path = None
-    if pipeline:
-        _, pipe_path = _load_pipeline(pipeline, base)
-    argv = biglake_register_write_argv(
-        lake_path=lake_path,
-        pipeline=pipeline,
-        project=project,
-        location=location,
-        connection=connection,
-        skip_ops=skip_ops,
-    )
-    plan = build_biglake_register_plan(
-        project_root=base,
-        lake_path=lake_path,
-        pipeline=pipe_path,
-        project=project,
-        location=location,
-        connection=connection,
-        include_ops=not skip_ops and pipeline is None,
-    )
-    return {
-        **plan.to_dict(),
-        "iam_hint": build_iam_hint(plan),
-        "approval_plan": _approval_plan("biglake-register", argv),
-        "note": (
-            "Dry-run only — no BigLake tables created. Operator: det approve --plan "
-            "<approval_plan> --approved-by <id>. Agent: det biglake-register --apply "
-            "--approval <id> in a later turn."
-        ),
-    }
-
-
-def iceberg_register_dry_run(
-    *,
-    pipeline: str | None = None,
-    lake_path: str | None = None,
-    skip_ops: bool = False,
-    root: Path | None = None,
-) -> dict[str, Any]:
-    """Preview Iceberg REST/Glue registration plan (never mutates the catalog)."""
-    _prepare_tool()
-    from det.runtime.iceberg_register import (
-        build_iceberg_register_plan,
-        iceberg_register_write_argv,
-        with_catalog_target_argv,
-    )
-
-    base = _root(root)
-    pipe_path = None
-    if pipeline:
-        _, pipe_path = _load_pipeline(pipeline, base)
-    plan = build_iceberg_register_plan(
-        project_root=base,
-        lake_path=lake_path,
-        pipeline=pipe_path,
-        include_ops=not skip_ops and pipeline is None,
-    )
-    argv = with_catalog_target_argv(
-        iceberg_register_write_argv(
-            lake_path=lake_path,
-            pipeline=pipeline,
-            skip_ops=skip_ops,
-        ),
-        plan,
-    )
-    return {
-        **plan.to_dict(),
-        "approval_plan": _approval_plan("iceberg-register", argv),
-        "note": (
-            "Dry-run only — no catalog register. Operator: det approve --plan "
-            "<approval_plan> --approved-by <id>. Agent: det iceberg-register --apply "
-            "--approval <id> in a later turn."
-        ),
-    }
+__all__ = [
+    "DEFAULT_LIST_LIMIT",
+    "DEFAULT_SAMPLE_LIMIT",
+    "MAX_SAMPLE_LIMIT",
+    "airflow_health",
+    "biglake_register_dry_run",
+    "check",
+    "cube_load",
+    "cube_meta",
+    "dbt_dry_run",
+    "describe_airflow_det_env",
+    "describe_approval",
+    "describe_model",
+    "describe_pipeline",
+    "diagnose_pipeline",
+    "diff_bronze_silver",
+    "diff_partitions",
+    "iceberg_register_dry_run",
+    "init_pipeline_dry_run",
+    "lake_path_for_pipeline",
+    "list_airflow_dag_runs",
+    "list_airflow_dags",
+    "list_approvals",
+    "list_bronze_partitions",
+    "list_mappers_tool",
+    "list_models",
+    "list_pipelines",
+    "list_raw_partitions",
+    "list_runs",
+    "list_sources_tool",
+    "mapper_from_diff_dry_run",
+    "migrate_dry_run",
+    "preview_backfill_conf",
+    "prune_dry_run",
+    "query_analytics",
+    "read_manifest",
+    "sample_bronze",
+    "sample_raw",
+    "scaffold_dbt_dry_run",
+    "scaffold_ops_dry_run",
+    "schema_from_sample_dry_run",
+    "silver_catchup_cleanup_dry_run",
+    "silver_catchup_dry_run",
+    "summarize_runs",
+    "validate_sample",
+]
