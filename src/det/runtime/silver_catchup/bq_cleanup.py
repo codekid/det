@@ -253,11 +253,27 @@ def apply_bq_catchup_cleanup(
     created_before: str | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Drop planned catch-up external tables (single id or age-filtered set)."""
+    """Drop planned catch-up external tables (single id or age-filtered set).
+
+    Retention apply requires immutable ``created_before`` (from plan/dry-run).
+    Relative ``older_than`` is rejected so the target set cannot drift with
+    ``now``. Manifest-id apply is unchanged.
+    """
+    mid_raw = str(manifest_id).strip() if manifest_id else ""
+    older_raw = str(older_than).strip() if older_than else ""
+    before_raw = str(created_before).strip() if created_before else ""
+    if older_raw:
+        raise ValueError(
+            "apply_bq_catchup_cleanup rejects --older-than; pass "
+            "--created-before from plan/dry-run (relative duration would drift)"
+        )
+    if not mid_raw and not before_raw:
+        raise ValueError(
+            "apply_bq_catchup_cleanup requires --manifest-id or --created-before"
+        )
     planned = plan_bq_catchup_cleanup(
-        manifest_id=manifest_id,
-        older_than=older_than,
-        created_before=created_before,
+        manifest_id=mid_raw or None,
+        created_before=before_raw or None,
         now=now,
     )
     results: list[dict[str, Any]] = []

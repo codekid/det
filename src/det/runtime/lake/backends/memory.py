@@ -158,8 +158,9 @@ class _MemoryBackend(_Backend):
         parent = self.parent(key)
         if parent:
             self.mkdir(parent, parents=True, exist_ok=True)
-        if self.store.setdefault(key, data) is not data:
+        if key in self.store:
             raise FileExistsError(key)
+        self.store[key] = data
         version = self._bump()
         self._versions[key] = version
         return version

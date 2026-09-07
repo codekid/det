@@ -32,7 +32,7 @@ from det.runtime.slo import SloConfig
 
 
 class PipelineConfig(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     name: str
     source: SourceConfig

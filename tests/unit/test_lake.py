@@ -135,6 +135,21 @@ def test_memory_manifest_commit_and_visibility(tmp_path: Path):
     assert not tmp.exists()
 
 
+def test_memory_create_exclusive_rejects_preexisting_same_bytes(tmp_path: Path):
+    """Pre-existing keys must raise even when payload identity matches."""
+    lake = open_lake("memory://excl", tmp_path)
+    target = lake / "obj.bin"
+    empty = b""
+    target.create_exclusive(empty)
+    with pytest.raises(FileExistsError):
+        target.create_exclusive(empty)
+    body = b"same-object"
+    other = lake / "obj2.bin"
+    other.create_exclusive(body)
+    with pytest.raises(FileExistsError):
+        other.create_exclusive(body)
+
+
 def test_memory_failed_extract_deletes_prefix(project_root: Path, tmp_path: Path):
     schema_src = project_root / "schemas/example_api/events/events.schema.yaml"
     schema_dst = tmp_path / "schemas/example_api/events/events.schema.yaml"
@@ -473,11 +488,17 @@ def test_local_iter_excludes_cas_sidecars(tmp_path: Path):
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / "x.json"
     target.create_exclusive(b"body")
+    # Orphaned atomic-write temps must not appear as lake objects.
+    (Path(folder._key) / ".x.json.tmp.12345.deadbeef").write_bytes(b"tmp")
+    (Path(folder._key) / "..x.json.detgen.tmp.12345.abadcafe").write_bytes(b"tmp")
+    (Path(folder._key) / "keep.tmp.not_a_sidecar").write_bytes(b"real")
     names = {Path(p).name for p in folder.iterdir()}
     assert "x.json" in names
+    assert "keep.tmp.not_a_sidecar" in names
     assert not any(n.endswith(".detcas") or n.endswith(".detgen") for n in names)
+    assert not any(".tmp." in n and n.startswith(".") for n in names)
     files = {p.name for p in folder.rglob("*") if p.is_file()}
-    assert files == {"x.json"}
+    assert files == {"x.json", "keep.tmp.not_a_sidecar"}
 
 
 def test_local_cas_serializes_concurrent_replace(tmp_path: Path):

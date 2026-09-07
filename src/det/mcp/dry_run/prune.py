@@ -29,13 +29,14 @@ def prune_dry_run(
     )
     from det.runtime.approval import prune_write_argv
 
+    pipe_id = h.canonical_id(pipeline, base)
     return {
-        "pipeline": config.name,
+        "pipeline": pipe_id,
         "keep": keep,
         "approval_plan": h.approval_plan(
             "prune",
             prune_write_argv(
-                h.canonical_id(pipeline, base),
+                pipe_id,
                 interval_start,
                 interval_end=interval_end,
                 keep=keep,

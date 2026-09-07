@@ -36,7 +36,23 @@ def _local_gen_path(key: str) -> Path:
 
 def _is_local_sidecar(path: Path) -> bool:
     name = path.name
-    return name.endswith(".detcas") or name.endswith(".detgen")
+    if name.endswith(".detcas") or name.endswith(".detgen"):
+        return True
+    # Atomic write temps from ``_local_write_gen`` / ``replace_if_match``:
+    # ``.{name}.tmp.{pid}.{token_hex(4)}`` (token is 8 lowercase hex chars).
+    if not name.startswith(".") or ".tmp." not in name:
+        return False
+    _prefix, _, suffix = name.rpartition(".tmp.")
+    if not _prefix:
+        return False
+    pid, sep, token = suffix.partition(".")
+    return bool(
+        sep
+        and pid.isdigit()
+        and len(token) == 8
+        and token == token.lower()
+        and all(c in "0123456789abcdef" for c in token)
+    )
 
 
 def _local_read_gen(key: str) -> int:

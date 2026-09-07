@@ -518,13 +518,23 @@ def silver_catchup_cleanup_cmd(
                 "dry-run (relative --older-than would drift)",
                 param_hint="--created-before",
             )
+        apply_before = before or None
+        if not mid and not apply_before and older:
+            # Ungated local: freeze relative duration once at apply entry.
+            from det.runtime.silver_catchup import resolve_bq_catchup_cleanup_cutoff
+
+            _cutoff, apply_before, _older = resolve_bq_catchup_cleanup_cutoff(
+                older_than=older
+            )
         if mid:
             gate_argv = silver_catchup_cleanup_write_argv(manifest_id=mid)
-        elif before:
-            gate_argv = silver_catchup_cleanup_write_argv(created_before=before)
+        elif apply_before:
+            gate_argv = silver_catchup_cleanup_write_argv(created_before=apply_before)
         else:
-            # Ungated local apply with relative --older-than (accepts drift).
-            gate_argv = ["silver-catchup-cleanup", "--apply"]
+            raise typer.BadParameter(
+                "require --manifest-id or --created-before for --apply",
+                param_hint="--manifest-id/--created-before",
+            )
         claimed = _gate_approval(
             root,
             "silver-catchup-cleanup",
@@ -537,8 +547,7 @@ def silver_catchup_cleanup_cmd(
             try:
                 result = apply_bq_catchup_cleanup(
                     manifest_id=mid or None,
-                    older_than=older or None if not before else None,
-                    created_before=before or None,
+                    created_before=apply_before,
                 )
             except (ValueError, RuntimeError) as exc:
                 typer.echo(str(exc), err=True)

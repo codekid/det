@@ -38,7 +38,7 @@ def biglake_register_dry_run(
         project=project,
         location=location,
         connection=connection,
-        skip_ops=skip_ops,
+        skip_ops=skip_ops or pipeline is not None,
     )
     plan = build_biglake_register_plan(
         project_root=base,

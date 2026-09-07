@@ -43,6 +43,22 @@ def test_load_pipeline_config(project_root):
     assert cfg.slo.cadence == "daily"
 
 
+def test_pipeline_config_rejects_unknown_top_level_keys():
+    from pydantic import ValidationError
+
+    from det.runtime.config import PipelineConfig
+
+    with pytest.raises(ValidationError, match="typo_key"):
+        PipelineConfig.model_validate(
+            {
+                "name": "example_api.events",
+                "source": {"type": "example_api.events"},
+                "schema": "schemas/example_api/events/events.schema.yaml",
+                "typo_key": True,
+            }
+        )
+
+
 def test_iceberg_partition_defaults_to_extract_run():
     from det.runtime.config import DestinationConfig
 
