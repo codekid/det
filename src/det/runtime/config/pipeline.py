@@ -30,6 +30,7 @@ from det.runtime.ids import (
 from det.runtime.naming import BronzeConfig
 from det.runtime.slo import SloConfig
 
+
 class PipelineConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

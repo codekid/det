@@ -28,13 +28,13 @@ from det.runtime.lake.backends.fsspec_backend import (
     _strip_version_prefix,
 )
 from det.runtime.lake.backends.local import (
-    _LocalBackend,
     _is_local_sidecar,
     _local_cas_guard,
     _local_cas_lock_path,
     _local_gen_path,
     _local_read_gen,
     _local_write_gen,
+    _LocalBackend,
 )
 from det.runtime.lake.backends.memory import (
     _MEMORY_DIRS,
@@ -46,13 +46,13 @@ from det.runtime.lake.backends.memory import (
 )
 from det.runtime.lake.errors import ObjectCasUnsupported, ObjectVersionConflict
 from det.runtime.lake.mode import (
+    _OBJECT_SCHEMES,
     DEFAULT_LAKE_REL,
     ENV_LAKE_MODE,
     ENV_LAKE_PATH_BRONZE,
     ENV_LAKE_PATH_OPS,
     ENV_LAKE_PATH_RAW,
     LakeMode,
-    _OBJECT_SCHEMES,
     _strip_spec,
     is_lake_uri,
     is_object_lake_spec,

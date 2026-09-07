@@ -11,6 +11,7 @@ import yaml
 
 from det.runtime.config.pipeline import PipelineConfig
 
+
 def apply_overrides(raw: dict[str, Any], assignments: Sequence[str]) -> dict[str, Any]:
     """
     Apply `dotted.key=value` assignments over a parsed pipeline mapping.

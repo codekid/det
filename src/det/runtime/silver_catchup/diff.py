@@ -23,8 +23,8 @@ from det.runtime.limits import DEFAULT_LIST_LIMIT, clamp_list_limit
 from det.runtime.meta import identity_iso
 from det.runtime.pipelines import list_pipeline_ids, resolve_pipeline_ref
 from det.runtime.silver_catchup.bq_heal import (
-    analytics_target_is_bigquery,
     _list_silver_extract_runs_bigquery,
+    analytics_target_is_bigquery,
 )
 from det.runtime.silver_catchup.duckdb_silver import _list_silver_extract_runs_duckdb
 from det.runtime.silver_catchup.ids import (
@@ -35,6 +35,7 @@ from det.runtime.silver_catchup.ids import (
     silver_relation,
     validate_catchup_candidate_scope,
 )
+
 
 def _intervals_from_runs(
     bronze_runs: Sequence[dict[str, Any]],

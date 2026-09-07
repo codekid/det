@@ -9,6 +9,7 @@ from pydantic import BaseModel, model_validator
 from det.runtime.ids import require_sql_ident
 from det.runtime.secrets import looks_like_secret_name
 
+
 class LeaseConfig(BaseModel):
     """Optional per-pipeline lease overlay (env/settings still win when set)."""
 

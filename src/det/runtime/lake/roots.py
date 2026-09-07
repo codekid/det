@@ -9,11 +9,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from det.runtime.lake.mode import (
+    _OBJECT_SCHEMES,
     ENV_LAKE_PATH_BRONZE,
     ENV_LAKE_PATH_OPS,
     ENV_LAKE_PATH_RAW,
     LakeMode,
-    _OBJECT_SCHEMES,
     _strip_spec,
     lake_mode_from_env,
     pick_lake_spec,

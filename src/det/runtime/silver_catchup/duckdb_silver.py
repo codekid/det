@@ -26,6 +26,7 @@ from det.runtime.silver_catchup.ids import (
 )
 from det.runtime.warehouse_paths import analytics_duckdb_path
 
+
 def _list_silver_extract_runs_duckdb(
     config: PipelineConfig,
     *,

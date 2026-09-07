@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from det.mcp import generate as gen
 from det.mcp import inspect as insp
 from det.mcp.context import project_root
 from det.mcp.reload import refresh_det_runtime
