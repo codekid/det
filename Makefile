@@ -1,4 +1,4 @@
-.PHONY: install unhide test lint typecheck run-local dbt all clean airflow-up airflow-down airflow-logs airflow-ps cube-up cube-down cube-logs polaris-up polaris-down polaris-env
+.PHONY: install unhide test lint typecheck cov-branch-hotpaths run-local dbt all clean airflow-up airflow-down airflow-logs airflow-ps cube-up cube-down cube-logs polaris-up polaris-down polaris-env
 
 INTERVAL_START ?= 2026-08-06
 INTERVAL_END ?=
@@ -28,6 +28,19 @@ lint:
 
 typecheck:
 	uvx --from basedpyright basedpyright
+
+# Scoped branch coverage for lease + silver_catchup (report-only; does not
+# change global CI ``branch = false`` / fail_under). Omit Postgres lease
+# backends — those stay on the postgres extra / soak path.
+cov-branch-hotpaths:
+	uv run pytest -q \
+		tests/unit/test_lease.py \
+		tests/unit/test_lease_resolve.py \
+		tests/unit/test_silver_catchup.py \
+		--cov \
+		--cov-config=tests/cov_branch_hotpaths.coveragerc \
+		--cov-report=term-missing:skip-covered \
+		-m 'not lakehouse and not minio and not polaris and not gcs'
 
 # Same pipeline config as production, pointed at local fixtures via --set.
 # thin cannot Iceberg — opt in to JSONL for this smoke path.

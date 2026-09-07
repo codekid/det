@@ -1,0 +1,16 @@
+# Scoped branch coverage for lease + silver_catchup (make cov-branch-hotpaths).
+# Does not change global CI [tool.coverage] (branch = false, fail_under = 80).
+[run]
+branch = true
+source =
+    det.runtime.lease
+    det.runtime.silver_catchup
+omit =
+    */postgres_store.py
+    */dataset_lock_postgres.py
+    */det/mcp/__main__.py
+
+[report]
+show_missing = true
+skip_covered = true
+fail_under = 0
