@@ -522,6 +522,11 @@ def test_manifest_rejects_incomplete_run_rows(catchup_root: Path, monkeypatch):
             write_catchup_manifest(
                 bad, project_root=catchup_root, settings=settings
             )
+        unsupported = {**good, "manifest_version": 99}
+        with pytest.raises(ValueError, match="unsupported manifest_version"):
+            write_catchup_manifest(
+                unsupported, project_root=catchup_root, settings=settings
+            )
 
 
 def test_read_catchup_manifest_validates_payload(catchup_root: Path, monkeypatch):

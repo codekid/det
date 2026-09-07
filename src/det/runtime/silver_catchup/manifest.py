@@ -182,27 +182,11 @@ def manifest_payload_from_catchup(
     rows: list[CatchupRunRow] = []
     for i, raw in enumerate(catchup_runs):
         where = f"runs[{i}]"
-        rows.append(
-            {
-                "pipeline": str(raw["pipeline"]),
-                "extract_run_datetime": _norm_ts(raw["extract_run_datetime"]),
-                "interval_start": _require_nonempty(
-                    _norm_ts(raw.get("interval_start")),
-                    where=where,
-                    field="interval_start",
-                ),
-                "interval_end": _require_nonempty(
-                    _norm_ts(raw.get("interval_end")),
-                    where=where,
-                    field="interval_end",
-                ),
-                "detected_at": _require_nonempty(
-                    raw.get("detected_at") or stamp,
-                    where=where,
-                    field="detected_at",
-                ),
-            }
-        )
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"catch-up {where} must be an object")
+        injected = dict(raw)
+        injected["detected_at"] = injected.get("detected_at") or stamp
+        rows.append(_coerce_catchup_run_row(injected, where=where))
     mid = validate_catchup_manifest_id(manifest_id or new_catchup_manifest_id())
     digest = catchup_content_digest(rows)
     return {
@@ -227,14 +211,17 @@ def write_catchup_manifest(
     identical orphan sidecar (JSON missing) is recoverable on retry; a completed
     manifest or a different sidecar still conflicts.
     """
-    mid = validate_catchup_manifest_id(str(payload.get("manifest_id") or ""))
-    digest = validate_catchup_content_digest(str(payload.get("content_digest") or ""))
-    live = catchup_content_digest(payload.get("runs") or [])
+    if not isinstance(payload, Mapping):
+        raise ValueError("catch-up write payload must be an object")
+    body = _coerce_catchup_manifest_payload(payload, source="write")
+    digest = body["content_digest"]
+    live = catchup_content_digest(body["runs"])
     if live != digest:
         raise ValueError(
             "catch-up content_digest does not match runs; "
             f"payload has {digest}, runs hash to {live}"
         )
+    mid = body["manifest_id"]
     ops = resolve_ops_lake(
         project_root=project_root, settings=settings, lake_path=lake_path
     )
@@ -244,18 +231,6 @@ def write_catchup_manifest(
         raise DetConflictError(
             f"catch-up manifest already exists (immutable): {path}"
         )
-    runs_raw = list(payload.get("runs") or [])
-    runs = [
-        _coerce_catchup_run_row(raw, where=f"runs[{i}]")
-        for i, raw in enumerate(runs_raw)
-    ]
-    body: CatchupManifestPayload = {
-        "manifest_version": int(payload.get("manifest_version") or MANIFEST_VERSION),
-        "manifest_id": mid,
-        "content_digest": digest,
-        "updated_at": str(payload.get("updated_at") or ""),
-        "runs": runs,
-    }
     serialized = (json.dumps(body, indent=2, sort_keys=True) + "\n").encode("utf-8")
     runs_bytes = _runs_jsonl_bytes(body["runs"])
     try:
