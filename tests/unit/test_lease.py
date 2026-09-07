@@ -374,6 +374,10 @@ def test_assert_lease_held_noop_when_disabled(monkeypatch: pytest.MonkeyPatch):
 def test_extract_fence_preserves_raw_dir(
     tmp_path: Path, project_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    """Fence at publish keeps incomplete raw bytes.
+
+    Scrub arm: test_crash_before_manifest_publish_cleans_prefix.
+    """
     import yaml
 
     from det.runtime.manifest import is_committed_raw_dir
@@ -412,7 +416,9 @@ def test_extract_fence_preserves_raw_dir(
     data_dirs = list(raw_root.rglob("data"))
     assert len(data_dirs) == 1
     raw_dir = data_dirs[0].parent
-    assert list(raw_dir.rglob("*"))  # extract bytes retained
+    page_files = list((data_dirs[0] / "pages").glob("*.json"))
+    assert page_files, "expected retained page artifact under data/pages/"
+    assert page_files[0].stat().st_size > 0
     assert not is_committed_raw_dir(raw_dir)
     assert list(raw_root.rglob("manifest.json")) == []
 

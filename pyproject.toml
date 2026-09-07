@@ -191,6 +191,7 @@ include = [
     "src/det/runtime/lease",
     "src/det/runtime/registry.py",
     "src/det/runtime/config",
+    "src/det/runtime/silver_catchup",
     "src/det/runtime/pipelines.py",
     "src/det/runtime/load_rows.py",
     "src/det/runtime/settings.py",

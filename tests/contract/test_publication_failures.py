@@ -61,7 +61,10 @@ def _example_pipe(tmp_path: Path, project_root: Path) -> Path:
 def test_crash_before_manifest_publish_cleans_prefix(
     project_root: Path, tmp_path: Path
 ):
-    """Catalog: crash before manifest → orphan cleaned, not committed."""
+    """Catalog: crash before manifest → orphan cleaned.
+
+    Fence arm: test_extract_fence_preserves_raw_dir.
+    """
     pipe = _example_pipe(tmp_path, project_root)
     runner = PipelineRunner(tmp_path)
 
