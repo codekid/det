@@ -206,8 +206,11 @@ def biglake_register_cmd(
 
     root = _project_root(project_root)
     pipe_path = None
+    pipe_id = None
     if pipeline is not None:
-        pipe_path = _resolve_pipeline(pipeline, root).path
+        resolved = _resolve_pipeline(pipeline, root)
+        pipe_path = resolved.path
+        pipe_id = resolved.canonical_id
 
     settings = _settings(
         root,
@@ -221,7 +224,7 @@ def biglake_register_cmd(
         lake_path_raw=lake_path_raw,
         lake_path_bronze=lake_path_bronze,
         lake_path_ops=lake_path_ops,
-        pipeline=pipeline,
+        pipeline=pipe_id,
         project=project,
         location=location,
         connection=connection,
@@ -304,8 +307,11 @@ def iceberg_register_cmd(
 
     root = _project_root(project_root)
     pipe_path = None
+    pipe_id = None
     if pipeline is not None:
-        pipe_path = _resolve_pipeline(pipeline, root).path
+        resolved = _resolve_pipeline(pipeline, root)
+        pipe_path = resolved.path
+        pipe_id = resolved.canonical_id
 
     settings = _settings(
         root,
@@ -331,7 +337,7 @@ def iceberg_register_cmd(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
-            pipeline=pipeline,
+            pipeline=pipe_id,
             skip_ops=skip_ops,
         ),
         plan,

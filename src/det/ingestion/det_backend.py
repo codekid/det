@@ -77,6 +77,7 @@ class DetBackend:
                 records,
                 config=config,
                 project_root=project_root,
+                destination=destination,
                 chunk_rows=size,
                 run_identity=run_identity,
                 on_chunk=on_chunk,
@@ -163,26 +164,34 @@ class DetBackend:
         *,
         config: PipelineConfig,
         project_root: Path,
+        destination: DestinationConfig,
         chunk_rows: int,
         run_identity: tuple[str, str, str] | None = None,
         on_chunk: Callable[[], None] | None = None,
     ) -> LakeRef:
-        from det.destinations.models import bronze_dataset_dir, lake_roots_for
+        from det.destinations.models import lake_roots_for
         from det.ingestion.iceberg_writer import write_iceberg_table
+        from det.runtime.ids import fs_dataset_parts
 
         json_schema = load_json_schema(resolve_path(project_root, config.schema_path))
         schema, table = sql_names_for_config(config)
-        roots = lake_roots_for(project_root, destination=config.destination)
+        roots = lake_roots_for(project_root, destination=destination)
+        # Build location from the selected destination's roots (not config.destination).
+        table_location = roots.bronze
+        if roots.layout < 2:
+            table_location = table_location / config.medallion.bronze_prefix
+        for part in fs_dataset_parts(config.canonical_id):
+            table_location = table_location / part
         written = write_iceberg_table(
             records,
             lake=roots.bronze,
-            table_location=bronze_dataset_dir(config, project_root),
+            table_location=table_location,
             namespace=schema,
             table=table,
             json_schema=json_schema,
             chunk_rows=chunk_rows,
-            partition=config.destination.iceberg_partition,
-            table_properties=config.destination.iceberg_table_properties,
+            partition=destination.iceberg_partition,
+            table_properties=destination.iceberg_table_properties,
             run_identity=run_identity,
             on_chunk=on_chunk,
         )

@@ -648,6 +648,7 @@ postgres = [
     { name = "psycopg", extra = ["binary"] },
 ]
 s3 = [
+    { name = "botocore" },
     { name = "s3fs" },
 ]
 scaffold = [
@@ -657,12 +658,13 @@ scaffold = [
 [package.metadata]
 requires-dist = [
     { name = "beautifulsoup4", marker = "extra == 'examples'", specifier = ">=4.12.0" },
+    { name = "botocore", marker = "extra == 's3'", specifier = ">=1.36.0" },
     { name = "dbt-bigquery", marker = "extra == 'bigquery'", specifier = ">=1.9" },
     { name = "dbt-core", marker = "extra == 'dbt'", specifier = ">=1.9" },
     { name = "dbt-duckdb", marker = "extra == 'dbt'", specifier = ">=1.9" },
     { name = "dlt", extras = ["filesystem"], marker = "extra == 'examples'", specifier = ">=1.24.0" },
     { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=1.5.1" },
-    { name = "gcsfs", marker = "extra == 'gcs'", specifier = ">=2024.0.0" },
+    { name = "gcsfs", marker = "extra == 'gcs'", specifier = ">=2025.12.0" },
     { name = "google-cloud-bigquery", marker = "extra == 'bigquery'", specifier = ">=3.0" },
     { name = "jinja2", marker = "extra == 'scaffold'", specifier = ">=3.1.0" },
     { name = "jsonschema", specifier = ">=4.23.0" },
@@ -677,7 +679,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "requests", specifier = ">=2.32.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9.0" },
-    { name = "s3fs", marker = "extra == 's3'", specifier = ">=2024.0.0" },
+    { name = "s3fs", marker = "extra == 's3'", specifier = ">=2025.12.0" },
     { name = "structlog", specifier = ">=25.1.0" },
     { name = "typer", specifier = ">=0.15.0" },
 ]

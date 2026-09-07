@@ -189,6 +189,51 @@ def test_memory_listing_stays_under_dataset(tmp_path: Path):
     assert walked == ["keep.txt"]
 
 
+def test_glob_embedded_doublestar_matches_zero_or_more_dirs(tmp_path: Path):
+    """``a/**/b.txt`` matches both ``a/b.txt`` and ``a/x/b.txt`` (pathlib-style)."""
+    lake = open_lake("memory://doublestar", tmp_path)
+    (lake / "a" / "b.txt").write_text("direct", encoding="utf-8")
+    (lake / "a" / "x" / "b.txt").write_text("nested", encoding="utf-8")
+    (lake / "a" / "x" / "y" / "b.txt").write_text("deep", encoding="utf-8")
+    (lake / "other" / "b.txt").write_text("skip", encoding="utf-8")
+
+    matched = sorted(p.as_posix() for p in lake.glob("a/**/b.txt"))
+    assert any(p.endswith("a/b.txt") for p in matched)
+    assert any(p.endswith("a/x/b.txt") for p in matched)
+    assert any(p.endswith("a/x/y/b.txt") for p in matched)
+    assert not any(p.endswith("other/b.txt") for p in matched)
+
+    # Same coverage via rglob / matcher helpers.
+    from det.runtime.lake import _match_rglob
+
+    assert _match_rglob("a/**/b.txt", "a/b.txt", "b.txt")
+    assert _match_rglob("a/**/b.txt", "a/x/b.txt", "b.txt")
+    assert not _match_rglob("a/**/b.txt", "other/b.txt", "b.txt")
+
+
+def test_glob_doublestar_with_character_class(tmp_path: Path):
+    """``**/[ab].txt`` matches a/b names at any depth; ``[!a].txt`` excludes ``a``."""
+    from det.runtime.lake import _match_rglob
+
+    lake = open_lake("memory://charclass", tmp_path)
+    (lake / "a.txt").write_text("a", encoding="utf-8")
+    (lake / "b.txt").write_text("b", encoding="utf-8")
+    (lake / "c.txt").write_text("c", encoding="utf-8")
+    (lake / "nested" / "a.txt").write_text("na", encoding="utf-8")
+    (lake / "nested" / "x" / "b.txt").write_text("nb", encoding="utf-8")
+
+    matched = sorted(p.name for p in lake.glob("**/[ab].txt"))
+    assert matched == ["a.txt", "a.txt", "b.txt", "b.txt"]
+    assert _match_rglob("**/[ab].txt", "a.txt", "a.txt")
+    assert _match_rglob("**/[ab].txt", "nested/x/b.txt", "b.txt")
+    assert not _match_rglob("**/[ab].txt", "c.txt", "c.txt")
+
+    assert _match_rglob("**/[!a].txt", "b.txt", "b.txt")
+    assert _match_rglob("**/[!a].txt", "nested/c.txt", "c.txt")
+    assert not _match_rglob("**/[!a].txt", "a.txt", "a.txt")
+    assert not _match_rglob("**/[!a].txt", "nested/a.txt", "a.txt")
+
+
 def test_http_get_file_memory_upload_and_retry_deletes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
