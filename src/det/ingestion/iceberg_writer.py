@@ -301,6 +301,7 @@ def ensure_iceberg_table(
     location: str,
     columns: list[tuple[str, str]],
     partition: IcebergPartition = "extract_run",
+    table_properties: dict[str, str] | None = None,
 ) -> Any:
     from pyiceberg.exceptions import NoSuchTableError
 
@@ -312,11 +313,13 @@ def ensure_iceberg_table(
         ensure_iceberg_namespace(
             catalog, identifier[0], table_location=location
         )
+        props = dict(table_properties or {})
         return catalog.create_table(
             identifier,
             schema=schema,
             location=location,
             partition_spec=partition_spec_for(partition, schema),
+            properties=props,
         )
 
     live_summary = _live_partition_summary(table)
@@ -385,6 +388,7 @@ def write_iceberg_table(
     json_schema: dict[str, Any],
     chunk_rows: int = 10_000,
     partition: IcebergPartition = "extract_run",
+    table_properties: dict[str, str] | None = None,
     run_identity: tuple[str, str, str] | None = None,
     on_chunk: Callable[[], None] | None = None,
 ) -> LakeRef:
@@ -397,7 +401,8 @@ def write_iceberg_table(
 
     ``partition`` applies on create only; existing tables must match YAML or
     ``ensure_iceberg_table`` raises (use migrate ``--recreate-iceberg`` to purge
-    and recreate).
+    and recreate). ``table_properties`` apply on create only; live property
+    reconcile is an external maintain runner (Airflow/Spark).
 
     ``run_identity`` is required for empty streams so replace-by-run still runs.
     """
@@ -415,6 +420,7 @@ def write_iceberg_table(
         location=location,
         columns=col_types,
         partition=partition,
+        table_properties=table_properties,
     )
     pa_schema = ice_table.schema().as_arrow()
     filt = _run_filter(identity)

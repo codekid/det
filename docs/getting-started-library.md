@@ -203,6 +203,27 @@ det dbt --select tag:ops --target ops        # needs det-elt[dbt]
 
 Cube Core over ops metrics remains an operator/optional add-on — not scaffolded.
 
+### Iceberg maintain (external runner)
+
+DET does not expire/compact Iceberg tables. Declare knobs under
+`destination.iceberg` (see [iceberg-catalog.md](iceberg-catalog.md)), then wire
+plans into **your** Airflow/Spark job:
+
+```python
+from det import iter_iceberg_maintain_plans
+
+for plan in iter_iceberg_maintain_plans("."):
+    if not plan.actionable:
+        continue  # hadoop / unset catalog
+    # Your submit: SET TBLPROPERTIES from plan.table_properties;
+    # expire/rewrite/orphans from plan.maintain
+```
+
+Operator reference DAG (example only — not scaffolded into embedder trees):
+`dags/det_iceberg_maintain_dag.py` maps one submit per actionable plan with
+`DET_ICEBERG_MAINTAIN_MAX_ACTIVE` (default 4). Hook signature:
+`module:function(plan: dict)`.
+
 Concurrency (leases, processes vs threads): [api.md § Concurrency](api.md#concurrency).
 
 ## 8. Out of scope for the library path
