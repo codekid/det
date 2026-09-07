@@ -529,6 +529,34 @@ def test_manifest_rejects_incomplete_run_rows(catchup_root: Path, monkeypatch):
             )
 
 
+@pytest.mark.parametrize("bad_version", [True, "1", 1.5])
+def test_manifest_rejects_coerced_manifest_version(
+    catchup_root: Path, monkeypatch, bad_version
+):
+    lake = catchup_root / "data" / "lake"
+    monkeypatch.setenv("DET_LAKE_PATH", str(lake))
+    settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
+        lake_override=str(lake)
+    )
+    good = manifest_payload_from_catchup(
+        [
+            {
+                "pipeline": "example_api.events",
+                "extract_run_datetime": "2026-09-02T12:08:00+00:00",
+                "interval_start": "2026-09-01T00:00:00+00:00",
+                "interval_end": "2026-09-02T00:00:00+00:00",
+            }
+        ]
+    )
+    with use_settings(settings):
+        with pytest.raises(ValueError, match="manifest_version must be an int"):
+            write_catchup_manifest(
+                {**good, "manifest_version": bad_version},
+                project_root=catchup_root,
+                settings=settings,
+            )
+
+
 def test_read_catchup_manifest_validates_payload(catchup_root: Path, monkeypatch):
     from det.runtime.silver_catchup import MANIFEST_VERSION, catchup_content_digest
 

@@ -138,13 +138,14 @@ def _coerce_catchup_manifest_payload(
     if "manifest_version" not in raw:
         version = MANIFEST_VERSION
     else:
-        try:
-            version = int(raw["manifest_version"])
-        except (TypeError, ValueError) as exc:
+        version_raw = raw["manifest_version"]
+        # bool is a subclass of int; reject it along with str/float coercion.
+        if type(version_raw) is not int:
             raise ValueError(
                 f"catch-up {source} manifest_version must be an int, "
-                f"got {raw.get('manifest_version')!r}"
-            ) from exc
+                f"got {version_raw!r}"
+            )
+        version = version_raw
     if version != MANIFEST_VERSION:
         raise ValueError(
             f"catch-up {source} unsupported manifest_version {version}; "
