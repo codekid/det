@@ -143,6 +143,8 @@ select = ["E", "F", "I", "UP", "B", "S"]
 known-first-party = ["det"]
 
 # Coverage ratchet (CI fail_under). Raise over time; never lower without cause.
+# Global branch remains off; use ``make cov-branch-hotpaths`` for lease +
+# silver_catchup branch reports without gating CI.
 [tool.coverage.run]
 source = ["det"]
 branch = false
@@ -203,6 +205,8 @@ include = [
     "src/det/runtime/check.py",
     "src/det/runtime/dbt_runner.py",
     "src/det/runtime/biglake_register.py",
+    "src/det/runtime/iceberg_maintain.py",
+    "src/det/runtime/iceberg_register.py",
     "src/det/cli",
     "src/det/scaffold",
     "src/det/mcp",
