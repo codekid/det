@@ -8,9 +8,15 @@ import typer
 from det.cli.app import app
 from det.cli.common import (
     _APPROVAL_HELP,
+    _LAKE_LAYOUT_HELP,
+    _LAKE_PATH_BRONZE_HELP,
+    _LAKE_PATH_HELP,
+    _LAKE_PATH_OPS_HELP,
+    _LAKE_PATH_RAW_HELP,
     _PIPELINE_HELP,
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
+    _approval_lake_layout,
     _claimed_approval_work,
     _consume_approval,
     _gate_approval,
@@ -19,11 +25,6 @@ from det.cli.common import (
     _resolve_pipeline,
     _settings,
 )
-
-_LAKE_PATH_HELP = "Unified lake root (layout 1). Ignored when split roots are set."
-_LAKE_PATH_RAW_HELP = "Raw layer root URI (layout 2; requires bronze + ops)."
-_LAKE_PATH_BRONZE_HELP = "Bronze layer root URI (layout 2; requires raw + ops)."
-_LAKE_PATH_OPS_HELP = "Ops layer root URI for runs/locks (layout 2; requires raw + bronze)."
 
 
 @app.command("extract")
@@ -39,6 +40,7 @@ def extract_raw(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
     lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
+    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     set_: list[str] = typer.Option([], "--set"),
     lock_ttl_sec: int | None = typer.Option(
         None,
@@ -58,6 +60,15 @@ def extract_raw(
     # and ISO interval, not the raw ref form the caller happened to type.
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
+    settings = _settings(
+        root,
+        lake_path=lake_path,
+        lake_path_raw=lake_path_raw,
+        lake_path_bronze=lake_path_bronze,
+        lake_path_ops=lake_path_ops,
+        lake_layout=lake_layout,
+        lock_ttl_sec=lock_ttl_sec,
+    )
     claimed = _gate_approval(
         root,
         "extract",
@@ -69,6 +80,7 @@ def extract_raw(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
+            lake_layout=_approval_lake_layout(settings),
             set_=set_,
         ),
         approval,
@@ -77,16 +89,7 @@ def extract_raw(
     )
     try:
         with _claimed_approval_work(claimed, approval):
-            result = PipelineRunner(
-                settings=_settings(
-                    root,
-                    lake_path=lake_path,
-                    lake_path_raw=lake_path_raw,
-                    lake_path_bronze=lake_path_bronze,
-                    lake_path_ops=lake_path_ops,
-                    lock_ttl_sec=lock_ttl_sec,
-                )
-            ).extract(
+            result = PipelineRunner(settings=settings).extract(
                 resolved.path,
                 interval_start=start_iso,
                 interval_end=end_iso,
@@ -119,6 +122,7 @@ def load_bronze(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
     lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
+    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     set_: list[str] = typer.Option([], "--set"),
     lock_ttl_sec: int | None = typer.Option(
         None,
@@ -136,6 +140,15 @@ def load_bronze(
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
+    settings = _settings(
+        root,
+        lake_path=lake_path,
+        lake_path_raw=lake_path_raw,
+        lake_path_bronze=lake_path_bronze,
+        lake_path_ops=lake_path_ops,
+        lake_layout=lake_layout,
+        lock_ttl_sec=lock_ttl_sec,
+    )
     claimed = _gate_approval(
         root,
         "load",
@@ -148,6 +161,7 @@ def load_bronze(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
+            lake_layout=_approval_lake_layout(settings),
             set_=set_,
         ),
         approval,
@@ -156,16 +170,7 @@ def load_bronze(
     )
     try:
         with _claimed_approval_work(claimed, approval):
-            result = PipelineRunner(
-                settings=_settings(
-                    root,
-                    lake_path=lake_path,
-                    lake_path_raw=lake_path_raw,
-                    lake_path_bronze=lake_path_bronze,
-                    lake_path_ops=lake_path_ops,
-                    lock_ttl_sec=lock_ttl_sec,
-                )
-            ).load(
+            result = PipelineRunner(settings=settings).load(
                 resolved.path,
                 interval_start=start_iso,
                 interval_end=end_iso,
@@ -194,6 +199,7 @@ def run_pipeline(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
     lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
+    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     set_: list[str] = typer.Option([], "--set"),
     lock_ttl_sec: int | None = typer.Option(
         None,
@@ -211,6 +217,15 @@ def run_pipeline(
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
+    settings = _settings(
+        root,
+        lake_path=lake_path,
+        lake_path_raw=lake_path_raw,
+        lake_path_bronze=lake_path_bronze,
+        lake_path_ops=lake_path_ops,
+        lake_layout=lake_layout,
+        lock_ttl_sec=lock_ttl_sec,
+    )
     claimed = _gate_approval(
         root,
         "run",
@@ -222,6 +237,7 @@ def run_pipeline(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
+            lake_layout=_approval_lake_layout(settings),
             set_=set_,
         ),
         approval,
@@ -231,16 +247,7 @@ def run_pipeline(
     print("det: run starting…", file=sys.stderr, flush=True)
     try:
         with _claimed_approval_work(claimed, approval):
-            result = PipelineRunner(
-                settings=_settings(
-                    root,
-                    lake_path=lake_path,
-                    lake_path_raw=lake_path_raw,
-                    lake_path_bronze=lake_path_bronze,
-                    lake_path_ops=lake_path_ops,
-                    lock_ttl_sec=lock_ttl_sec,
-                )
-            ).run(
+            result = PipelineRunner(settings=settings).run(
                 resolved.path,
                 interval_start=start_iso,
                 interval_end=end_iso,

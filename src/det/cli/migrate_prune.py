@@ -7,9 +7,11 @@ import typer
 from det.cli.app import app
 from det.cli.common import (
     _APPROVAL_HELP,
+    _LAKE_LAYOUT_HELP,
     _PIPELINE_HELP,
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
+    _approval_lake_layout,
     _claimed_approval_work,
     _consume_approval,
     _gate_approval,
@@ -39,6 +41,7 @@ def migrate_bronze(
     lake_path_raw: str | None = typer.Option(None, "--lake-path-raw"),
     lake_path_bronze: str | None = typer.Option(None, "--lake-path-bronze"),
     lake_path_ops: str | None = typer.Option(None, "--lake-path-ops"),
+    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     ingestion: str = typer.Option("thin", "--ingestion"),
     dry_run: bool = typer.Option(
         False,
@@ -123,6 +126,15 @@ def migrate_bronze(
         )
     claimed = False
     if not dry_run:
+        settings = _settings(
+            root,
+            lake_path=lake_path,
+            lake_path_raw=lake_path_raw,
+            lake_path_bronze=lake_path_bronze,
+            lake_path_ops=lake_path_ops,
+            lake_layout=lake_layout,
+            lock_ttl_sec=lock_ttl_sec,
+        )
         claimed = _gate_approval(
             root,
             "migrate",
@@ -142,6 +154,7 @@ def migrate_bronze(
                 lake_path_raw=lake_path_raw,
                 lake_path_bronze=lake_path_bronze,
                 lake_path_ops=lake_path_ops,
+                lake_layout=_approval_lake_layout(settings),
                 ingestion=ingestion,
                 set_=set_,
             ),
@@ -149,18 +162,19 @@ def migrate_bronze(
             require_approval,
             ctx=ctx,
         )
+    else:
+        settings = _settings(
+            root,
+            lake_path=lake_path,
+            lake_path_raw=lake_path_raw,
+            lake_path_bronze=lake_path_bronze,
+            lake_path_ops=lake_path_ops,
+            lake_layout=lake_layout,
+            lock_ttl_sec=lock_ttl_sec,
+        )
     try:
         with _claimed_approval_work(claimed, approval):
-            result = BronzeMigrator(
-                settings=_settings(
-                    root,
-                    lake_path=lake_path,
-                    lake_path_raw=lake_path_raw,
-                    lake_path_bronze=lake_path_bronze,
-                    lake_path_ops=lake_path_ops,
-                    lock_ttl_sec=lock_ttl_sec,
-                )
-            ).migrate(
+            result = BronzeMigrator(settings=settings).migrate(
                 pipeline=resolved.path,
                 to_bronze=to_bronze,
                 schema_path=schema if schema.is_absolute() else root / schema,

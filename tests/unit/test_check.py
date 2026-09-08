@@ -303,8 +303,10 @@ def test_lake_cloud_experimental_warning(tmp_path: Path, monkeypatch):
 def test_lake_cloud_experimental_split_roots(tmp_path: Path, monkeypatch):
     """Split cloud lakes must reach lake_cloud_experimental with spec bound."""
     from det.runtime.check import _lake_mode_findings
+    from det.runtime.lake import LakeRootSpecs
 
     _write_pipeline(tmp_path)
+    monkeypatch.delenv("DET_LAKE_LAYOUT", raising=False)
     monkeypatch.setenv("DET_LAKE_MODE", "cloud")
     monkeypatch.setenv("DET_LAKE_PATH_RAW", "s3://ci-raw")
     monkeypatch.setenv("DET_LAKE_PATH_BRONZE", "s3://ci-bronze")
@@ -313,11 +315,14 @@ def test_lake_cloud_experimental_split_roots(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("DET_ICEBERG_REST_URI", raising=False)
     monkeypatch.setenv("DET_REQUIRE_APPROVAL", "1")
 
-    class _Roots:
-        bronze = "s3://ci-bronze"
-
     monkeypatch.setattr(
-        "det.runtime.lake.resolve_lake_roots", lambda *a, **k: _Roots()
+        "det.runtime.lake.resolve_lake_root_specs",
+        lambda *a, **k: LakeRootSpecs(
+            layout=2,
+            raw="s3://ci-raw",
+            bronze="s3://ci-bronze",
+            ops="s3://ci-ops",
+        ),
     )
     findings = _lake_mode_findings(tmp_path)
     assert not has_errors(findings)
@@ -375,10 +380,11 @@ def test_iceberg_glue_requires_s3_is_error(tmp_path: Path, monkeypatch):
 def test_iceberg_glue_requires_s3_uses_destination_path(
     tmp_path: Path, monkeypatch
 ):
-    """Env lake may be s3:// while destination.path is local — register uses dest."""
+    """Layout 1: env lake may be s3:// while destination.path is local — register uses dest."""
     _write_pipeline(tmp_path)
     monkeypatch.setenv("DET_ICEBERG_CATALOG", "glue")
     monkeypatch.setenv("DET_LAKE_MODE", "cloud")
+    monkeypatch.setenv("DET_LAKE_LAYOUT", "1")
     monkeypatch.setenv("DET_LAKE_PATH", "s3://bucket/det-lake")
     findings = check_project(tmp_path)
     assert has_errors(findings)
@@ -394,6 +400,7 @@ def test_iceberg_glue_split_checks_bronze_not_destination_path(
     _write_pipeline(tmp_path)
     monkeypatch.setenv("DET_ICEBERG_CATALOG", "glue")
     monkeypatch.delenv("DET_LAKE_MODE", raising=False)
+    monkeypatch.delenv("DET_LAKE_LAYOUT", raising=False)
     monkeypatch.setenv("DET_LAKE_PATH_RAW", str(tmp_path / "r"))
     monkeypatch.setenv("DET_LAKE_PATH_BRONZE", str(tmp_path / "b"))
     monkeypatch.setenv("DET_LAKE_PATH_OPS", str(tmp_path / "o"))

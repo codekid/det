@@ -383,6 +383,7 @@ def test_extract_fence_preserves_raw_dir(
     from det.runtime.manifest import is_committed_raw_dir
     from det.runtime.runner import PipelineRunner
 
+    monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path / "lake"))
     schema_src = project_root / "schemas/example_api/events/events.schema.yaml"
     schema_dst = tmp_path / "schemas/example_api/events/events.schema.yaml"
     schema_dst.parent.mkdir(parents=True)
@@ -430,6 +431,7 @@ def test_runner_fence_blocks_write_after_steal(
 
     from det.runtime.runner import PipelineRunner
 
+    monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path / "lake"))
     schema_src = project_root / "schemas/example_api/events/events.schema.yaml"
     schema_dst = tmp_path / "schemas/example_api/events/events.schema.yaml"
     schema_dst.parent.mkdir(parents=True)
@@ -507,6 +509,7 @@ def test_runner_second_extract_blocked(
 
     from det.runtime.runner import PipelineRunner
 
+    monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path / "lake"))
     schema_src = project_root / "schemas/example_api/events/events.schema.yaml"
     schema_dst = tmp_path / "schemas/example_api/events/events.schema.yaml"
     schema_dst.parent.mkdir(parents=True)

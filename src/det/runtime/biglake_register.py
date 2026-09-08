@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from det.ingestion.iceberg_catalog import resolve_metadata_location
 from det.logging import get_logger
-from det.runtime.approval import ApprovalPlan, make_plan
+from det.runtime.approval import ApprovalPlan, _lake_argv, make_plan
 from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
 from det.runtime.ids import parse_canonical_id, sql_schema_name
 from det.runtime.lake import LakeRef, resolve_lake_roots
@@ -377,6 +377,7 @@ def biglake_register_write_argv(
     lake_path_raw: str | None = None,
     lake_path_bronze: str | None = None,
     lake_path_ops: str | None = None,
+    lake_layout: int | None = None,
     pipeline: str | None = None,
     project: str | None = None,
     location: str | None = None,
@@ -384,14 +385,15 @@ def biglake_register_write_argv(
     skip_ops: bool = False,
 ) -> list[str]:
     argv = ["biglake-register", "--apply"]
-    if lake_path:
-        argv.extend(["--lake-path", lake_path])
-    if lake_path_raw:
-        argv.extend(["--lake-path-raw", lake_path_raw])
-    if lake_path_bronze:
-        argv.extend(["--lake-path-bronze", lake_path_bronze])
-    if lake_path_ops:
-        argv.extend(["--lake-path-ops", lake_path_ops])
+    argv.extend(
+        _lake_argv(
+            lake_path,
+            lake_path_raw=lake_path_raw,
+            lake_path_bronze=lake_path_bronze,
+            lake_path_ops=lake_path_ops,
+            lake_layout=lake_layout,
+        )
+    )
     if pipeline:
         argv.extend(["--pipeline", pipeline])
     if project:

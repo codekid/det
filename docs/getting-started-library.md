@@ -9,6 +9,7 @@ is separate — see the [operator README](../README.md).
 | This page | First hour for embedders |
 | [api.md](api.md) | SemVer surface (`det.__all__`), concurrency, errors |
 | [lake-layout.md](lake-layout.md) | Hive paths, `__*` meta, `lake_layout` |
+| [operator-runbook.md](operator-runbook.md) | Day-2 stuck states + deploy profiles |
 | [gcp-biglake.md](gcp-biglake.md) | Architecture C: `gs://` Iceberg bronze + BigLake + dbt-BQ |
 | [iceberg-catalog.md](iceberg-catalog.md) | `DET_ICEBERG_CATALOG=hadoop\|rest\|glue` (multi-engine metastores) |
 
@@ -97,12 +98,14 @@ source:
 schema: schemas/myco/feed/feed.schema.yaml
 destination:
   type: iceberg                # or filesystem for JSONL smoke
-  path: ./data/lake            # demo; prefer absolute / s3:// in prod
+  # path: ./data/lake          # layout 1 only (DET_LAKE_LAYOUT=1); ignored under layout 2
 wire_version: 1
 ```
 
-Schema is a JSON Schema file on disk (v1). Lake object-store credentials stay
-AWS_/GCP env conventions — not on `DetSettings`.
+Schema is a JSON Schema file on disk (v1). Lake location is process-wide via
+`DET_LAKE_PATH` / `DetSettings.lake_path` (layout 2 default) or explicit
+`lake_path_*` — not `destination.path`. Object-store credentials stay AWS_/GCP
+env conventions — not on `DetSettings`.
 
 ## 5. `DetSettings` + `PipelineRunner`
 
@@ -111,7 +114,9 @@ from det import DetSettings, PipelineRunner, list_sources, DetError, configure_l
 
 configure_logging()  # process edge; or BYO structlog + drop_secrets / scrub_secrets
 
-settings = DetSettings.from_env(project_root=".")
+settings = DetSettings.from_env(project_root=".").with_overrides(
+    lake_path="./data/lake",  # or set DET_LAKE_PATH; derives raw/bronze/ops
+)
 assert "myco.feed" in list_sources(project_root=settings.project_root)
 
 try:
@@ -133,9 +138,12 @@ PipelineRunner(settings=settings).run("myco.feed", interval_start="2026-01-01")
 Interval: start inclusive, end exclusive (default start + 1 day). Canonical
 pipeline ids work on the runner (same as the CLI).
 
-Split roots are process-wide (all pipelines). Omit them to keep layout 1
-(`DET_LAKE_PATH` / `lake_path`). Bucket names are yours — DET never assigns them.
-See [lake-layout.md](lake-layout.md) layout 2.
+Split roots are process-wide (all pipelines). Layout **2** is the default:
+`DET_LAKE_PATH` / `lake_path` derives `{path}/raw`, `{path}/bronze`, ops parent;
+or set explicit `lake_path_raw` / `lake_path_bronze` / `lake_path_ops`. Unified
+layout 1 only with `DET_LAKE_LAYOUT=1` / `lake_layout=1`. Bucket names for
+explicit split are yours — DET never assigns them. See
+[lake-layout.md](lake-layout.md) and [operator-runbook.md](operator-runbook.md).
 
 Custom secrets (no process-env mutation):
 

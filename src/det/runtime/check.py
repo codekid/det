@@ -223,6 +223,7 @@ def _dlt_lake_findings(
     """Flag leftover dlt state tables / paths under this pipeline's lake prefixes."""
     from det.destinations.models import bronze_dataset_dir, raw_dataset_dir
     from det.runtime.dlt_hygiene import dlt_hygiene_message, lake_dlt_path_hits
+    from det.runtime.lake import is_object_lake_spec
 
     findings: list[Finding] = []
     try:
@@ -231,7 +232,14 @@ def _dlt_lake_findings(
     except Exception:
         return findings
 
-    hits = lake_dlt_path_hits(raw_ds, bronze_ds)
+    # Object lakes need credentials; check must stay offline for URI shape only.
+    if is_object_lake_spec(str(raw_ds)) or is_object_lake_spec(str(bronze_ds)):
+        return findings
+
+    try:
+        hits = lake_dlt_path_hits(raw_ds, bronze_ds)
+    except Exception:
+        return findings
     for path_str in hits:
         findings.append(
             Finding(
@@ -383,8 +391,7 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
         ENV_LAKE_PATH_RAW,
         is_split_lake_configured,
         lake_mode_from_env,
-        pick_lake_spec,
-        resolve_lake_roots,
+        resolve_lake_root_specs,
         split_lake_specs_from_settings,
         validate_lake_mode,
     )
@@ -407,7 +414,6 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
         return findings
 
     settings = DetSettings.from_env(project_root=project_root)
-    spec = pick_lake_spec()
     if is_split_lake_configured(settings):
         raw, bronze, ops = split_lake_specs_from_settings(settings)
         missing = [
@@ -433,20 +439,30 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
                 )
             )
             return findings
-        try:
-            roots = resolve_lake_roots(settings, project_root=project_root)
-        except ValueError as exc:
-            findings.append(
-                Finding(
-                    severity="error",
-                    code="lake_split_invalid",
-                    pipeline="*",
-                    path=None,
-                    detail=str(exc),
-                )
+    try:
+        specs = resolve_lake_root_specs(settings, project_root=project_root)
+    except ValueError as exc:
+        detail = str(exc)
+        code = (
+            "lake_mode_mismatch"
+            if "DET_LAKE_MODE" in detail
+            else "lake_roots_invalid"
+        )
+        findings.append(
+            Finding(
+                severity="error",
+                code=code,
+                pipeline="*",
+                path=None,
+                detail=detail,
             )
-            return findings
-        spec = str(roots.bronze)
+        )
+        return findings
+
+    layer_specs: tuple[str, ...]
+    if specs.is_split:
+        spec = specs.bronze
+        layer_specs = (specs.raw, specs.bronze, specs.ops)
         for path in discover_pipeline_files(project_root):
             try:
                 cfg = load_pipeline(path, project_root=project_root)
@@ -460,21 +476,27 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
                         pipeline=cfg.name,
                         path=str(path),
                         detail=(
-                            "destination.path is ignored in split lake mode; "
-                            "use DET_LAKE_PATH_RAW / _BRONZE / _OPS (or DetSettings)"
+                            "destination.path is ignored in split lake mode "
+                            "(layout 2 default or DET_LAKE_PATH_*); use "
+                            "DET_LAKE_PATH / derived roots or explicit "
+                            "DET_LAKE_PATH_RAW / _BRONZE / _OPS"
                         ),
                     )
                 )
     else:
+        spec = specs.unified_spec or specs.ops
+        layer_specs = (spec,)
+
+    for layer in layer_specs:
         try:
-            validate_lake_mode(spec, mode)
+            validate_lake_mode(layer, mode)
         except ValueError as exc:
             findings.append(
                 Finding(
                     severity="error",
                     code="lake_mode_mismatch",
                     pipeline="*",
-                    path=spec,
+                    path=layer,
                     detail=str(exc),
                 )
             )
@@ -575,10 +597,10 @@ def _iceberg_glue_lake_findings(project_root: Path) -> list[Finding]:
 
     from det.runtime.iceberg_register import _lake_uri_str, _require_register_catalog
     from det.runtime.lake import (
-        is_split_lake_configured,
+        is_object_lake_spec,
         open_lake,
         pick_lake_spec,
-        resolve_lake_roots,
+        resolve_lake_root_specs,
     )
     from det.runtime.settings import DetSettings
 
@@ -592,13 +614,16 @@ def _iceberg_glue_lake_findings(project_root: Path) -> list[Finding]:
         if not key or key in checked:
             return
         checked.add(key)
-        try:
-            lake = open_lake(lake_spec, root, env=environ)
-            lake_uri = _lake_uri_str(lake)
-        except ValueError:
-            # Mode mismatch etc. — still validate the effective spec string
-            # registration would pick (destination.path wins over DET_LAKE_PATH).
-            lake_uri = key
+        if is_object_lake_spec(key) or key.startswith("memory://"):
+            lake_uri = key.rstrip("/")
+        else:
+            try:
+                lake = open_lake(lake_spec, root, env=environ)
+                lake_uri = _lake_uri_str(lake)
+            except ValueError:
+                # Mode mismatch etc. — still validate the effective spec string
+                # registration would pick (destination.path wins over DET_LAKE_PATH).
+                lake_uri = key
         try:
             _require_register_catalog(environ, lake_uri)
         except ValueError as exc:
@@ -616,14 +641,12 @@ def _iceberg_glue_lake_findings(project_root: Path) -> list[Finding]:
             )
 
     settings = DetSettings.from_env(project_root=root)
-    if is_split_lake_configured(settings, env=environ):
-        try:
-            roots = resolve_lake_roots(
-                settings, project_root=root, env=environ
-            )
-        except ValueError:
-            return findings
-        _check("*", str(roots.bronze))
+    try:
+        specs = resolve_lake_root_specs(settings, project_root=root, env=environ)
+    except ValueError:
+        return findings
+    if specs.is_split:
+        _check("*", specs.bronze)
         return findings
 
     # Layout 1: same precedence as iceberg-register (destination.path then DET_LAKE_PATH).

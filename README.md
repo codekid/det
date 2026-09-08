@@ -7,7 +7,7 @@ Extract → **raw** (wire bytes) → **bronze** (typed Iceberg). **dbt** owns si
 
 | Audience | Start here |
 | --- | --- |
-| **Operator** (this monorepo: CLI, examples, dbt, Airflow, MCP) | [Try it](#try-it-fixtures-no-noaa-download) below |
+| **Operator** (this monorepo: CLI, examples, dbt, Airflow, MCP) | [Try it](#try-it-fixtures-no-noaa-download) · [Day-2 runbook](docs/operator-runbook.md) |
 | **Library** (embed extract→raw→bronze in your app) | **[docs/getting-started-library.md](docs/getting-started-library.md)** · [docs/api.md](docs/api.md) |
 
 This checkout is the operator product **and** the library source. Embedders install
@@ -126,11 +126,14 @@ Greenfield: `det init-pipeline --name example_api.events --source-type example_a
 
 ## Destinations
 
-Lake root: `DET_LAKE_PATH` / `--lake-path` (default `./data/lake`). Same hive under
-one root (`raw/` + `bronze/` prefixes) for layout 1. Optional **layout 2** split
-roots: `DET_LAKE_PATH_RAW` / `_BRONZE` / `_OPS` (or `DetSettings.lake_path_*`) —
-arbitrary bucket URIs you choose; flattened `{provider}/{source}_vN` under each.
-There is no `destination.type: s3`. See [docs/lake-layout.md](docs/lake-layout.md).
+Lake root: `DET_LAKE_PATH` / `--lake-path` (default `./data/lake`). **Layout 2
+(default)** derives `{path}/raw`, `{path}/bronze`, and ops=`{path}` (same on-disk
+tree as the old unified layout; writers stamp `lake_layout: 2`). Explicit split
+roots: `DET_LAKE_PATH_RAW` / `_BRONZE` / `_OPS` (arbitrary bucket URIs; flattened
+`{provider}/{source}_vN`). **Layout 1** (unified single root, medallion prefixes,
+`destination.path` allowed): `DET_LAKE_LAYOUT=1` / `--lake-layout 1`. See
+[docs/lake-layout.md](docs/lake-layout.md) and
+[docs/operator-runbook.md](docs/operator-runbook.md).
 
 **`DET_LAKE_MODE`** (policy around the URI; unset → `local`):
 
@@ -152,7 +155,7 @@ Publish existing Hadoop tables with `det iceberg-register --dry-run` then
 
 | `destination.type` | Bronze |
 | --- | --- |
-| **`iceberg`** | Default. Parquet table at `<lake>/bronze/<provider>/<source>_vN/` |
+| **`iceberg`** | Default. Layout 2 derived: `{DET_LAKE_PATH}/bronze/<provider>/<source>_vN/`. Explicit split: `{DET_LAKE_PATH_BRONZE}/<provider>/<source>_vN/`. Layout 1: `{destination.path or DET_LAKE_PATH}/bronze/…` (`--lake-path` overrides both). |
 | `filesystem` | Hive JSONL (thin / fixtures). Cannot share that path with Iceberg |
 | `duckdb` | `bronze_{provider}.{source}_vN` — needs `connection` |
 | `postgres` | Same SQL names — `connection_env: DET_POSTGRES_DSN` (never a DSN in YAML) |
@@ -269,6 +272,7 @@ configs/pipelines/       provider.source YAML
 schemas/                 bronze JSON Schema
 docs/api.md              public Python API (SemVer / __all__)
 docs/getting-started-library.md  embedder first hour
+docs/operator-runbook.md  day-2 stuck states + deploy profiles
 docs/lake-layout.md      hive / SQL compatibility
 docs/gcp-biglake.md      gs:// Iceberg + BigLake + dbt-BQ (architecture C)
 dbt/                     silver + gold + ops

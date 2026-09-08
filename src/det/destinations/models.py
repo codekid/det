@@ -59,14 +59,17 @@ def _is_split(
     cli_bronze: str | None,
     cli_ops: str | None,
 ) -> bool:
-    from det.runtime.lake import is_split_lake_configured
+    """True when effective layout is split (explicit three roots or default L2)."""
+    from det.runtime.lake import is_split_lake_configured, lake_layout_preference
 
-    return is_split_lake_configured(
+    if is_split_lake_configured(
         settings,
         cli_lake_path_raw=cli_raw,
         cli_lake_path_bronze=cli_bronze,
         cli_lake_path_ops=cli_ops,
-    )
+    ):
+        return True
+    return lake_layout_preference(settings) >= 2
 
 
 def lake_root(

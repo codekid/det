@@ -7,6 +7,7 @@ import typer
 from det.cli.app import app
 from det.cli.common import (
     _APPROVAL_HELP,
+    _LAKE_LAYOUT_HELP,
     _LAKE_PATH_BRONZE_HELP,
     _LAKE_PATH_HELP,
     _LAKE_PATH_OPS_HELP,
@@ -14,6 +15,7 @@ from det.cli.common import (
     _PIPELINE_HELP,
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
+    _approval_lake_layout,
     _claimed_approval_work,
     _consume_approval,
     _gate_approval,
@@ -175,6 +177,7 @@ def biglake_register_cmd(
     lake_path_ops: str | None = typer.Option(
         None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
     ),
+    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     project: str | None = typer.Option(None, "--project", help="GCP project (DET_GCP_PROJECT)"),
     location: str | None = typer.Option(None, "--location", help="BQ location (DET_BQ_LOCATION)"),
     connection: str | None = typer.Option(
@@ -218,12 +221,14 @@ def biglake_register_cmd(
         lake_path_raw=lake_path_raw,
         lake_path_bronze=lake_path_bronze,
         lake_path_ops=lake_path_ops,
+        lake_layout=lake_layout,
     )
     argv = biglake_register_write_argv(
         lake_path=lake_path,
         lake_path_raw=lake_path_raw,
         lake_path_bronze=lake_path_bronze,
         lake_path_ops=lake_path_ops,
+        lake_layout=_approval_lake_layout(settings),
         pipeline=pipe_id,
         project=project,
         location=location,
@@ -282,6 +287,7 @@ def iceberg_register_cmd(
     lake_path_ops: str | None = typer.Option(
         None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
     ),
+    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     skip_ops: bool = typer.Option(False, "--skip-ops", help="Do not register ops.run_receipts"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview registration plan only"),
     apply: bool = typer.Option(False, "--apply", help="Register tables into REST/Glue catalog"),
@@ -319,6 +325,7 @@ def iceberg_register_cmd(
         lake_path_raw=lake_path_raw,
         lake_path_bronze=lake_path_bronze,
         lake_path_ops=lake_path_ops,
+        lake_layout=lake_layout,
     )
     try:
         with use_settings(settings):
@@ -337,6 +344,7 @@ def iceberg_register_cmd(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
+            lake_layout=_approval_lake_layout(settings),
             pipeline=pipe_id,
             skip_ops=skip_ops,
         ),
@@ -443,6 +451,7 @@ def lock_release(
     lake_path_ops: str | None = typer.Option(
         None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
     ),
+    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
@@ -497,6 +506,7 @@ def lock_release(
         lake_path_raw=lake_path_raw,
         lake_path_bronze=lake_path_bronze,
         lake_path_ops=lake_path_ops,
+        lake_layout=lake_layout,
     )
     options = resolve_lease_options(settings=settings, pipeline=config)
     lake = lake_root(config.destination, root, cli_lake_path=lake_path, settings=settings)
@@ -511,6 +521,7 @@ def lock_release(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
+            lake_layout=_approval_lake_layout(settings),
             dataset_id=dataset_id,
         ),
         approval,

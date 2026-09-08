@@ -21,10 +21,11 @@ from det.runtime.lake import (
     clear_memory_lakes,
     is_split_lake_configured,
     reset_lake_mode_warning_for_tests,
+    resolve_lake_root_specs,
     resolve_lake_roots,
     validate_lake_roots,
 )
-from det.runtime.settings import DetSettings
+from det.runtime.settings import DetSettings, use_settings
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +33,7 @@ def _reset_memory(monkeypatch: pytest.MonkeyPatch):
     clear_memory_lakes()
     reset_lake_mode_warning_for_tests()
     monkeypatch.delenv("DET_LAKE_MODE", raising=False)
+    monkeypatch.delenv("DET_LAKE_LAYOUT", raising=False)
     for key in (
         "DET_LAKE_PATH",
         "DET_LAKE_PATH_RAW",
@@ -57,13 +59,38 @@ def _pipeline(tmp_path: Path) -> PipelineConfig:
     )
 
 
-def test_resolve_unified_default(tmp_path: Path) -> None:
+def test_resolve_derived_split_default(tmp_path: Path) -> None:
     settings = DetSettings.from_env(project_root=tmp_path)
+    roots = resolve_lake_roots(settings, project_root=tmp_path)
+    assert roots.layout == 2
+    assert roots.is_split
+    parent = (tmp_path / DEFAULT_LAKE_REL).resolve()
+    assert Path(str(roots.raw)).resolve() == (parent / "raw").resolve()
+    assert Path(str(roots.bronze)).resolve() == (parent / "bronze").resolve()
+    assert Path(str(roots.ops)).resolve() == parent.resolve()
+    assert roots.unified_spec is None
+
+
+def test_resolve_unified_with_layout_1(tmp_path: Path) -> None:
+    settings = DetSettings.from_env(project_root=tmp_path).with_overrides(
+        lake_layout=1
+    )
     roots = resolve_lake_roots(settings, project_root=tmp_path)
     assert roots.layout == 1
     assert not roots.is_split
     assert roots.raw == roots.bronze == roots.ops
-    assert roots.unified_spec == DEFAULT_LAKE_REL
+    assert Path(str(roots.ops)).resolve() == (tmp_path / DEFAULT_LAKE_REL).resolve()
+
+
+def test_layout_1_conflicts_with_split_roots(tmp_path: Path) -> None:
+    settings = DetSettings.from_env(project_root=tmp_path).with_overrides(
+        lake_layout=1,
+        lake_path_raw=str(tmp_path / "r"),
+        lake_path_bronze=str(tmp_path / "b"),
+        lake_path_ops=str(tmp_path / "o"),
+    )
+    with pytest.raises(ValueError, match="cannot be combined"):
+        resolve_lake_roots(settings, project_root=tmp_path)
 
 
 def test_resolve_split_from_settings_overrides(tmp_path: Path) -> None:
@@ -108,7 +135,6 @@ def test_dataset_dirs_flattened_in_layout_2(tmp_path: Path) -> None:
         lake_path_ops=str(ops),
     )
     cfg = _pipeline(tmp_path)
-    from det.runtime.settings import use_settings
 
     with use_settings(settings):
         raw_dir = raw_dataset_dir(cfg, tmp_path, settings=settings)
@@ -122,14 +148,33 @@ def test_dataset_dirs_flattened_in_layout_2(tmp_path: Path) -> None:
     assert "bronze" not in Path(str(bronze_dir)).parts[-3:]
 
 
-def test_dataset_dirs_prefixed_in_layout_1(tmp_path: Path) -> None:
+def test_derived_default_dataset_dirs_match_layout1_paths(tmp_path: Path) -> None:
     lake = tmp_path / "lake"
     settings = DetSettings.from_env(project_root=tmp_path).with_overrides(
         lake_path=str(lake)
     )
     cfg = _pipeline(tmp_path)
-    raw_dir = raw_dataset_dir(cfg, tmp_path, settings=settings)
-    bronze_dir = bronze_dataset_dir(cfg, tmp_path, settings=settings)
+    with use_settings(settings):
+        raw_dir = raw_dataset_dir(cfg, tmp_path, settings=settings)
+        bronze_dir = bronze_dataset_dir(cfg, tmp_path, settings=settings)
+    assert Path(str(raw_dir)).resolve() == (
+        lake / "raw" / "example_api" / "events_v1"
+    ).resolve()
+    assert Path(str(bronze_dir)).resolve() == (
+        lake / "bronze" / "example_api" / "events_v1"
+    ).resolve()
+
+
+def test_dataset_dirs_prefixed_in_layout_1(tmp_path: Path) -> None:
+    lake = tmp_path / "lake"
+    settings = DetSettings.from_env(project_root=tmp_path).with_overrides(
+        lake_path=str(lake),
+        lake_layout=1,
+    )
+    cfg = _pipeline(tmp_path)
+    with use_settings(settings):
+        raw_dir = raw_dataset_dir(cfg, tmp_path, settings=settings)
+        bronze_dir = bronze_dataset_dir(cfg, tmp_path, settings=settings)
     assert Path(str(raw_dir)).resolve() == (
         lake / "raw" / "example_api" / "events_v1"
     ).resolve()
@@ -189,6 +234,27 @@ def test_validate_split_rejects_mixed_object_schemes() -> None:
     )
     with pytest.raises(ValueError, match="URI kind"):
         validate_lake_roots(roots, mode="cloud")
+
+
+def test_resolve_specs_rejects_mixed_schemes_and_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("DET_LAKE_LAYOUT", raising=False)
+    settings = DetSettings.from_env(project_root=tmp_path).with_overrides(
+        lake_mode="cloud",
+        lake_path_raw="s3://acme-raw",
+        lake_path_bronze="gs://acme-bronze",
+        lake_path_ops="s3://acme-ops",
+    )
+    with pytest.raises(ValueError, match="URI kind"):
+        resolve_lake_root_specs(settings, project_root=tmp_path)
+
+    local_s3 = DetSettings.from_env(project_root=tmp_path).with_overrides(
+        lake_mode="local",
+        lake_path="s3://bucket/lake",
+    )
+    with pytest.raises(ValueError, match="DET_LAKE_MODE=local"):
+        resolve_lake_root_specs(local_s3, project_root=tmp_path)
 
 
 def test_validate_split_allows_matching_s3_schemes() -> None:

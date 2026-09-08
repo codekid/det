@@ -82,6 +82,18 @@ def _isolate_approval_policy(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_lake_layout(monkeypatch: pytest.MonkeyPatch):
+    """Keep the main suite on layout 1 so ``destination.path`` isolates lakes.
+
+    Runtime default is layout **2**, which ignores ``destination.path``. CI also
+    sets a shared ``DET_LAKE_PATH``, so without this every extract would collide
+    on the job lake. Layout-2 default / derive coverage lives in tests that
+    ``delenv("DET_LAKE_LAYOUT")`` (e.g. ``test_lake_roots``).
+    """
+    monkeypatch.setenv("DET_LAKE_LAYOUT", "1")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_iceberg_catalog(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest):
     """Keep the main suite on Hadoop when CI/local Polaris REST env is present.
 

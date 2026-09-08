@@ -3,10 +3,11 @@
 The lake root is a runtime location (default ``./data/lake``), not a per-pipeline
 contract. ``destination.type`` still only chooses bronze serving.
 
-Layout 1: one root (``DET_LAKE_PATH``) with ``raw/`` + ``bronze/`` prefixes.
-Layout 2: split roots (``DET_LAKE_PATH_RAW`` / ``_BRONZE`` / ``_OPS``) with
-flattened dataset paths. Embedders choose arbitrary URIs — DET never assigns
-bucket names.
+Layout **2** (default): split roots — explicit ``DET_LAKE_PATH_{RAW,BRONZE,OPS}``
+or derived from ``DET_LAKE_PATH`` as ``{path}/raw``, ``{path}/bronze``, ops =
+``{path}``. Layout **1** (unified): ``DET_LAKE_LAYOUT=1`` / ``--lake-layout 1``.
+Embedders choose arbitrary URIs for explicit split — DET never assigns bucket
+names.
 
 ``DET_LAKE_MODE`` (local|cloud) is policy around the URI shape — not a second
 writer path. Unset defaults to local.
@@ -71,23 +72,32 @@ from det.runtime.lake.open import (
 )
 from det.runtime.lake.ref import LakeRef, _match_rglob
 from det.runtime.lake.roots import (
+    ENV_LAKE_LAYOUT,
     LakeRoots,
+    LakeRootSpecs,
+    _join_lake_child,
     _lake_uri_kind,
     _layer_spec,
     is_split_lake_configured,
+    lake_layout_from_env,
+    lake_layout_preference,
+    resolve_lake_root_specs,
     resolve_lake_roots,
     split_lake_specs_from_settings,
+    validate_lake_root_specs,
     validate_lake_roots,
 )
 
 __all__ = [
     "DEFAULT_LAKE_REL",
+    "ENV_LAKE_LAYOUT",
     "ENV_LAKE_MODE",
     "ENV_LAKE_PATH_BRONZE",
     "ENV_LAKE_PATH_OPS",
     "ENV_LAKE_PATH_RAW",
     "LakeMode",
     "LakeRef",
+    "LakeRootSpecs",
     "LakeRoots",
     "ObjectCasUnsupported",
     "ObjectVersionConflict",
@@ -95,15 +105,19 @@ __all__ = [
     "is_lake_uri",
     "is_object_lake_spec",
     "is_split_lake_configured",
+    "lake_layout_from_env",
+    "lake_layout_preference",
     "lake_mode_from_env",
     "open_lake",
     "os",
     "pick_lake_spec",
     "relpath",
     "reset_lake_mode_warning_for_tests",
+    "resolve_lake_root_specs",
     "resolve_lake_roots",
     "split_lake_specs_from_settings",
     "validate_lake_mode",
+    "validate_lake_root_specs",
     "validate_lake_roots",
     "_Backend",
     "_CLOUD_EXPERIMENTAL_WARNED",
@@ -120,6 +134,7 @@ __all__ = [
     "_is_local_sidecar",
     "_is_not_found",
     "_is_precondition_failed",
+    "_join_lake_child",
     "_lake_uri_kind",
     "_layer_spec",
     "_local_cas_guard",

@@ -108,6 +108,7 @@ def test_minio_split_three_buckets_extract_load(
         "DET_LAKE_PATH_RAW",
         "DET_LAKE_PATH_BRONZE",
         "DET_LAKE_PATH_OPS",
+        "DET_LAKE_LAYOUT",
     ):
         monkeypatch.delenv(key, raising=False)
 
