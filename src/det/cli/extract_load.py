@@ -8,6 +8,11 @@ import typer
 from det.cli.app import app
 from det.cli.common import (
     _APPROVAL_HELP,
+    _LAKE_LAYOUT_HELP,
+    _LAKE_PATH_BRONZE_HELP,
+    _LAKE_PATH_HELP,
+    _LAKE_PATH_OPS_HELP,
+    _LAKE_PATH_RAW_HELP,
     _PIPELINE_HELP,
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
@@ -19,11 +24,6 @@ from det.cli.common import (
     _resolve_pipeline,
     _settings,
 )
-
-_LAKE_PATH_HELP = "Unified lake root (layout 1). Ignored when split roots are set."
-_LAKE_PATH_RAW_HELP = "Raw layer root URI (layout 2; requires bronze + ops)."
-_LAKE_PATH_BRONZE_HELP = "Bronze layer root URI (layout 2; requires raw + ops)."
-_LAKE_PATH_OPS_HELP = "Ops layer root URI for runs/locks (layout 2; requires raw + bronze)."
 
 
 @app.command("extract")
@@ -39,6 +39,7 @@ def extract_raw(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
     lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
+    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     set_: list[str] = typer.Option([], "--set"),
     lock_ttl_sec: int | None = typer.Option(
         None,
@@ -69,6 +70,7 @@ def extract_raw(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
+            lake_layout=lake_layout,
             set_=set_,
         ),
         approval,
@@ -84,6 +86,7 @@ def extract_raw(
                     lake_path_raw=lake_path_raw,
                     lake_path_bronze=lake_path_bronze,
                     lake_path_ops=lake_path_ops,
+                    lake_layout=lake_layout,
                     lock_ttl_sec=lock_ttl_sec,
                 )
             ).extract(
@@ -119,6 +122,7 @@ def load_bronze(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
     lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
+    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     set_: list[str] = typer.Option([], "--set"),
     lock_ttl_sec: int | None = typer.Option(
         None,
@@ -148,6 +152,7 @@ def load_bronze(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
+            lake_layout=lake_layout,
             set_=set_,
         ),
         approval,
@@ -163,6 +168,7 @@ def load_bronze(
                     lake_path_raw=lake_path_raw,
                     lake_path_bronze=lake_path_bronze,
                     lake_path_ops=lake_path_ops,
+                    lake_layout=lake_layout,
                     lock_ttl_sec=lock_ttl_sec,
                 )
             ).load(
@@ -194,6 +200,7 @@ def run_pipeline(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
     lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
+    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     set_: list[str] = typer.Option([], "--set"),
     lock_ttl_sec: int | None = typer.Option(
         None,
@@ -222,6 +229,7 @@ def run_pipeline(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
+            lake_layout=lake_layout,
             set_=set_,
         ),
         approval,
@@ -238,6 +246,7 @@ def run_pipeline(
                     lake_path_raw=lake_path_raw,
                     lake_path_bronze=lake_path_bronze,
                     lake_path_ops=lake_path_ops,
+                    lake_layout=lake_layout,
                     lock_ttl_sec=lock_ttl_sec,
                 )
             ).run(

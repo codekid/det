@@ -14,10 +14,8 @@ from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_pat
 from det.runtime.ids import dbt_model_slug, sql_names_for_config
 from det.runtime.lake import (
     is_object_lake_spec,
-    is_split_lake_configured,
     open_lake,
-    pick_lake_spec,
-    split_lake_specs_from_settings,
+    resolve_lake_root_specs,
 )
 from det.runtime.settings import get_active_settings
 
@@ -251,41 +249,23 @@ def run_dbt(
             return text.rstrip("/")
         return str(open_lake(text, root, env=env))
 
-    if is_split_lake_configured(active, env=env):
-        raw_s, bronze_s, ops_s = split_lake_specs_from_settings(active, env=env)
-        missing = [
-            n
-            for n, s in (
-                ("DET_LAKE_PATH_RAW", raw_s),
-                ("DET_LAKE_PATH_BRONZE", bronze_s),
-                ("DET_LAKE_PATH_OPS", ops_s),
-            )
-            if s is None
-        ]
-        if missing:
-            raise ValueError(
-                "split lake mode requires all three layer roots; "
-                f"missing {', '.join(missing)}"
-            )
-        env["DET_LAKE_PATH_RAW"] = _uri(raw_s)  # type: ignore[arg-type]
-        env["DET_LAKE_PATH_BRONZE"] = _uri(bronze_s)  # type: ignore[arg-type]
-        env["DET_LAKE_PATH_OPS"] = _uri(ops_s)  # type: ignore[arg-type]
+    dest_path = config.destination.path if config is not None else None
+    specs = resolve_lake_root_specs(
+        active,
+        project_root=root,
+        cli_lake_path=spec_cli,
+        destination_path=dest_path,
+        env=env,
+    )
+    if specs.is_split:
+        env["DET_LAKE_PATH_RAW"] = _uri(specs.raw)
+        env["DET_LAKE_PATH_BRONZE"] = _uri(specs.bronze)
+        env["DET_LAKE_PATH_OPS"] = _uri(specs.ops)
         lake_uri = env["DET_LAKE_PATH_BRONZE"]
         env["DET_LAKE_PATH"] = lake_uri
         catchup_lake = env["DET_LAKE_PATH_OPS"]
     else:
-        override = spec_cli
-        settings_lake = active.lake_path if active is not None else None
-        if active is not None and (override is None or not str(override).strip()):
-            override = active.lake_override
-        dest_path = config.destination.path if config is not None else None
-        spec = pick_lake_spec(
-            cli_lake_path=override,
-            destination_path=dest_path,
-            settings_lake_path=settings_lake,
-            env=env,
-        )
-        lake_uri = _uri(spec)
+        lake_uri = _uri(specs.unified_spec or specs.ops)
         env["DET_LAKE_PATH"] = lake_uri
         catchup_lake = lake_uri
 

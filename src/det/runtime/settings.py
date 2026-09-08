@@ -16,7 +16,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from det.runtime.lake import LakeMode, lake_mode_from_env
+from det.runtime.lake import LakeMode, lake_layout_from_env, lake_mode_from_env
+from det.runtime.lake.roots import _validate_layout_value
 from det.runtime.lease import (
     DEFAULT_LOCK_BACKEND,
     DEFAULT_LOCK_MODE,
@@ -152,6 +153,8 @@ class DetSettings:
     lock_pg_dsn_env: str
     lock_pg_schema: str
     lock_pg_table: str
+    # Layout preference: None = follow env default (2); 1 = unified; 2 = split.
+    lake_layout: int | None = None
     # Layout 1 unified root. CLI ``--lake-path`` wins via lake_override.
     lake_override: str | None = None
     # Layout 2 split roots (opaque URIs; embedders choose bucket names).
@@ -184,6 +187,9 @@ class DetSettings:
         lake_path_raw = (environ.get("DET_LAKE_PATH_RAW") or "").strip() or None
         lake_path_bronze = (environ.get("DET_LAKE_PATH_BRONZE") or "").strip() or None
         lake_path_ops = (environ.get("DET_LAKE_PATH_OPS") or "").strip() or None
+        # Persist explicit env choice only; unset → None so preference stays 2.
+        layout_raw = (environ.get("DET_LAKE_LAYOUT") or "").strip()
+        lake_layout = lake_layout_from_env(environ) if layout_raw else None
         backend = resolve_secrets_backend(environ)
         ttl = cache_ttl_sec(environ)
         secrets_path = (
@@ -225,6 +231,7 @@ class DetSettings:
             lock_pg_table=(environ.get("DET_LOCK_PG_TABLE") or "").strip()
             or DEFAULT_LOCK_PG_TABLE,
             lake_override=None,
+            lake_layout=lake_layout,
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
@@ -239,6 +246,7 @@ class DetSettings:
         *,
         lake_path: Any = _MISSING,
         lake_override: Any = _MISSING,
+        lake_layout: Any = _MISSING,
         lake_path_raw: Any = _MISSING,
         lake_path_bronze: Any = _MISSING,
         lake_path_ops: Any = _MISSING,
@@ -265,6 +273,13 @@ class DetSettings:
             kwargs["lake_path"] = lake_path
         if lake_override is not _MISSING:
             kwargs["lake_override"] = lake_override
+        if lake_layout is not _MISSING:
+            if lake_layout is None:
+                kwargs["lake_layout"] = None
+            else:
+                kwargs["lake_layout"] = _validate_layout_value(
+                    lake_layout, where="lake_layout"
+                )
         if lake_path_raw is not _MISSING:
             kwargs["lake_path_raw"] = lake_path_raw
         if lake_path_bronze is not _MISSING:

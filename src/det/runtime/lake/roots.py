@@ -25,6 +25,8 @@ from det.runtime.lake.ref import LakeRef
 if TYPE_CHECKING:
     from det.runtime.settings import DetSettings
 
+ENV_LAKE_LAYOUT = "DET_LAKE_LAYOUT"
+
 
 @dataclass(frozen=True)
 class LakeRoots:
@@ -44,6 +46,63 @@ class LakeRoots:
     @property
     def is_split(self) -> bool:
         return self.layout >= 2
+
+
+def _join_lake_child(parent_spec: str, child: str) -> str:
+    """Append a path segment to a lake URI or filesystem path."""
+    text = (parent_spec or "").strip().rstrip("/")
+    name = (child or "").strip().strip("/")
+    if not name:
+        raise ValueError("lake child segment must be non-empty")
+    if not text:
+        return name
+    if text.startswith("memory://"):
+        rest = text[len("memory://") :].rstrip("/")
+        return f"memory://{rest}/{name}" if rest else f"memory://{name}"
+    for scheme in _OBJECT_SCHEMES:
+        if text.startswith(scheme):
+            return f"{text}/{name}"
+    return str(Path(text) / name)
+
+
+def lake_layout_preference(
+    settings: DetSettings | None = None,
+    *,
+    cli_lake_layout: int | None = None,
+    env: Mapping[str, str] | None = None,
+) -> int:
+    """Return preferred lake layout (1 = unified, 2 = split default).
+
+    Unset env / settings → ``2``. Explicit ``1`` opts into unified layout.
+    """
+    if cli_lake_layout is not None:
+        return _validate_layout_value(cli_lake_layout, where="--lake-layout")
+    if settings is not None and settings.lake_layout is not None:
+        return _validate_layout_value(settings.lake_layout, where="DetSettings.lake_layout")
+    return lake_layout_from_env(env)
+
+
+def lake_layout_from_env(env: Mapping[str, str] | None = None) -> int:
+    """Parse ``DET_LAKE_LAYOUT``. Unset or empty → ``2`` (split default)."""
+    environ = os.environ if env is None else env
+    raw = (environ.get(ENV_LAKE_LAYOUT) or "").strip()
+    if not raw:
+        return 2
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"{ENV_LAKE_LAYOUT} must be 1 or 2, got {raw!r}"
+        ) from exc
+    return _validate_layout_value(value, where=ENV_LAKE_LAYOUT)
+
+
+def _validate_layout_value(value: object, *, where: str) -> int:
+    if type(value) is not int:
+        raise ValueError(f"{where} must be an int, got {value!r}")
+    if value not in (1, 2):
+        raise ValueError(f"{where} must be 1 or 2, got {value!r}")
+    return value
 
 
 def _layer_spec(
@@ -117,7 +176,7 @@ def is_split_lake_configured(
     cli_lake_path_ops: str | None = None,
     env: Mapping[str, str] | None = None,
 ) -> bool:
-    """True when any layout-2 layer root is set (CLI / settings / env)."""
+    """True when any explicit layout-2 layer root is set (CLI / settings / env)."""
     raw, bronze, ops = split_lake_specs_from_settings(
         settings,
         cli_lake_path_raw=cli_lake_path_raw,
@@ -166,7 +225,22 @@ def validate_lake_roots(
         )
 
 
-def resolve_lake_roots(
+@dataclass(frozen=True)
+class LakeRootSpecs:
+    """URI/path strings for lake layers without opening backends."""
+
+    layout: int
+    raw: str
+    bronze: str
+    ops: str
+    unified_spec: str | None = None
+
+    @property
+    def is_split(self) -> bool:
+        return self.layout >= 2
+
+
+def resolve_lake_root_specs(
     settings: DetSettings | None = None,
     *,
     project_root: Path | None = None,
@@ -174,28 +248,23 @@ def resolve_lake_roots(
     cli_lake_path_raw: str | None = None,
     cli_lake_path_bronze: str | None = None,
     cli_lake_path_ops: str | None = None,
+    cli_lake_layout: int | None = None,
     destination_path: str | None = None,
     env: Mapping[str, str] | None = None,
-) -> LakeRoots:
+) -> LakeRootSpecs:
     """
-    Resolve process-wide lake roots from settings / env / CLI.
+    Resolve lake layer URI strings (no ``open_lake``).
 
-    Split (layout 2) when any of ``DET_LAKE_PATH_{RAW,BRONZE,OPS}`` (or
-    settings/CLI equivalents) is set — all three required. Unified (layout 1)
-    otherwise; ``destination_path`` applies only in unified mode.
+    Same decision order as :func:`resolve_lake_roots`. Use this for check / env
+    wiring that must not import object-store clients or touch credentials.
     """
     from det.runtime.settings import get_active_settings
 
     active = settings if settings is not None else get_active_settings()
     environ = os.environ if env is None else env
-    root = project_root
-    mode: LakeMode | None = None
-    if active is not None:
-        root = active.project_root if root is None else root
-        mode = active.lake_mode
-    if root is None:
-        root = Path.cwd()
-    mode = mode if mode is not None else lake_mode_from_env(environ)
+    layout_pref = lake_layout_preference(
+        active, cli_lake_layout=cli_lake_layout, env=environ
+    )
 
     raw_spec, bronze_spec, ops_spec = split_lake_specs_from_settings(
         active,
@@ -205,6 +274,11 @@ def resolve_lake_roots(
         env=environ,
     )
     if any(v is not None for v in (raw_spec, bronze_spec, ops_spec)):
+        if layout_pref == 1:
+            raise ValueError(
+                "DET_LAKE_LAYOUT=1 (unified) cannot be combined with "
+                "DET_LAKE_PATH_RAW / _BRONZE / _OPS"
+            )
         missing = [
             name
             for name, spec in (
@@ -219,16 +293,13 @@ def resolve_lake_roots(
                 "split lake mode requires all three layer roots "
                 f"(raw, bronze, ops); missing {', '.join(missing)}"
             )
-        # Narrowed by missing check above.
-        roots = LakeRoots(
-            raw=open_lake(raw_spec, root, lake_mode=mode, env=environ),  # type: ignore[arg-type]
-            bronze=open_lake(bronze_spec, root, lake_mode=mode, env=environ),  # type: ignore[arg-type]
-            ops=open_lake(ops_spec, root, lake_mode=mode, env=environ),  # type: ignore[arg-type]
+        return LakeRootSpecs(
             layout=2,
+            raw=raw_spec,  # type: ignore[arg-type]
+            bronze=bronze_spec,  # type: ignore[arg-type]
+            ops=ops_spec,  # type: ignore[arg-type]
             unified_spec=None,
         )
-        validate_lake_roots(roots, mode=mode)
-        return roots
 
     override = cli_lake_path
     settings_lake: str | None = None
@@ -236,20 +307,96 @@ def resolve_lake_roots(
         if not _strip_spec(override):
             override = active.lake_override
         settings_lake = active.lake_path
-    # destination.path is layout-1 only (ignored when split roots are set).
-    unified = pick_lake_spec(
+    # destination.path is layout-1 only (ignored for layout 2).
+    dest_for_pick = destination_path if layout_pref == 1 else None
+    parent = pick_lake_spec(
         cli_lake_path=override,
-        destination_path=destination_path,
+        destination_path=dest_for_pick,
         settings_lake_path=settings_lake,
         env=environ,
     )
-    lake = open_lake(unified, root, lake_mode=mode, env=environ)
-    roots = LakeRoots(
-        raw=lake,
-        bronze=lake,
-        ops=lake,
-        layout=1,
-        unified_spec=unified,
+
+    if layout_pref == 1:
+        return LakeRootSpecs(
+            layout=1,
+            raw=parent,
+            bronze=parent,
+            ops=parent,
+            unified_spec=parent,
+        )
+
+    return LakeRootSpecs(
+        layout=2,
+        raw=_join_lake_child(parent, "raw"),
+        bronze=_join_lake_child(parent, "bronze"),
+        ops=parent,
+        unified_spec=None,
     )
+
+
+def resolve_lake_roots(
+    settings: DetSettings | None = None,
+    *,
+    project_root: Path | None = None,
+    cli_lake_path: str | None = None,
+    cli_lake_path_raw: str | None = None,
+    cli_lake_path_bronze: str | None = None,
+    cli_lake_path_ops: str | None = None,
+    cli_lake_layout: int | None = None,
+    destination_path: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> LakeRoots:
+    """
+    Resolve process-wide lake roots from settings / env / CLI.
+
+    Default is layout **2**:
+    - Explicit ``DET_LAKE_PATH_{RAW,BRONZE,OPS}`` (all three) → split.
+    - Else derive ``{DET_LAKE_PATH}/raw``, ``…/bronze``, ops = parent.
+
+    Opt into unified layout **1** with ``DET_LAKE_LAYOUT=1`` / ``--lake-layout 1``
+    (incompatible with any split layer root). ``destination_path`` applies only
+    in unified mode.
+    """
+    from det.runtime.settings import get_active_settings
+
+    active = settings if settings is not None else get_active_settings()
+    environ = os.environ if env is None else env
+    root = project_root
+    mode: LakeMode | None = None
+    if active is not None:
+        root = active.project_root if root is None else root
+        mode = active.lake_mode
+    if root is None:
+        root = Path.cwd()
+    mode = mode if mode is not None else lake_mode_from_env(environ)
+
+    specs = resolve_lake_root_specs(
+        active,
+        project_root=root,
+        cli_lake_path=cli_lake_path,
+        cli_lake_path_raw=cli_lake_path_raw,
+        cli_lake_path_bronze=cli_lake_path_bronze,
+        cli_lake_path_ops=cli_lake_path_ops,
+        cli_lake_layout=cli_lake_layout,
+        destination_path=destination_path,
+        env=environ,
+    )
+    if specs.is_split:
+        roots = LakeRoots(
+            raw=open_lake(specs.raw, root, lake_mode=mode, env=environ),
+            bronze=open_lake(specs.bronze, root, lake_mode=mode, env=environ),
+            ops=open_lake(specs.ops, root, lake_mode=mode, env=environ),
+            layout=specs.layout,
+            unified_spec=None,
+        )
+    else:
+        lake = open_lake(specs.ops, root, lake_mode=mode, env=environ)
+        roots = LakeRoots(
+            raw=lake,
+            bronze=lake,
+            ops=lake,
+            layout=1,
+            unified_spec=specs.unified_spec,
+        )
     validate_lake_roots(roots, mode=mode)
     return roots

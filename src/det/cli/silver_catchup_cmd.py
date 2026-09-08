@@ -11,6 +11,7 @@ from det.cli.app import app
 from det.cli.common import (
     _APPROVAL_HELP,
     _LAKE_PATH_BRONZE_HELP,
+    _LAKE_LAYOUT_HELP,
     _LAKE_PATH_HELP,
     _LAKE_PATH_OPS_HELP,
     _LAKE_PATH_RAW_HELP,
@@ -69,6 +70,7 @@ def silver_catchup_diff_cmd(
     lake_path_ops: str | None = typer.Option(
         None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
     ),
+    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON"),
 ) -> None:
     """Compare latest bronze extract-run per interval to silver coverage (read-only)."""
@@ -100,6 +102,7 @@ def silver_catchup_diff_cmd(
         lake_path_raw=lake_path_raw,
         lake_path_bronze=lake_path_bronze,
         lake_path_ops=lake_path_ops,
+        lake_layout=lake_layout,
     )
     start = end = None
     if interval_start is not None:
@@ -220,6 +223,7 @@ def silver_catchup_plan_cmd(
     lake_path_ops: str | None = typer.Option(
         None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
     ),
+    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON"),
     approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
     require_approval: bool = typer.Option(
@@ -271,6 +275,7 @@ def silver_catchup_plan_cmd(
         lake_path_raw=lake_path_raw,
         lake_path_bronze=lake_path_bronze,
         lake_path_ops=lake_path_ops,
+        lake_layout=lake_layout,
     )
     start = end = None
     if interval_start is not None:
@@ -305,6 +310,7 @@ def silver_catchup_plan_cmd(
                 lake_path_raw=lake_path_raw,
                 lake_path_bronze=lake_path_bronze,
                 lake_path_ops=lake_path_ops,
+        lake_layout=lake_layout,
             )
         else:
             # Ungated local apply: allocate id at plan time; claim is a no-op.

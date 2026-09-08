@@ -7,6 +7,7 @@ import typer
 from det.cli.app import app
 from det.cli.common import (
     _APPROVAL_HELP,
+    _LAKE_LAYOUT_HELP,
     _PIPELINE_HELP,
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
@@ -39,6 +40,7 @@ def migrate_bronze(
     lake_path_raw: str | None = typer.Option(None, "--lake-path-raw"),
     lake_path_bronze: str | None = typer.Option(None, "--lake-path-bronze"),
     lake_path_ops: str | None = typer.Option(None, "--lake-path-ops"),
+    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     ingestion: str = typer.Option("thin", "--ingestion"),
     dry_run: bool = typer.Option(
         False,
@@ -142,6 +144,7 @@ def migrate_bronze(
                 lake_path_raw=lake_path_raw,
                 lake_path_bronze=lake_path_bronze,
                 lake_path_ops=lake_path_ops,
+                lake_layout=lake_layout,
                 ingestion=ingestion,
                 set_=set_,
             ),
@@ -158,6 +161,7 @@ def migrate_bronze(
                     lake_path_raw=lake_path_raw,
                     lake_path_bronze=lake_path_bronze,
                     lake_path_ops=lake_path_ops,
+                    lake_layout=lake_layout,
                     lock_ttl_sec=lock_ttl_sec,
                 )
             ).migrate(

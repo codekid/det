@@ -8,6 +8,7 @@ from det.cli.app import app
 from det.cli.common import (
     _APPROVAL_HELP,
     _LAKE_PATH_BRONZE_HELP,
+    _LAKE_LAYOUT_HELP,
     _LAKE_PATH_HELP,
     _LAKE_PATH_OPS_HELP,
     _LAKE_PATH_RAW_HELP,
@@ -85,6 +86,7 @@ def dbt_cmd(
     lake_path_ops: str | None = typer.Option(
         None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
     ),
+    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -124,6 +126,7 @@ def dbt_cmd(
         lake_path_raw=lake_path_raw,
         lake_path_bronze=lake_path_bronze,
         lake_path_ops=lake_path_ops,
+        lake_layout=lake_layout,
     )
     claimed = False
     if not dry_run:
@@ -142,6 +145,7 @@ def dbt_cmd(
                 lake_path_raw=lake_path_raw,
                 lake_path_bronze=lake_path_bronze,
                 lake_path_ops=lake_path_ops,
+                lake_layout=lake_layout,
                 set_=set_ or None,
             ),
             approval,

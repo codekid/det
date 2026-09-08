@@ -31,12 +31,12 @@ Install: `uv pip install -e ".[mcp]"`.
    - `read_manifest` on a raw run path
    - `list_runs` / `summarize_runs` — extract/load attempts (failures included)
 5. If raw is empty: check extract interval (`-s`/`-e`), source plugin, and lake
-   (`DET_LAKE_MODE` + `DET_LAKE_PATH` / default `./data/lake` — single root; not a
-   per-pipeline `destination.path` and not dual buckets).
-   Lake **layout 1** is the current hive (`raw|bronze/{provider}/{source}_vN/…`),
-   SQL names, and siblings (`locks/`, `runs/`, `ops/`). Full contract:
-   `docs/lake-layout.md`. `wire_version` is only a payload/dataset-era bump.
-   Manifests and receipts stamp `lake_layout`.
+   (`DET_LAKE_MODE` + `DET_LAKE_PATH` / default `./data/lake` — layout **2**
+   derived roots; not a per-pipeline `destination.path`). Explicit multi-bucket
+   roots use `DET_LAKE_PATH_RAW` / `_BRONZE` / `_OPS`. Stuck states:
+   `docs/operator-runbook.md`. Full hive/SQL contract: `docs/lake-layout.md`.
+   `wire_version` is only a payload/dataset-era bump. Manifests and receipts
+   stamp `lake_layout`.
    Airflow/CI logs are JSON (`DET_LOG_FORMAT=json`); grep `pipeline` /
    `extract_run_datetime`. Laptop TTY stays console (`--log-format` / `DET_LOG_FORMAT`).
    `LeaseHeldError` / grep lake lease: another extract/load holds `(pipeline, interval)`.
