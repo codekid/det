@@ -10,8 +10,8 @@ import typer
 from det.cli.app import app
 from det.cli.common import (
     _APPROVAL_HELP,
-    _LAKE_PATH_BRONZE_HELP,
     _LAKE_LAYOUT_HELP,
+    _LAKE_PATH_BRONZE_HELP,
     _LAKE_PATH_HELP,
     _LAKE_PATH_OPS_HELP,
     _LAKE_PATH_RAW_HELP,
