@@ -763,8 +763,12 @@ def test_migrate_write_argv_all_raw_and_all_raw_runs():
 def test_failed_write_prints_claimed_approval_hint(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
     pipeline = _pipe_yaml(tmp_path)
+    # Suite isolates DET_LAKE_LAYOUT=1; CLI binds the effective layout into argv.
     argv = extract_write_argv(
-        "noaa.storm_events", "2026-08-06", interval_end="2026-08-07"
+        "noaa.storm_events",
+        "2026-08-06",
+        interval_end="2026-08-07",
+        lake_layout=1,
     )
     rec = _create(tmp_path, command="extract", argv=argv, now=None)
     approval_id = rec["id"]
@@ -801,7 +805,7 @@ def test_failed_write_prints_claimed_approval_hint(tmp_path: Path, monkeypatch):
 def test_dbt_config_load_failure_prints_claimed_approval_hint(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
     pipeline = _pipe_yaml(tmp_path)
-    argv = dbt_write_argv("noaa.storm_events")
+    argv = dbt_write_argv("noaa.storm_events", lake_layout=1)
     rec = _create(tmp_path, command="dbt", argv=argv, now=None)
     approval_id = rec["id"]
 
