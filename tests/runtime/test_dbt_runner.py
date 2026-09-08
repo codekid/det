@@ -162,7 +162,7 @@ destination:
     )
     assert result.returncode == 0
     assert result.select == ("stg_noaa__storm_events+",)
-    assert result.lake_path == str((tmp_path / "data" / "lake" / "bronze").resolve())
+    assert result.lake_path == str((tmp_path / "data" / "lake").resolve())
     assert result.bronze_source == "filesystem"
     assert "stg_noaa__storm_events+" in result.command
 
@@ -270,7 +270,7 @@ def test_run_dbt_s3_lake_uses_duckdb_s3_target(
         dry_run=True,
     )
     assert result.command[result.command.index("--target") + 1] == "duckdb_s3"
-    assert result.lake_path == "s3://det-ci/det-lake/bronze"
+    assert result.lake_path == "s3://det-ci/det-lake"
 
 
 def test_run_dbt_gs_lake_does_not_force_duckdb_s3(
@@ -287,7 +287,7 @@ def test_run_dbt_gs_lake_does_not_force_duckdb_s3(
         dry_run=True,
     )
     assert "--target" not in result.command
-    assert result.lake_path == "gs://det-ci/det-lake/bronze"
+    assert result.lake_path == "gs://det-ci/det-lake"
 
 
 def test_run_dbt_gs_lake_honors_det_dbt_target_bigquery(
