@@ -894,6 +894,14 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("--lake-path-ops", "/tmp/ops"),
                 ),
+                "lake_layout": (
+                    extract_write_argv(
+                        "noaa.storm_events",
+                        "2026-08-06",
+                        lake_layout=1,
+                    ),
+                    ("--lake-layout", "1"),
+                ),
                 "set_": (
                     extract_write_argv(
                         "noaa.storm_events", "2026-08-06", set_=["destination.path=/x"]
@@ -950,6 +958,12 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("--lake-path-ops",),
                 ),
+                "lake_layout": (
+                    load_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_layout=1
+                    ),
+                    ("--lake-layout", "1"),
+                ),
                 "set_": (
                     load_write_argv(
                         "noaa.storm_events", "2026-08-06", set_=["x=y"]
@@ -997,6 +1011,12 @@ def test_bound_params_encoded_in_write_argv_builders():
                         "noaa.storm_events", "2026-08-06", lake_path_ops="/tmp/ops"
                     ),
                     ("--lake-path-ops",),
+                ),
+                "lake_layout": (
+                    run_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_layout=1
+                    ),
+                    ("--lake-layout", "1"),
                 ),
                 "set_": (
                     run_write_argv(
@@ -1186,6 +1206,17 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("--lake-path-ops",),
                 ),
+                "lake_layout": (
+                    migrate_write_argv(
+                        "example_api.events",
+                        "example_api.events_v1",
+                        "schemas/example_api/events/events.schema.yaml",
+                        "identity",
+                        "2026-08-06",
+                        lake_layout=1,
+                    ),
+                    ("--lake-layout", "1"),
+                ),
                 "set_": (
                     migrate_write_argv(
                         "example_api.events",
@@ -1279,6 +1310,10 @@ def test_bound_params_encoded_in_write_argv_builders():
                     dbt_write_argv("noaa.storm_events", lake_path_ops="/tmp/ops"),
                     ("--lake-path-ops",),
                 ),
+                "lake_layout": (
+                    dbt_write_argv("noaa.storm_events", lake_layout=1),
+                    ("--lake-layout", "1"),
+                ),
                 "set_": (
                     dbt_write_argv("noaa.storm_events", set_=["x=y"]),
                     ("--set",),
@@ -1367,6 +1402,10 @@ def test_bound_params_encoded_in_write_argv_builders():
                     biglake_register_write_argv(lake_path_ops="gs://ops"),
                     ("--lake-path-ops",),
                 ),
+                "lake_layout": (
+                    biglake_register_write_argv(lake_layout=1),
+                    ("--lake-layout", "1"),
+                ),
                 "pipeline": (
                     biglake_register_write_argv(pipeline="noaa.storm_events"),
                     ("--pipeline", "noaa.storm_events"),
@@ -1409,6 +1448,10 @@ def test_bound_params_encoded_in_write_argv_builders():
                 "lake_path_ops": (
                     iceberg_register_write_argv(lake_path_ops="s3://ops"),
                     ("--lake-path-ops",),
+                ),
+                "lake_layout": (
+                    iceberg_register_write_argv(lake_layout=1),
+                    ("--lake-layout", "1"),
                 ),
                 "pipeline": (
                     iceberg_register_write_argv(pipeline="noaa.storm_events"),
@@ -1535,6 +1578,15 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("--lake-path-ops",),
                 ),
+                "lake_layout": (
+                    silver_catchup_plan_write_argv(
+                        "noaa.storm_events",
+                        manifest_id=mid,
+                        content_digest=digest,
+                        lake_layout=1,
+                    ),
+                    ("--lake-layout", "1"),
+                ),
             }
         elif command == "silver-catchup-cleanup":
             mid = "scm_" + ("ab" * 8)
@@ -1601,6 +1653,12 @@ def test_bound_params_encoded_in_write_argv_builders():
                         "noaa.storm_events", "2026-08-06", lake_path_ops="/tmp/ops"
                     ),
                     ("--lake-path-ops",),
+                ),
+                "lake_layout": (
+                    lock_release_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_layout=1
+                    ),
+                    ("--lake-layout", "1"),
                 ),
             }
         else:
