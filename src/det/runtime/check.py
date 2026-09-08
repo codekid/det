@@ -442,13 +442,19 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
     try:
         specs = resolve_lake_root_specs(settings, project_root=project_root)
     except ValueError as exc:
+        detail = str(exc)
+        code = (
+            "lake_mode_mismatch"
+            if "DET_LAKE_MODE" in detail
+            else "lake_roots_invalid"
+        )
         findings.append(
             Finding(
                 severity="error",
-                code="lake_roots_invalid",
+                code=code,
                 pipeline="*",
                 path=None,
-                detail=str(exc),
+                detail=detail,
             )
         )
         return findings

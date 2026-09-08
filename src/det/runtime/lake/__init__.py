@@ -84,6 +84,7 @@ from det.runtime.lake.roots import (
     resolve_lake_root_specs,
     resolve_lake_roots,
     split_lake_specs_from_settings,
+    validate_lake_root_specs,
     validate_lake_roots,
 )
 
@@ -116,6 +117,7 @@ __all__ = [
     "resolve_lake_roots",
     "split_lake_specs_from_settings",
     "validate_lake_mode",
+    "validate_lake_root_specs",
     "validate_lake_roots",
     "_Backend",
     "_CLOUD_EXPERIMENTAL_WARNED",

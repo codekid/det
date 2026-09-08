@@ -155,7 +155,7 @@ Publish existing Hadoop tables with `det iceberg-register --dry-run` then
 
 | `destination.type` | Bronze |
 | --- | --- |
-| **`iceberg`** | Default. Derived/unified: `{DET_LAKE_PATH}/bronze/<provider>/<source>_vN/`. Explicit split: `{DET_LAKE_PATH_BRONZE}/<provider>/<source>_vN/` |
+| **`iceberg`** | Default. Layout 2 derived: `{DET_LAKE_PATH}/bronze/<provider>/<source>_vN/`. Explicit split: `{DET_LAKE_PATH_BRONZE}/<provider>/<source>_vN/`. Layout 1: `{destination.path or DET_LAKE_PATH}/bronze/…` (`--lake-path` overrides both). |
 | `filesystem` | Hive JSONL (thin / fixtures). Cannot share that path with Iceberg |
 | `duckdb` | `bronze_{provider}.{source}_vN` — needs `connection` |
 | `postgres` | Same SQL names — `connection_env: DET_POSTGRES_DSN` (never a DSN in YAML) |

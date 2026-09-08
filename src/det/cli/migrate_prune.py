@@ -11,6 +11,7 @@ from det.cli.common import (
     _PIPELINE_HELP,
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
+    _approval_lake_layout,
     _claimed_approval_work,
     _consume_approval,
     _gate_approval,
@@ -125,6 +126,15 @@ def migrate_bronze(
         )
     claimed = False
     if not dry_run:
+        settings = _settings(
+            root,
+            lake_path=lake_path,
+            lake_path_raw=lake_path_raw,
+            lake_path_bronze=lake_path_bronze,
+            lake_path_ops=lake_path_ops,
+            lake_layout=lake_layout,
+            lock_ttl_sec=lock_ttl_sec,
+        )
         claimed = _gate_approval(
             root,
             "migrate",
@@ -144,7 +154,7 @@ def migrate_bronze(
                 lake_path_raw=lake_path_raw,
                 lake_path_bronze=lake_path_bronze,
                 lake_path_ops=lake_path_ops,
-                lake_layout=lake_layout,
+                lake_layout=_approval_lake_layout(settings),
                 ingestion=ingestion,
                 set_=set_,
             ),
@@ -152,19 +162,19 @@ def migrate_bronze(
             require_approval,
             ctx=ctx,
         )
+    else:
+        settings = _settings(
+            root,
+            lake_path=lake_path,
+            lake_path_raw=lake_path_raw,
+            lake_path_bronze=lake_path_bronze,
+            lake_path_ops=lake_path_ops,
+            lake_layout=lake_layout,
+            lock_ttl_sec=lock_ttl_sec,
+        )
     try:
         with _claimed_approval_work(claimed, approval):
-            result = BronzeMigrator(
-                settings=_settings(
-                    root,
-                    lake_path=lake_path,
-                    lake_path_raw=lake_path_raw,
-                    lake_path_bronze=lake_path_bronze,
-                    lake_path_ops=lake_path_ops,
-                    lake_layout=lake_layout,
-                    lock_ttl_sec=lock_ttl_sec,
-                )
-            ).migrate(
+            result = BronzeMigrator(settings=settings).migrate(
                 pipeline=resolved.path,
                 to_bronze=to_bronze,
                 schema_path=schema if schema.is_absolute() else root / schema,

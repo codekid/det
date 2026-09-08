@@ -517,6 +517,7 @@ def test_run_dbt_catchup_bigquery_gcs_sets_bq_relation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    monkeypatch.setenv("DET_LAKE_MODE", "cloud")
     monkeypatch.setenv("DET_GCP_PROJECT", "proj-test")
     monkeypatch.setenv("DET_BQ_DATASET", "analytics")
     dbt_dir = tmp_path / "dbt"
@@ -625,6 +626,7 @@ def test_run_dbt_catchup_bigquery_rejects_sidecar_digest_mismatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    monkeypatch.setenv("DET_LAKE_MODE", "cloud")
     monkeypatch.setenv("DET_GCP_PROJECT", "proj-test")
     dbt_dir = tmp_path / "dbt"
     dbt_dir.mkdir()

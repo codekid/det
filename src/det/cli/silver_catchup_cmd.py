@@ -18,6 +18,7 @@ from det.cli.common import (
     _PIPELINE_HELP,
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
+    _approval_lake_layout,
     _claimed_approval_work,
     _consume_approval,
     _gate_approval,
@@ -310,7 +311,7 @@ def silver_catchup_plan_cmd(
                 lake_path_raw=lake_path_raw,
                 lake_path_bronze=lake_path_bronze,
                 lake_path_ops=lake_path_ops,
-        lake_layout=lake_layout,
+                lake_layout=_approval_lake_layout(settings),
             )
         else:
             # Ungated local apply: allocate id at plan time; claim is a no-op.

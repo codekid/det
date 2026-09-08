@@ -21,6 +21,7 @@ from det.runtime.lake import (
     clear_memory_lakes,
     is_split_lake_configured,
     reset_lake_mode_warning_for_tests,
+    resolve_lake_root_specs,
     resolve_lake_roots,
     validate_lake_roots,
 )
@@ -233,6 +234,27 @@ def test_validate_split_rejects_mixed_object_schemes() -> None:
     )
     with pytest.raises(ValueError, match="URI kind"):
         validate_lake_roots(roots, mode="cloud")
+
+
+def test_resolve_specs_rejects_mixed_schemes_and_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("DET_LAKE_LAYOUT", raising=False)
+    settings = DetSettings.from_env(project_root=tmp_path).with_overrides(
+        lake_mode="cloud",
+        lake_path_raw="s3://acme-raw",
+        lake_path_bronze="gs://acme-bronze",
+        lake_path_ops="s3://acme-ops",
+    )
+    with pytest.raises(ValueError, match="URI kind"):
+        resolve_lake_root_specs(settings, project_root=tmp_path)
+
+    local_s3 = DetSettings.from_env(project_root=tmp_path).with_overrides(
+        lake_mode="local",
+        lake_path="s3://bucket/lake",
+    )
+    with pytest.raises(ValueError, match="DET_LAKE_MODE=local"):
+        resolve_lake_root_specs(local_s3, project_root=tmp_path)
 
 
 def test_validate_split_allows_matching_s3_schemes() -> None:

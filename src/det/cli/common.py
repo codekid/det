@@ -77,6 +77,17 @@ def _settings(
     return settings
 
 
+def _approval_lake_layout(settings) -> int:
+    """Effective lake layout for approval digests (always bind 1 or 2).
+
+    When ``--lake-layout`` is omitted, bind the resolved preference so the plan
+    cannot silently change if ``DET_LAKE_LAYOUT`` differs at execute time.
+    """
+    from det.runtime.lake import lake_layout_preference
+
+    return lake_layout_preference(settings)
+
+
 _LAKE_LAYER_PARAMS = frozenset(
     {"lake_path", "lake_path_raw", "lake_path_bronze", "lake_path_ops", "lake_layout"}
 )

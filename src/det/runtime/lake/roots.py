@@ -240,6 +240,32 @@ class LakeRootSpecs:
         return self.layout >= 2
 
 
+def validate_lake_root_specs(
+    specs: LakeRootSpecs,
+    *,
+    mode: LakeMode | None = None,
+) -> None:
+    """Raise ``ValueError`` when specs disagree with mode or split URI kinds."""
+    if specs.layout < 2:
+        if mode is not None:
+            validate_lake_mode(specs.unified_spec or specs.ops, mode)
+        return
+    kinds: dict[str, str] = {}
+    for name, spec in (
+        ("raw", specs.raw),
+        ("bronze", specs.bronze),
+        ("ops", specs.ops),
+    ):
+        if mode is not None:
+            validate_lake_mode(spec, mode)
+        kinds[name] = _lake_uri_kind(spec)
+    if len(set(kinds.values())) > 1:
+        raise ValueError(
+            "split lake roots must share the same URI kind "
+            f"(local / s3 / gs / gcs / memory); got {kinds}"
+        )
+
+
 def resolve_lake_root_specs(
     settings: DetSettings | None = None,
     *,
@@ -257,11 +283,16 @@ def resolve_lake_root_specs(
 
     Same decision order as :func:`resolve_lake_roots`. Use this for check / env
     wiring that must not import object-store clients or touch credentials.
+    Validates ``DET_LAKE_MODE`` and split URI-kind consistency (no I/O).
     """
     from det.runtime.settings import get_active_settings
 
     active = settings if settings is not None else get_active_settings()
     environ = os.environ if env is None else env
+    mode: LakeMode | None = None
+    if active is not None:
+        mode = active.lake_mode
+    mode = mode if mode is not None else lake_mode_from_env(environ)
     layout_pref = lake_layout_preference(
         active, cli_lake_layout=cli_lake_layout, env=environ
     )
@@ -293,13 +324,15 @@ def resolve_lake_root_specs(
                 "split lake mode requires all three layer roots "
                 f"(raw, bronze, ops); missing {', '.join(missing)}"
             )
-        return LakeRootSpecs(
+        specs = LakeRootSpecs(
             layout=2,
             raw=raw_spec,  # type: ignore[arg-type]
             bronze=bronze_spec,  # type: ignore[arg-type]
             ops=ops_spec,  # type: ignore[arg-type]
             unified_spec=None,
         )
+        validate_lake_root_specs(specs, mode=mode)
+        return specs
 
     override = cli_lake_path
     settings_lake: str | None = None
@@ -317,21 +350,25 @@ def resolve_lake_root_specs(
     )
 
     if layout_pref == 1:
-        return LakeRootSpecs(
+        specs = LakeRootSpecs(
             layout=1,
             raw=parent,
             bronze=parent,
             ops=parent,
             unified_spec=parent,
         )
+        validate_lake_root_specs(specs, mode=mode)
+        return specs
 
-    return LakeRootSpecs(
+    specs = LakeRootSpecs(
         layout=2,
         raw=_join_lake_child(parent, "raw"),
         bronze=_join_lake_child(parent, "bronze"),
         ops=parent,
         unified_spec=None,
     )
+    validate_lake_root_specs(specs, mode=mode)
+    return specs
 
 
 def resolve_lake_roots(

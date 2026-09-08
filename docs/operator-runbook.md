@@ -54,6 +54,8 @@ Fails closed if any of `DET_LAKE_PATH_RAW` / `_BRONZE` / `_OPS` is also set.
 ### Try-it (layout 2 derived)
 
 ```bash
+uv sync --extra iceberg --extra examples
+export DET_DISCOVER_EXAMPLES=1
 export DET_LAKE_PATH="$PWD/data/lake"   # stamps lake_layout: 2; same on-disk tree as before
-uv run det run -p noaa.storm_events -s 2026-08-06 …
+uv run det run -p noaa.storm_events -s 2026-08-06
 ```
