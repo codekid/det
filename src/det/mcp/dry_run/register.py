@@ -33,12 +33,12 @@ def biglake_register_dry_run(
         _, pipe_path = h.load_pipeline(pipeline, base)
         pipe_id = h.canonical_id(pipeline, base)
     argv = biglake_register_write_argv(
-        lake_path=lake_path,
         pipeline=pipe_id,
         project=project,
         location=location,
         connection=connection,
         skip_ops=skip_ops or pipeline is not None,
+        **h.approval_lake_kwargs(project_root=base, lake_path=lake_path),
     )
     plan = build_biglake_register_plan(
         project_root=base,
@@ -90,9 +90,9 @@ def iceberg_register_dry_run(
     )
     argv = with_catalog_target_argv(
         iceberg_register_write_argv(
-            lake_path=lake_path,
             pipeline=pipe_id,
             skip_ops=skip_ops,
+            **h.approval_lake_kwargs(project_root=base, lake_path=lake_path),
         ),
         plan,
     )

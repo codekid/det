@@ -40,6 +40,7 @@ def prune_dry_run(
                 interval_start,
                 interval_end=interval_end,
                 keep=keep,
+                **h.approval_lake_kwargs(project_root=base),
             ),
         ),
         "remove_count": plan.remove_count,

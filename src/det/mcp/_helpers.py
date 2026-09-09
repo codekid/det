@@ -34,6 +34,13 @@ def root(root_path: Path | None = None) -> Path:
     return root_path.resolve() if root_path is not None else project_root()
 
 
+def approval_lake_kwargs(*, project_root: Path, lake_path: str | None = None) -> dict:
+    """Effective lake kwargs for MCP dry-run approval digests (same as CLI gates)."""
+    from det.cli.common import _approval_lake_kwargs, _settings
+
+    return _approval_lake_kwargs(_settings(project_root, lake_path=lake_path))
+
+
 def approval_plan(command: str, argv: list[str]) -> dict[str, Any]:
     from det.runtime.approval import make_plan
 

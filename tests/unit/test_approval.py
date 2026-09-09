@@ -203,8 +203,14 @@ def test_cli_approve_show_consume_round_trip(tmp_path: Path, monkeypatch):
     pipeline = _pipe_yaml(tmp_path)
     # Approve by canonical id and bare date; invoke by YAML path. Both surfaces
     # normalize to the same argv, so the digest still matches.
+    from det.cli.common import _approval_lake_kwargs, _settings
+
     argv = prune_write_argv(
-        "noaa.storm_events", "2026-08-01", interval_end="2026-09-01", keep=1
+        "noaa.storm_events",
+        "2026-08-01",
+        interval_end="2026-09-01",
+        keep=1,
+        **_approval_lake_kwargs(_settings(tmp_path)),
     )
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(
@@ -319,7 +325,15 @@ def test_cli_lake_path_under_valid_approval_is_rejected(tmp_path: Path, monkeypa
     """--lake-path redirects where data lands, so it must be inside the digest."""
     monkeypatch.delenv("DET_APPROVED_BY", raising=False)
     pipeline = _pipe_yaml(tmp_path)
-    argv = prune_write_argv("noaa.storm_events", "2026-08-01", interval_end="2026-09-01", keep=1)
+    from det.cli.common import _approval_lake_kwargs, _settings
+
+    argv = prune_write_argv(
+        "noaa.storm_events",
+        "2026-08-01",
+        interval_end="2026-09-01",
+        keep=1,
+        **_approval_lake_kwargs(_settings(tmp_path)),
+    )
     rec = create_approval(
         tmp_path, command="prune", argv=argv, approved_by="tester", now=None
     )
@@ -364,7 +378,15 @@ def test_cli_unbound_flag_is_rejected_fail_closed(tmp_path: Path, monkeypatch):
         common._BOUND_PARAMS["prune"] - {"keep"},
     )
     pipeline = _pipe_yaml(tmp_path)
-    argv = prune_write_argv("noaa.storm_events", "2026-08-01", interval_end="2026-09-01", keep=1)
+    from det.cli.common import _approval_lake_kwargs, _settings
+
+    argv = prune_write_argv(
+        "noaa.storm_events",
+        "2026-08-01",
+        interval_end="2026-09-01",
+        keep=1,
+        **_approval_lake_kwargs(_settings(tmp_path)),
+    )
     rec = create_approval(tmp_path, command="prune", argv=argv, approved_by="tester", now=None)
     monkeypatch.setenv("DET_REQUIRE_APPROVAL", "1")
     result = _invoke(
@@ -763,12 +785,14 @@ def test_migrate_write_argv_all_raw_and_all_raw_runs():
 def test_failed_write_prints_claimed_approval_hint(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
     pipeline = _pipe_yaml(tmp_path)
-    # Suite isolates DET_LAKE_LAYOUT=1; CLI binds the effective layout into argv.
+    from det.cli.common import _approval_lake_kwargs, _settings
+
+    # Match CLI gate: effective layout + configured DET_LAKE_PATH* when present.
     argv = extract_write_argv(
         "noaa.storm_events",
         "2026-08-06",
         interval_end="2026-08-07",
-        lake_layout=1,
+        **_approval_lake_kwargs(_settings(tmp_path)),
     )
     rec = _create(tmp_path, command="extract", argv=argv, now=None)
     approval_id = rec["id"]
@@ -805,7 +829,11 @@ def test_failed_write_prints_claimed_approval_hint(tmp_path: Path, monkeypatch):
 def test_dbt_config_load_failure_prints_claimed_approval_hint(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
     pipeline = _pipe_yaml(tmp_path)
-    argv = dbt_write_argv("noaa.storm_events", lake_layout=1)
+    from det.cli.common import _approval_lake_kwargs, _settings
+
+    argv = dbt_write_argv(
+        "noaa.storm_events", **_approval_lake_kwargs(_settings(tmp_path))
+    )
     rec = _create(tmp_path, command="dbt", argv=argv, now=None)
     approval_id = rec["id"]
 
@@ -1252,6 +1280,38 @@ def test_bound_params_encoded_in_write_argv_builders():
                 ),
                 "keep": (prune_write_argv("noaa.storm_events", "2026-08-06", keep=3), ("3",)),
                 "apply": (base, ("--apply",)),  # implicit: always present
+                "lake_path": (
+                    prune_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_path="/tmp/lake"
+                    ),
+                    ("--lake-path",),
+                ),
+                "lake_path_raw": (
+                    prune_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_path_raw="/tmp/raw"
+                    ),
+                    ("--lake-path-raw",),
+                ),
+                "lake_path_bronze": (
+                    prune_write_argv(
+                        "noaa.storm_events",
+                        "2026-08-06",
+                        lake_path_bronze="/tmp/bronze",
+                    ),
+                    ("--lake-path-bronze",),
+                ),
+                "lake_path_ops": (
+                    prune_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_path_ops="/tmp/ops"
+                    ),
+                    ("--lake-path-ops",),
+                ),
+                "lake_layout": (
+                    prune_write_argv(
+                        "noaa.storm_events", "2026-08-06", lake_layout=1
+                    ),
+                    ("--lake-layout", "1"),
+                ),
                 "set_": (
                     prune_write_argv(
                         "noaa.storm_events", "2026-08-06", set_=["x=y"]
@@ -1742,3 +1802,83 @@ def test_migrate_dry_run_failure_skips_claimed_hint(
     assert result.exit_code != 0, result.output
     err = _strip_ansi(result.output)
     assert "list-approvals --status claimed" not in err
+
+
+def test_approval_lake_kwargs_binds_layout_and_configured_path(tmp_path: Path, monkeypatch):
+    """Effective layout always; DET_LAKE_PATH binds --lake-path; default omitted."""
+    from det.cli.common import _approval_lake_kwargs, _settings
+    from det.runtime.approval import extract_write_argv, make_plan, prune_write_argv
+
+    monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    monkeypatch.delenv("DET_LAKE_PATH_RAW", raising=False)
+    monkeypatch.delenv("DET_LAKE_PATH_BRONZE", raising=False)
+    monkeypatch.delenv("DET_LAKE_PATH_OPS", raising=False)
+    monkeypatch.setenv("DET_LAKE_LAYOUT", "1")
+
+    bare = _settings(tmp_path)
+    bare_kw = _approval_lake_kwargs(bare)
+    assert bare_kw == {"lake_layout": 1}
+    assert "lake_path" not in bare_kw
+
+    monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path / "ci-lake"))
+    configured = _settings(tmp_path)
+    configured_kw = _approval_lake_kwargs(configured)
+    assert configured_kw["lake_layout"] == 1
+    assert configured_kw["lake_path"] == str(tmp_path / "ci-lake")
+
+    extract_argv = extract_write_argv(
+        "noaa.storm_events", "2026-08-06", interval_end="2026-08-07", **configured_kw
+    )
+    assert "--lake-path" in extract_argv
+    assert str(tmp_path / "ci-lake") in extract_argv
+    assert extract_argv[extract_argv.index("--lake-layout") + 1] == "1"
+
+    prune_argv = prune_write_argv(
+        "noaa.storm_events", "2026-08-06", **configured_kw
+    )
+    assert "--lake-path" in prune_argv
+    assert "--lake-layout" in prune_argv
+    assert make_plan("extract", extract_argv).plan_digest != make_plan(
+        "extract",
+        extract_write_argv(
+            "noaa.storm_events", "2026-08-06", interval_end="2026-08-07", lake_layout=1
+        ),
+    ).plan_digest
+
+
+def test_approval_lake_kwargs_binds_split_roots(tmp_path: Path, monkeypatch):
+    from det.cli.common import _approval_lake_kwargs, _settings
+
+    monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    monkeypatch.setenv("DET_LAKE_PATH_RAW", str(tmp_path / "raw"))
+    monkeypatch.setenv("DET_LAKE_PATH_BRONZE", str(tmp_path / "bronze"))
+    monkeypatch.setenv("DET_LAKE_PATH_OPS", str(tmp_path / "ops"))
+    monkeypatch.delenv("DET_LAKE_LAYOUT", raising=False)
+
+    kw = _approval_lake_kwargs(_settings(tmp_path))
+    assert kw["lake_layout"] == 2
+    assert kw["lake_path_raw"] == str(tmp_path / "raw")
+    assert kw["lake_path_bronze"] == str(tmp_path / "bronze")
+    assert kw["lake_path_ops"] == str(tmp_path / "ops")
+    assert "lake_path" not in kw
+
+
+def test_migrate_write_argv_with_approval_lake_kwargs_includes_layout(
+    tmp_path: Path, monkeypatch
+):
+    """Dry-run / CLI gate share _approval_lake_kwargs so digests include layout."""
+    from det.cli.common import _approval_lake_kwargs, _settings
+    from det.runtime.approval import migrate_write_argv
+
+    monkeypatch.setenv("DET_LAKE_LAYOUT", "1")
+    monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    argv = migrate_write_argv(
+        "example_api.events",
+        "example_api.events_v1",
+        "schemas/example_api/events/events.schema.yaml",
+        "identity",
+        "2026-08-06",
+        **_approval_lake_kwargs(_settings(tmp_path)),
+    )
+    assert "--lake-layout" in argv
+    assert argv[argv.index("--lake-layout") + 1] == "1"

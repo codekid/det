@@ -147,6 +147,7 @@ def test_prune_dry_run_smoke(tmp_path: Path):
     assert ap["command"] == "prune"
     assert ap["argv"][:3] == ["prune", "-p", "example_api.events"]
     assert "--apply" in ap["argv"]
+    assert "--lake-layout" in ap["argv"]
     assert len(ap["plan_digest"]) == 64
     assert "det approve" in ap["note"]
     # The interval is normalized in the plan, so an operator can approve from a

@@ -704,6 +704,11 @@ def prune_write_argv(
     *,
     interval_end: str | None = None,
     keep: int = 1,
+    lake_path: str | None = None,
+    lake_path_raw: str | None = None,
+    lake_path_bronze: str | None = None,
+    lake_path_ops: str | None = None,
+    lake_layout: int | None = None,
     set_: Sequence[str] | None = None,
 ) -> list[str]:
     argv = ["prune", "-p", _norm_pipeline(pipeline), "-s", _require_interval(interval_start)]
@@ -711,6 +716,15 @@ def prune_write_argv(
     if end:
         argv.extend(["-e", end])
     argv.extend(["--keep", str(keep), "--apply"])
+    argv.extend(
+        _lake_argv(
+            lake_path,
+            lake_path_raw=lake_path_raw,
+            lake_path_bronze=lake_path_bronze,
+            lake_path_ops=lake_path_ops,
+            lake_layout=lake_layout,
+        )
+    )
     argv.extend(_set_argv(set_))
     return argv
 

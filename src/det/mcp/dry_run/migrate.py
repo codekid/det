@@ -94,6 +94,7 @@ def migrate_dry_run(
             recreate_iceberg=recreate_iceberg,
             all_raw=all_raw,
             all_raw_runs=all_raw_runs,
+            **h.approval_lake_kwargs(project_root=base),
         ),
     )
     bits: list[str] = []
