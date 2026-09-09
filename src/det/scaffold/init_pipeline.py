@@ -63,6 +63,15 @@ def _postgres_connection_entry(connection: str) -> dict[str, str]:
     return {"connection": value}
 
 
+def reject_init_lake_path(lake_path: str | None) -> None:
+    """Fail closed when init is given a lake path (does not select the lake root)."""
+    if (lake_path or "").strip():
+        raise ValueError(
+            "init_pipeline does not accept lake_path (destination.path is ignored); "
+            "set DET_LAKE_PATH or pass --lake-path on extract/load/run/migrate"
+        )
+
+
 def init_pipeline(
     *,
     name: str,
@@ -83,11 +92,7 @@ def init_pipeline(
     / extract-load ``--lake-path``, not pipeline YAML.
     """
     load_plugins()
-    if (lake_path or "").strip():
-        raise ValueError(
-            "init_pipeline does not accept lake_path (destination.path is ignored); "
-            "set DET_LAKE_PATH or pass --lake-path on extract/load/run/migrate"
-        )
+    reject_init_lake_path(lake_path)
     name = validate_canonical_id(name)
     source_type = validate_canonical_id(source_type)
     if name != source_type:

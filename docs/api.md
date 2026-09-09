@@ -49,7 +49,7 @@ buckets (or prefixes) + re-extract; there is no layout migrator.
 | --- | --- |
 | `__version__` | Package version string |
 | `LAKE_LAYOUT` | Max on-disk contract integer this install supports |
-| `LakeRoots` | Resolved raw / bronze / ops roots (`layout` 1 or 2) |
+| `LakeRoots` | Resolved layout 2 raw / bronze / ops roots |
 | `resolve_lake_roots` | Process-wide lake root resolver |
 
 ### Runners and results

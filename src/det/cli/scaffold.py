@@ -124,7 +124,7 @@ def init_pipeline_cmd(
 ) -> None:
     """Create pipeline YAML + minimal schema + scaffold-dbt models."""
     from det.runtime.approval import init_pipeline_write_argv
-    from det.scaffold.init_pipeline import init_pipeline
+    from det.scaffold.init_pipeline import init_pipeline, reject_init_lake_path
 
     if destination_type not in {"filesystem", "duckdb", "postgres", "iceberg"}:
         raise typer.BadParameter(
@@ -132,6 +132,11 @@ def init_pipeline_cmd(
             param_hint="--destination-type",
         )
     root = _project_root(project_root)
+    try:
+        reject_init_lake_path(lake_path)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
     claimed = False
     if not dry_run:
         claimed = _gate_approval(
