@@ -1,4 +1,4 @@
-"""Lake root resolution (unified layout 1 vs split layout 2)."""
+"""Lake root resolution (layout 2 only: derived or explicit split)."""
 
 from __future__ import annotations
 
@@ -27,14 +27,19 @@ if TYPE_CHECKING:
 
 ENV_LAKE_LAYOUT = "DET_LAKE_LAYOUT"
 
+_LAYOUT1_REMOVED = (
+    "lake layout 1 was removed in det-elt 0.9.0; only layout 2 is supported "
+    "(derived from DET_LAKE_PATH or explicit DET_LAKE_PATH_RAW/_BRONZE/_OPS)"
+)
+
 
 @dataclass(frozen=True)
 class LakeRoots:
     """Resolved raw / bronze / ops lake roots for one process.
 
-    Layout 1: all three refs share one unified root; dataset dirs use medallion
-    prefixes under that root. Layout 2: each layer is an independent URI
-    (flattened ``{provider}/{source}_vN`` under the layer root).
+    Layout 2: each layer is an independent URI (flattened
+    ``{provider}/{source}_vN`` under the layer root). Derived mode sets
+    raw/bronze under the parent and ops = parent.
     """
 
     raw: LakeRef
@@ -71,19 +76,15 @@ def lake_layout_preference(
     cli_lake_layout: int | None = None,
     env: Mapping[str, str] | None = None,
 ) -> int:
-    """Return preferred lake layout (1 = unified, 2 = split default).
-
-    Unset env / settings → ``2``. Explicit ``1`` opts into unified layout.
-    """
+    """Return preferred lake layout (always 2). Rejects layout 1."""
+    del settings  # layout is env/CLI only; settings no longer carry lake_layout
     if cli_lake_layout is not None:
         return _validate_layout_value(cli_lake_layout, where="--lake-layout")
-    if settings is not None and settings.lake_layout is not None:
-        return _validate_layout_value(settings.lake_layout, where="DetSettings.lake_layout")
     return lake_layout_from_env(env)
 
 
 def lake_layout_from_env(env: Mapping[str, str] | None = None) -> int:
-    """Parse ``DET_LAKE_LAYOUT``. Unset or empty → ``2`` (split default)."""
+    """Parse ``DET_LAKE_LAYOUT``. Unset, empty, or ``2`` → ``2``; ``1`` errors."""
     environ = os.environ if env is None else env
     raw = (environ.get(ENV_LAKE_LAYOUT) or "").strip()
     if not raw:
@@ -92,7 +93,7 @@ def lake_layout_from_env(env: Mapping[str, str] | None = None) -> int:
         value = int(raw)
     except ValueError as exc:
         raise ValueError(
-            f"{ENV_LAKE_LAYOUT} must be 1 or 2, got {raw!r}"
+            f"{ENV_LAKE_LAYOUT} must be 2 (layout 1 removed), got {raw!r}"
         ) from exc
     return _validate_layout_value(value, where=ENV_LAKE_LAYOUT)
 
@@ -100,8 +101,10 @@ def lake_layout_from_env(env: Mapping[str, str] | None = None) -> int:
 def _validate_layout_value(value: object, *, where: str) -> int:
     if type(value) is not int:
         raise ValueError(f"{where} must be an int, got {value!r}")
-    if value not in (1, 2):
-        raise ValueError(f"{where} must be 1 or 2, got {value!r}")
+    if value == 1:
+        raise ValueError(f"{where}: {_LAYOUT1_REMOVED}")
+    if value != 2:
+        raise ValueError(f"{where} must be 2, got {value!r}")
     return value
 
 
@@ -205,9 +208,7 @@ def validate_lake_roots(
 ) -> None:
     """Raise ``ValueError`` when split roots are incomplete or scheme-mismatched."""
     if roots.layout < 2:
-        if mode is not None and roots.unified_spec is not None:
-            validate_lake_mode(roots.unified_spec, mode)
-        return
+        raise ValueError(_LAYOUT1_REMOVED)
     specs = {
         "raw": str(roots.raw),
         "bronze": str(roots.bronze),
@@ -247,9 +248,7 @@ def validate_lake_root_specs(
 ) -> None:
     """Raise ``ValueError`` when specs disagree with mode or split URI kinds."""
     if specs.layout < 2:
-        if mode is not None:
-            validate_lake_mode(specs.unified_spec or specs.ops, mode)
-        return
+        raise ValueError(_LAYOUT1_REMOVED)
     kinds: dict[str, str] = {}
     for name, spec in (
         ("raw", specs.raw),
@@ -281,21 +280,21 @@ def resolve_lake_root_specs(
     """
     Resolve lake layer URI strings (no ``open_lake``).
 
-    Same decision order as :func:`resolve_lake_roots`. Use this for check / env
-    wiring that must not import object-store clients or touch credentials.
-    Validates ``DET_LAKE_MODE`` and split URI-kind consistency (no I/O).
+    Layout 2 only: explicit three roots, or derive from ``DET_LAKE_PATH``.
+    ``destination_path`` is ignored (kept for call-site compatibility).
+    ``cli_lake_layout`` is validated (must be unset or 2).
     """
     from det.runtime.settings import get_active_settings
 
+    del destination_path  # never selects the lake root (layout 2 only)
     active = settings if settings is not None else get_active_settings()
     environ = os.environ if env is None else env
     mode: LakeMode | None = None
     if active is not None:
         mode = active.lake_mode
     mode = mode if mode is not None else lake_mode_from_env(environ)
-    layout_pref = lake_layout_preference(
-        active, cli_lake_layout=cli_lake_layout, env=environ
-    )
+    # Reject DET_LAKE_LAYOUT=1 / --lake-layout 1 early.
+    lake_layout_preference(active, cli_lake_layout=cli_lake_layout, env=environ)
 
     raw_spec, bronze_spec, ops_spec = split_lake_specs_from_settings(
         active,
@@ -305,11 +304,6 @@ def resolve_lake_root_specs(
         env=environ,
     )
     if any(v is not None for v in (raw_spec, bronze_spec, ops_spec)):
-        if layout_pref == 1:
-            raise ValueError(
-                "DET_LAKE_LAYOUT=1 (unified) cannot be combined with "
-                "DET_LAKE_PATH_RAW / _BRONZE / _OPS"
-            )
         missing = [
             name
             for name, spec in (
@@ -340,25 +334,12 @@ def resolve_lake_root_specs(
         if not _strip_spec(override):
             override = active.lake_override
         settings_lake = active.lake_path
-    # destination.path is layout-1 only (ignored for layout 2).
-    dest_for_pick = destination_path if layout_pref == 1 else None
     parent = pick_lake_spec(
         cli_lake_path=override,
-        destination_path=dest_for_pick,
+        destination_path=None,
         settings_lake_path=settings_lake,
         env=environ,
     )
-
-    if layout_pref == 1:
-        specs = LakeRootSpecs(
-            layout=1,
-            raw=parent,
-            bronze=parent,
-            ops=parent,
-            unified_spec=parent,
-        )
-        validate_lake_root_specs(specs, mode=mode)
-        return specs
 
     specs = LakeRootSpecs(
         layout=2,
@@ -386,13 +367,9 @@ def resolve_lake_roots(
     """
     Resolve process-wide lake roots from settings / env / CLI.
 
-    Default is layout **2**:
+    Layout **2** only:
     - Explicit ``DET_LAKE_PATH_{RAW,BRONZE,OPS}`` (all three) → split.
     - Else derive ``{DET_LAKE_PATH}/raw``, ``…/bronze``, ops = parent.
-
-    Opt into unified layout **1** with ``DET_LAKE_LAYOUT=1`` / ``--lake-layout 1``
-    (incompatible with any split layer root). ``destination_path`` applies only
-    in unified mode.
     """
     from det.runtime.settings import get_active_settings
 
@@ -418,22 +395,12 @@ def resolve_lake_roots(
         destination_path=destination_path,
         env=environ,
     )
-    if specs.is_split:
-        roots = LakeRoots(
-            raw=open_lake(specs.raw, root, lake_mode=mode, env=environ),
-            bronze=open_lake(specs.bronze, root, lake_mode=mode, env=environ),
-            ops=open_lake(specs.ops, root, lake_mode=mode, env=environ),
-            layout=specs.layout,
-            unified_spec=None,
-        )
-    else:
-        lake = open_lake(specs.ops, root, lake_mode=mode, env=environ)
-        roots = LakeRoots(
-            raw=lake,
-            bronze=lake,
-            ops=lake,
-            layout=1,
-            unified_spec=specs.unified_spec,
-        )
+    roots = LakeRoots(
+        raw=open_lake(specs.raw, root, lake_mode=mode, env=environ),
+        bronze=open_lake(specs.bronze, root, lake_mode=mode, env=environ),
+        ops=open_lake(specs.ops, root, lake_mode=mode, env=environ),
+        layout=specs.layout,
+        unified_spec=None,
+    )
     validate_lake_roots(roots, mode=mode)
     return roots

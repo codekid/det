@@ -5,10 +5,9 @@ DET extracts wire bytes to **raw**, lands typed **bronze**, then **dbt** owns si
 
 Canonical pipeline id is `provider.source` (e.g. `noaa.storm_events`). Interval `-s` is
 inclusive, `-e` exclusive (default start + 1 day). Lake hive/SQL contract:
-[docs/lake-layout.md](docs/lake-layout.md). Prefer **layout 2** (default):
+[docs/lake-layout.md](docs/lake-layout.md). Always **layout 2**:
 `DET_LAKE_MODE` + `DET_LAKE_PATH` (derives `{path}/raw`, `{path}/bronze`, ops parent)
-or explicit `DET_LAKE_PATH_RAW` / `_BRONZE` / `_OPS`. Unified layout 1 only with
-`DET_LAKE_LAYOUT=1` / `--lake-layout 1`. Day-2 stuck states:
+or explicit `DET_LAKE_PATH_RAW` / `_BRONZE` / `_OPS`. Day-2 stuck states:
 [docs/operator-runbook.md](docs/operator-runbook.md).
 
 ## Hard rules
@@ -36,12 +35,11 @@ or explicit `DET_LAKE_PATH_RAW` / `_BRONZE` / `_OPS`. Unified layout 1 only with
   do guarantee: the record accurately describes the command that runs. Every
   flag that changes what or where data is written is in `plan_digest`, and an
   unrecognized flag is rejected (`approval_unbound_flag`) rather than escaping
-  it. Digests bind **effective** `--lake-layout` (1|2) and any configured
-  `DET_LAKE_PATH` / layer roots (not only CLI-typed flags); MCP dry-run
-  `approval_plan` uses the same kwargs. So **re-approve when you change any
-  flag**, including `--lake-path`, `--set`, `--full-refresh`, `--catchup`,
-  `--target`, `--ingestion`, and `--lake-layout`, or when those env lake
-  roots change. Pipeline refs and
+  it. Digests bind any configured `DET_LAKE_PATH` / layer roots (not only
+  CLI-typed flags); MCP dry-run `approval_plan` uses the same kwargs. So
+  **re-approve when you change any flag**, including `--lake-path`, `--set`,
+  `--full-refresh`, `--catchup`, `--target`, and `--ingestion`, or when those
+  env lake roots change. Pipeline refs and
   intervals are canonicalized, so `noaa/storm_events` and `noaa.storm_events`,
   or `-s 2026-08-06` and `-s 2026-08-06T00:00:00+00:00`, share one digest.
 - A crashed run leaves its approval `claimed`, and a claim never expires, so it

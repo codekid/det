@@ -47,13 +47,8 @@ def test_pick_lake_spec_order():
         )
         == "s3://from-cli"
     )
-    assert (
-        pick_lake_spec(
-            destination_path="./yaml-lake",
-            env=env,
-        )
-        == "./yaml-lake"
-    )
+    # destination.path ignored (layout 2 only).
+    assert pick_lake_spec(destination_path="./yaml-lake", env=env) == "s3://from-env"
     assert pick_lake_spec(env=env) == "s3://from-env"
     assert pick_lake_spec(env={}) == DEFAULT_LAKE_REL
     assert pick_lake_spec(cli_lake_path="  ", destination_path=None, env={}) == DEFAULT_LAKE_REL

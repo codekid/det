@@ -65,12 +65,11 @@ class BronzePruner:
         self.settings = settings
         self.project_root = settings.project_root
 
-    def _lake_roots(self, dest):
+    def _lake_roots(self, dest=None):
         from det.destinations.models import lake_roots_for
 
-        return lake_roots_for(
-            self.project_root, destination=dest, settings=self.settings
-        )
+        del dest  # unused; lake roots ignore destination.path
+        return lake_roots_for(self.project_root, settings=self.settings)
 
     def _lake(self, dest):
         """Ops root for leases / log display."""

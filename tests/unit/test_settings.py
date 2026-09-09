@@ -48,9 +48,7 @@ def test_with_overrides_lake_and_lock(tmp_path: Path) -> None:
     assert settings.effective_lock_ttl(12) == 12
 
 
-def test_pick_lake_prefers_override_then_destination_then_settings(
-    tmp_path: Path,
-) -> None:
+def test_pick_lake_prefers_override_then_settings(tmp_path: Path) -> None:
     assert (
         pick_lake_spec(
             cli_lake_path="/cli",
@@ -59,12 +57,13 @@ def test_pick_lake_prefers_override_then_destination_then_settings(
         )
         == "/cli"
     )
+    # destination.path ignored (layout 2 only).
     assert (
         pick_lake_spec(
             destination_path="/dest",
             settings_lake_path="/settings",
         )
-        == "/dest"
+        == "/settings"
     )
     assert pick_lake_spec(settings_lake_path="/settings") == "/settings"
 

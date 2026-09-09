@@ -92,9 +92,16 @@ class IcebergDestinationConfig(BaseModel):
 class DestinationConfig(BaseModel):
     # Lake bronze default. ``filesystem`` is explicit JSONL (thin/dev).
     type: Literal["filesystem", "duckdb", "postgres", "iceberg"] = "iceberg"
-    # Rare per-pipeline lake override. Omit in YAML; DET resolves
-    # --lake-path > path > DET_LAKE_PATH > ./data/lake.
-    path: str | None = None
+    # Ignored for lake roots (layout 2). Kept so existing YAML still loads;
+    # ``det check`` warns when set. Use DET_LAKE_PATH / --lake-path /
+    # DET_LAKE_PATH_{RAW,BRONZE,OPS} — never destination.path.
+    path: str | None = Field(
+        default=None,
+        description=(
+            "Ignored: does not select or override the lake root. Use "
+            "DET_LAKE_PATH / --lake-path or DET_LAKE_PATH_RAW/_BRONZE/_OPS."
+        ),
+    )
     # Medallion prefix for SQL destinations (default bronze) → schema bronze_{provider}.
     # Not the lake dataset path and not the final SQL schema name.
     dataset: str | None = None

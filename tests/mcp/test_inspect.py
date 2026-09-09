@@ -51,7 +51,7 @@ def _write_pipeline(
         encoding="utf-8",
     )
     path = pipe_dir / f"{source}.yaml"
-    dest = destination or {"type": "filesystem", "path": "./data/lake"}
+    dest = destination or {"type": "filesystem", "path": str(root / "lake")}
     path.write_text(
         yaml.safe_dump(
             {
@@ -93,7 +93,7 @@ def _write_example_raw(
     run: str,
     events: list[dict],
 ) -> Path:
-    raw_base = root / "data" / "lake" / "raw" / "example_api" / "events_v1"
+    raw_base = root / "lake" / "raw" / "example_api" / "events_v1"
     run_dir = _mk_hive_run(raw_base, start=start, end=end, run=run)
     page = run_dir / "data" / "pages" / "0001.json"
     page.parent.mkdir(parents=True, exist_ok=True)
@@ -132,8 +132,8 @@ def test_clamp_sample_limit():
 def test_diff_partitions_filesystem(tmp_path: Path):
     _write_pipeline(tmp_path)
     start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
-    raw = tmp_path / "data" / "lake" / "raw" / "example_api" / "events_v1"
-    bronze = tmp_path / "data" / "lake" / "bronze" / "example_api" / "events_v1"
+    raw = tmp_path / "lake" / "raw" / "example_api" / "events_v1"
+    bronze = tmp_path / "lake" / "bronze" / "example_api" / "events_v1"
     _mk_hive_run(raw, start=start, end=end, run="2026-08-06T10:00:00+00:00")
     _mk_hive_run(raw, start=start, end=end, run="2026-08-06T11:00:00+00:00")
     _mk_hive_run(bronze, start=start, end=end, run="2026-08-06T10:00:00+00:00")
@@ -153,13 +153,13 @@ def test_diff_partitions_duckdb(tmp_path: Path):
         tmp_path,
         destination={
             "type": "duckdb",
-            "path": "./data/lake",
+            "path": str(tmp_path / "lake"),
             "connection": "./data/analytics.duckdb",
             "dataset": "bronze",
         },
     )
     start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
-    raw = tmp_path / "data" / "lake" / "raw" / "example_api" / "events_v1"
+    raw = tmp_path / "lake" / "raw" / "example_api" / "events_v1"
     _mk_hive_run(raw, start=start, end=end, run="2026-08-06T10:00:00+00:00")
     _mk_hive_run(raw, start=start, end=end, run="2026-08-06T11:00:00+00:00")
     write_duckdb_table(
@@ -367,7 +367,7 @@ def test_sample_bronze_filesystem(tmp_path: Path):
 
     _write_pipeline(tmp_path)
     start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
-    bronze = tmp_path / "data" / "lake" / "bronze" / "example_api" / "events_v1"
+    bronze = tmp_path / "lake" / "bronze" / "example_api" / "events_v1"
     run_dir = _mk_hive_run(bronze, start=start, end=end, run="2026-08-06T10:00:00+00:00")
     (run_dir / "data.jsonl").write_text(
         json.dumps({"id": 1, "__extract_run_datetime": "2026-08-06T10:00:00+00:00"})
@@ -403,7 +403,7 @@ def test_sample_bronze_filesystem(tmp_path: Path):
 def test_sample_bronze_filesystem_run_path_rejects_uncommitted(tmp_path: Path):
     _write_pipeline(tmp_path)
     start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
-    bronze = tmp_path / "data" / "lake" / "bronze" / "example_api" / "events_v1"
+    bronze = tmp_path / "lake" / "bronze" / "example_api" / "events_v1"
     run_dir = _mk_hive_run(bronze, start=start, end=end, run="2026-08-06T10:00:00+00:00")
     (run_dir / "data.jsonl").write_text("{}\n", encoding="utf-8")
     (run_dir / "meta" / "manifest.json").unlink()
@@ -421,7 +421,7 @@ def test_sample_bronze_duckdb(tmp_path: Path):
         tmp_path,
         destination={
             "type": "duckdb",
-            "path": "./data/lake",
+            "path": str(tmp_path / "lake"),
             "connection": "./data/analytics.duckdb",
             "dataset": "bronze",
         },
@@ -523,7 +523,7 @@ def test_sample_bronze_postgres_resolves_connection_env(monkeypatch, tmp_path: P
         tmp_path,
         destination={
             "type": "postgres",
-            "path": "./data/lake",
+            "path": str(tmp_path / "lake"),
             "connection_env": "DET_POSTGRES_DSN",
             "dataset": "bronze",
         },
@@ -542,7 +542,7 @@ def test_sample_bronze_postgres_reports_an_unset_secret(monkeypatch, tmp_path: P
         tmp_path,
         destination={
             "type": "postgres",
-            "path": "./data/lake",
+            "path": str(tmp_path / "lake"),
             "connection_env": "DET_POSTGRES_DSN",
             "dataset": "bronze",
         },
@@ -560,7 +560,7 @@ def test_sample_bronze_iceberg(tmp_path: Path):
     from det.mcp.inspect import list_bronze_runs
     from det.runtime.config import load_pipeline_config
 
-    _write_pipeline(tmp_path, destination={"type": "iceberg", "path": "./data/lake"})
+    _write_pipeline(tmp_path, destination={"type": "iceberg", "path": str(tmp_path / "lake")})
     config = load_pipeline_config(
         tmp_path / "configs" / "pipelines" / "example_api" / "events.yaml"
     )

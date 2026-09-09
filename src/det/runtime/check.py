@@ -460,32 +460,27 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
         return findings
 
     layer_specs: tuple[str, ...]
-    if specs.is_split:
-        spec = specs.bronze
-        layer_specs = (specs.raw, specs.bronze, specs.ops)
-        for path in discover_pipeline_files(project_root):
-            try:
-                cfg = load_pipeline(path, project_root=project_root)
-            except Exception:  # noqa: S112 — other check paths report invalid YAML
-                continue
-            if (cfg.destination.path or "").strip():
-                findings.append(
-                    Finding(
-                        severity="warning",
-                        code="lake_split_destination_path_ignored",
-                        pipeline=cfg.name,
-                        path=str(path),
-                        detail=(
-                            "destination.path is ignored in split lake mode "
-                            "(layout 2 default or DET_LAKE_PATH_*); use "
-                            "DET_LAKE_PATH / derived roots or explicit "
-                            "DET_LAKE_PATH_RAW / _BRONZE / _OPS"
-                        ),
-                    )
+    spec = specs.bronze
+    layer_specs = (specs.raw, specs.bronze, specs.ops)
+    for path in discover_pipeline_files(project_root):
+        try:
+            cfg = load_pipeline(path, project_root=project_root)
+        except Exception:  # noqa: S112 — other check paths report invalid YAML
+            continue
+        if (cfg.destination.path or "").strip():
+            findings.append(
+                Finding(
+                    severity="warning",
+                    code="lake_split_destination_path_ignored",
+                    pipeline=cfg.name,
+                    path=str(path),
+                    detail=(
+                        "destination.path is ignored (layout 2 only); use "
+                        "DET_LAKE_PATH / derived roots or explicit "
+                        "DET_LAKE_PATH_RAW / _BRONZE / _OPS"
+                    ),
                 )
-    else:
-        spec = specs.unified_spec or specs.ops
-        layer_specs = (spec,)
+            )
 
     for layer in layer_specs:
         try:
@@ -599,7 +594,6 @@ def _iceberg_glue_lake_findings(project_root: Path) -> list[Finding]:
     from det.runtime.lake import (
         is_object_lake_spec,
         open_lake,
-        pick_lake_spec,
         resolve_lake_root_specs,
     )
     from det.runtime.settings import DetSettings
@@ -621,8 +615,7 @@ def _iceberg_glue_lake_findings(project_root: Path) -> list[Finding]:
                 lake = open_lake(lake_spec, root, env=environ)
                 lake_uri = _lake_uri_str(lake)
             except ValueError:
-                # Mode mismatch etc. — still validate the effective spec string
-                # registration would pick (destination.path wins over DET_LAKE_PATH).
+                # Mode mismatch etc. — still validate the effective bronze spec.
                 lake_uri = key
         try:
             _require_register_catalog(environ, lake_uri)
@@ -645,25 +638,7 @@ def _iceberg_glue_lake_findings(project_root: Path) -> list[Finding]:
         specs = resolve_lake_root_specs(settings, project_root=root, env=environ)
     except ValueError:
         return findings
-    if specs.is_split:
-        _check("*", specs.bronze)
-        return findings
-
-    # Layout 1: same precedence as iceberg-register (destination.path then DET_LAKE_PATH).
-    _check("*", pick_lake_spec(env=environ))
-    for path in discover_pipeline_files(root):
-        try:
-            config = load_pipeline_config(path)
-        except Exception:
-            # Invalid YAML is reported by check_pipeline_config; skip glue lake probe.
-            config = None
-        if config is None:
-            continue
-        effective = pick_lake_spec(
-            destination_path=config.destination.path,
-            env=environ,
-        )
-        _check(config.name, effective)
+    _check("*", specs.bronze)
     return findings
 
 

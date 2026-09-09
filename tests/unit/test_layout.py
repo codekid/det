@@ -7,12 +7,12 @@ def test_lake_layout_constant_is_two():
     assert LAKE_LAYOUT == 2
 
 
-def test_lake_layout_of_defaults_missing_to_one():
-    assert lake_layout_of(None) == 1
-    assert lake_layout_of({}) == 1
-    assert lake_layout_of({"wire_version": 2}) == 1
-    assert lake_layout_of({"lake_layout": "nope"}) == 1
-    assert lake_layout_of({"lake_layout": 0}) == 1
+def test_lake_layout_of_defaults_missing_to_two():
+    assert lake_layout_of(None) == 2
+    assert lake_layout_of({}) == 2
+    assert lake_layout_of({"wire_version": 2}) == 2
+    assert lake_layout_of({"lake_layout": "nope"}) == 2
+    assert lake_layout_of({"lake_layout": 0}) == 2
 
 
 def test_lake_layout_of_reads_int():

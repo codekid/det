@@ -926,14 +926,7 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("--lake-path-ops", "/tmp/ops"),
                 ),
-                "lake_layout": (
-                    extract_write_argv(
-                        "noaa.storm_events",
-                        "2026-08-06",
-                        lake_layout=1,
-                    ),
-                    ("--lake-layout", "1"),
-                ),
+
                 "set_": (
                     extract_write_argv(
                         "noaa.storm_events", "2026-08-06", set_=["destination.path=/x"]
@@ -990,12 +983,7 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("--lake-path-ops",),
                 ),
-                "lake_layout": (
-                    load_write_argv(
-                        "noaa.storm_events", "2026-08-06", lake_layout=1
-                    ),
-                    ("--lake-layout", "1"),
-                ),
+
                 "set_": (
                     load_write_argv(
                         "noaa.storm_events", "2026-08-06", set_=["x=y"]
@@ -1044,12 +1032,7 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("--lake-path-ops",),
                 ),
-                "lake_layout": (
-                    run_write_argv(
-                        "noaa.storm_events", "2026-08-06", lake_layout=1
-                    ),
-                    ("--lake-layout", "1"),
-                ),
+
                 "set_": (
                     run_write_argv(
                         "noaa.storm_events", "2026-08-06", set_=["x=y"]
@@ -1238,17 +1221,7 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("--lake-path-ops",),
                 ),
-                "lake_layout": (
-                    migrate_write_argv(
-                        "example_api.events",
-                        "example_api.events_v1",
-                        "schemas/example_api/events/events.schema.yaml",
-                        "identity",
-                        "2026-08-06",
-                        lake_layout=1,
-                    ),
-                    ("--lake-layout", "1"),
-                ),
+
                 "set_": (
                     migrate_write_argv(
                         "example_api.events",
@@ -1306,12 +1279,7 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("--lake-path-ops",),
                 ),
-                "lake_layout": (
-                    prune_write_argv(
-                        "noaa.storm_events", "2026-08-06", lake_layout=1
-                    ),
-                    ("--lake-layout", "1"),
-                ),
+
                 "set_": (
                     prune_write_argv(
                         "noaa.storm_events", "2026-08-06", set_=["x=y"]
@@ -1374,10 +1342,7 @@ def test_bound_params_encoded_in_write_argv_builders():
                     dbt_write_argv("noaa.storm_events", lake_path_ops="/tmp/ops"),
                     ("--lake-path-ops",),
                 ),
-                "lake_layout": (
-                    dbt_write_argv("noaa.storm_events", lake_layout=1),
-                    ("--lake-layout", "1"),
-                ),
+
                 "set_": (
                     dbt_write_argv("noaa.storm_events", set_=["x=y"]),
                     ("--set",),
@@ -1466,10 +1431,7 @@ def test_bound_params_encoded_in_write_argv_builders():
                     biglake_register_write_argv(lake_path_ops="gs://ops"),
                     ("--lake-path-ops",),
                 ),
-                "lake_layout": (
-                    biglake_register_write_argv(lake_layout=1),
-                    ("--lake-layout", "1"),
-                ),
+
                 "pipeline": (
                     biglake_register_write_argv(pipeline="noaa.storm_events"),
                     ("--pipeline", "noaa.storm_events"),
@@ -1513,10 +1475,7 @@ def test_bound_params_encoded_in_write_argv_builders():
                     iceberg_register_write_argv(lake_path_ops="s3://ops"),
                     ("--lake-path-ops",),
                 ),
-                "lake_layout": (
-                    iceberg_register_write_argv(lake_layout=1),
-                    ("--lake-layout", "1"),
-                ),
+
                 "pipeline": (
                     iceberg_register_write_argv(pipeline="noaa.storm_events"),
                     ("--pipeline", "noaa.storm_events", "--skip-ops"),
@@ -1642,15 +1601,7 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("--lake-path-ops",),
                 ),
-                "lake_layout": (
-                    silver_catchup_plan_write_argv(
-                        "noaa.storm_events",
-                        manifest_id=mid,
-                        content_digest=digest,
-                        lake_layout=1,
-                    ),
-                    ("--lake-layout", "1"),
-                ),
+
             }
         elif command == "silver-catchup-cleanup":
             mid = "scm_" + ("ab" * 8)
@@ -1718,12 +1669,7 @@ def test_bound_params_encoded_in_write_argv_builders():
                     ),
                     ("--lake-path-ops",),
                 ),
-                "lake_layout": (
-                    lock_release_write_argv(
-                        "noaa.storm_events", "2026-08-06", lake_layout=1
-                    ),
-                    ("--lake-layout", "1"),
-                ),
+
             }
         else:
             raise AssertionError(f"unhandled gated command {command!r}")
@@ -1804,8 +1750,8 @@ def test_migrate_dry_run_failure_skips_claimed_hint(
     assert "list-approvals --status claimed" not in err
 
 
-def test_approval_lake_kwargs_binds_layout_and_configured_path(tmp_path: Path, monkeypatch):
-    """Effective layout always; DET_LAKE_PATH binds --lake-path; default omitted."""
+def test_approval_lake_kwargs_binds_configured_path(tmp_path: Path, monkeypatch):
+    """DET_LAKE_PATH binds --lake-path; implicit default omitted; no layout flag."""
     from det.cli.common import _approval_lake_kwargs, _settings
     from det.runtime.approval import extract_write_argv, make_plan, prune_write_argv
 
@@ -1813,35 +1759,34 @@ def test_approval_lake_kwargs_binds_layout_and_configured_path(tmp_path: Path, m
     monkeypatch.delenv("DET_LAKE_PATH_RAW", raising=False)
     monkeypatch.delenv("DET_LAKE_PATH_BRONZE", raising=False)
     monkeypatch.delenv("DET_LAKE_PATH_OPS", raising=False)
-    monkeypatch.setenv("DET_LAKE_LAYOUT", "1")
+    monkeypatch.delenv("DET_LAKE_LAYOUT", raising=False)
 
     bare = _settings(tmp_path)
     bare_kw = _approval_lake_kwargs(bare)
-    assert bare_kw == {"lake_layout": 1}
+    assert bare_kw == {}
     assert "lake_path" not in bare_kw
 
     monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path / "ci-lake"))
     configured = _settings(tmp_path)
     configured_kw = _approval_lake_kwargs(configured)
-    assert configured_kw["lake_layout"] == 1
-    assert configured_kw["lake_path"] == str(tmp_path / "ci-lake")
+    assert configured_kw == {"lake_path": str(tmp_path / "ci-lake")}
 
     extract_argv = extract_write_argv(
         "noaa.storm_events", "2026-08-06", interval_end="2026-08-07", **configured_kw
     )
     assert "--lake-path" in extract_argv
     assert str(tmp_path / "ci-lake") in extract_argv
-    assert extract_argv[extract_argv.index("--lake-layout") + 1] == "1"
+    assert "--lake-layout" not in extract_argv
 
     prune_argv = prune_write_argv(
         "noaa.storm_events", "2026-08-06", **configured_kw
     )
     assert "--lake-path" in prune_argv
-    assert "--lake-layout" in prune_argv
+    assert "--lake-layout" not in prune_argv
     assert make_plan("extract", extract_argv).plan_digest != make_plan(
         "extract",
         extract_write_argv(
-            "noaa.storm_events", "2026-08-06", interval_end="2026-08-07", lake_layout=1
+            "noaa.storm_events", "2026-08-06", interval_end="2026-08-07"
         ),
     ).plan_digest
 
@@ -1856,11 +1801,11 @@ def test_approval_lake_kwargs_binds_split_roots(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("DET_LAKE_LAYOUT", raising=False)
 
     kw = _approval_lake_kwargs(_settings(tmp_path))
-    assert kw["lake_layout"] == 2
     assert kw["lake_path_raw"] == str(tmp_path / "raw")
     assert kw["lake_path_bronze"] == str(tmp_path / "bronze")
     assert kw["lake_path_ops"] == str(tmp_path / "ops")
     assert "lake_path" not in kw
+    assert "lake_layout" not in kw
 
 
 def test_approval_lake_kwargs_rejects_lake_path_with_split_roots(
@@ -1876,15 +1821,15 @@ def test_approval_lake_kwargs_rejects_lake_path_with_split_roots(
         _approval_lake_kwargs(_settings(tmp_path, lake_path=str(tmp_path / "other")))
 
 
-def test_migrate_write_argv_with_approval_lake_kwargs_includes_layout(
+def test_migrate_write_argv_with_approval_lake_kwargs_binds_path(
     tmp_path: Path, monkeypatch
 ):
-    """Dry-run / CLI gate share _approval_lake_kwargs so digests include layout."""
+    """Dry-run / CLI gate share _approval_lake_kwargs so digests include lake path."""
     from det.cli.common import _approval_lake_kwargs, _settings
     from det.runtime.approval import migrate_write_argv
 
-    monkeypatch.setenv("DET_LAKE_LAYOUT", "1")
-    monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    monkeypatch.delenv("DET_LAKE_LAYOUT", raising=False)
+    monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path / "ci-lake"))
     argv = migrate_write_argv(
         "example_api.events",
         "example_api.events_v1",
@@ -1893,5 +1838,6 @@ def test_migrate_write_argv_with_approval_lake_kwargs_includes_layout(
         "2026-08-06",
         **_approval_lake_kwargs(_settings(tmp_path)),
     )
-    assert "--lake-layout" in argv
-    assert argv[argv.index("--lake-layout") + 1] == "1"
+    assert "--lake-path" in argv
+    assert argv[argv.index("--lake-path") + 1] == str(tmp_path / "ci-lake")
+    assert "--lake-layout" not in argv

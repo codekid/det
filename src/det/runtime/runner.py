@@ -93,10 +93,9 @@ class PipelineRunner:
         self.project_root = settings.project_root
         load_plugins()
 
-    def _lake_roots(self, destination):
-        return lake_roots_for(
-            self.project_root, destination=destination, settings=self.settings
-        )
+    def _lake_roots(self, destination=None):
+        del destination  # unused; lake roots ignore destination.path
+        return lake_roots_for(self.project_root, settings=self.settings)
 
     def _lake(self, destination):
         """Ops root (receipts/locks). Prefer ``_lake_roots`` when layers may differ."""

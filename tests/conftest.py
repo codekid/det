@@ -82,15 +82,21 @@ def _isolate_approval_policy(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture(autouse=True)
-def _isolate_lake_layout(monkeypatch: pytest.MonkeyPatch):
-    """Keep the main suite on layout 1 so ``destination.path`` isolates lakes.
+def _isolate_lake_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Per-test lake root so extracts do not collide on shared ``DET_LAKE_PATH``.
 
-    Runtime default is layout **2**, which ignores ``destination.path``. CI also
-    sets a shared ``DET_LAKE_PATH``, so without this every extract would collide
-    on the job lake. Layout-2 default / derive coverage lives in tests that
-    ``delenv("DET_LAKE_LAYOUT")`` (e.g. ``test_lake_roots``).
+    Uses ``{tmp_path}/lake`` (not ``data/lake``) so helpers that land under
+    ``tmp_path / "lake"`` keep working. Layout 2 ignores ``destination.path``.
+    Tests that need ``./data/lake`` or a cleared env override this.
     """
-    monkeypatch.setenv("DET_LAKE_LAYOUT", "1")
+    monkeypatch.delenv("DET_LAKE_LAYOUT", raising=False)
+    for key in (
+        "DET_LAKE_PATH_RAW",
+        "DET_LAKE_PATH_BRONZE",
+        "DET_LAKE_PATH_OPS",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path / "lake"))
 
 
 @pytest.fixture(autouse=True)

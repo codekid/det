@@ -96,8 +96,8 @@ def _table_entry_yaml(
     )
     desc_indented = _yaml_block({"description": description}, indent=8)
 
-    # Layout 1: DET_LAKE_PATH/bronze/{provider}/{table}
-    # Layout 2: DET_LAKE_PATH_BRONZE/{provider}/{table} (flattened; no /bronze/).
+    # Derived: DET_LAKE_PATH/bronze/{provider}/{table}
+    # Explicit split: DET_LAKE_PATH_BRONZE/{provider}/{table} (flattened; no /bronze/).
     # Inline env_var (not the det_lake_bronze_path macro): dbt does not expand
     # project macros when rendering sources.yml meta.external_location.
     bronze_root_jinja = (

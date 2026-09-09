@@ -56,7 +56,7 @@ def _write_pipeline(root: Path, canonical: str = "example_api.events") -> Path:
                 "source": {"type": canonical},
                 "schema": schema_rel,
                 "ingestion": {"library": "det"},
-                "destination": {"type": "filesystem", "path": "./data/lake"},
+                "destination": {"type": "filesystem", "path": str(root / "lake")},
                 "medallion": {"bronze_prefix": "bronze", "raw_prefix": "raw"},
             }
         ),
@@ -107,8 +107,8 @@ def test_list_sources_after_plugins(tmp_path: Path):
 def test_raw_bronze_partitions_and_manifest(tmp_path: Path):
     _write_pipeline(tmp_path)
     start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
-    raw = tmp_path / "data" / "lake" / "raw" / "example_api" / "events_v1"
-    bronze = tmp_path / "data" / "lake" / "bronze" / "example_api" / "events_v1"
+    raw = tmp_path / "lake" / "raw" / "example_api" / "events_v1"
+    bronze = tmp_path / "lake" / "bronze" / "example_api" / "events_v1"
     r1 = _mk_run(raw, start=start, end=end, run="2026-08-06T10:00:00+00:00")
     _mk_run(raw, start=start, end=end, run="2026-08-06T11:00:00+00:00")
     _mk_run(bronze, start=start, end=end, run="2026-08-06T10:00:00+00:00")
@@ -127,7 +127,7 @@ def test_raw_bronze_partitions_and_manifest(tmp_path: Path):
 def test_prune_dry_run_smoke(tmp_path: Path):
     _write_pipeline(tmp_path)
     start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
-    bronze = tmp_path / "data" / "lake" / "bronze" / "example_api" / "events_v1"
+    bronze = tmp_path / "lake" / "bronze" / "example_api" / "events_v1"
     runs = [
         "2026-08-06T10:00:00+00:00",
         "2026-08-06T11:00:00+00:00",
@@ -147,7 +147,8 @@ def test_prune_dry_run_smoke(tmp_path: Path):
     assert ap["command"] == "prune"
     assert ap["argv"][:3] == ["prune", "-p", "example_api.events"]
     assert "--apply" in ap["argv"]
-    assert "--lake-layout" in ap["argv"]
+    assert "--lake-layout" not in ap["argv"]
+    assert "--lake-path" in ap["argv"]
     assert len(ap["plan_digest"]) == 64
     assert "det approve" in ap["note"]
     # The interval is normalized in the plan, so an operator can approve from a
@@ -242,7 +243,7 @@ def test_bronze_duckdb_hint(tmp_path: Path):
     doc = yaml.safe_load(pipe.read_text(encoding="utf-8"))
     doc["destination"] = {
         "type": "duckdb",
-        "path": "./data/lake",
+        "path": str(tmp_path / "lake"),
         "connection": "./data/analytics.duckdb",
         "dataset": "bronze",
     }
@@ -260,7 +261,7 @@ def test_list_runs_and_summarize_never_return_connection(tmp_path: Path):
 
     _write_pipeline(tmp_path)
     dt = datetime.now(UTC).date().isoformat()
-    receipt_dir = tmp_path / "data" / "lake" / "runs" / f"dt={dt}" / "example_api.events"
+    receipt_dir = tmp_path / "lake" / "runs" / f"dt={dt}" / "example_api.events"
     receipt_dir.mkdir(parents=True)
     (receipt_dir / "extract__x__1.json").write_text(
         json.dumps(

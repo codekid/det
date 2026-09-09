@@ -78,7 +78,7 @@ def _write_pipeline_and_raw(root: Path) -> Path:
                 "source": {"type": f"{provider}.{source}"},
                 "schema": schema_rel,
                 "ingestion": {"library": "thin"},
-                "destination": {"type": "filesystem", "path": "./data/lake"},
+                "destination": {"type": "filesystem", "path": str(root / "lake")},
             }
         ),
         encoding="utf-8",
@@ -87,7 +87,6 @@ def _write_pipeline_and_raw(root: Path) -> Path:
     run = "2026-08-06T10:00:00+00:00"
     run_dir = (
         root
-        / "data"
         / "lake"
         / "raw"
         / provider

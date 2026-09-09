@@ -13,20 +13,19 @@ from collections.abc import Mapping
 from typing import Any
 
 # Max layout this install can write/read. Not package semver.
-# Layout 1: single root with raw/ + bronze/ prefixes.
-# Layout 2: split roots (DET_LAKE_PATH_{RAW,BRONZE,OPS}) with flattened dataset paths.
+# Layout 2 only: split/derived roots (DET_LAKE_PATH or DET_LAKE_PATH_*).
 LAKE_LAYOUT = 2
 
 
 def lake_layout_of(payload: Mapping[str, Any] | None) -> int:
-    """Layout from a manifest or receipt body. Missing or invalid ⇒ layout 1."""
+    """Layout from a manifest or receipt body. Missing or invalid ⇒ layout 2."""
     if not payload:
-        return 1
+        return 2
     raw = payload.get("lake_layout")
     if raw is None or raw == "":
-        return 1
+        return 2
     try:
         value = int(raw)
     except (TypeError, ValueError):
-        return 1
-    return value if value >= 1 else 1
+        return 2
+    return value if value >= 1 else 2

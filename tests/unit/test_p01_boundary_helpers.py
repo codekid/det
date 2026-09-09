@@ -71,10 +71,13 @@ def test_clamp_list_limit_and_warehouse_paths(
     assert ops_duckdb_path(tmp_path) == (tmp_path / "o.duckdb").resolve()
 
 
-def test_walk_hive_runs_and_filesystem_list_bronze(tmp_path: Path) -> None:
+def test_walk_hive_runs_and_filesystem_list_bronze(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from det.runtime.config import load_pipeline_config
     from det.runtime.manifest import write_manifest
 
+    monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path))
     root = tmp_path
     ds = (
         root

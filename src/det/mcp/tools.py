@@ -320,13 +320,13 @@ def read_manifest(run_path: str, *, root: Path | None = None) -> dict[str, Any]:
 
 
 def lake_path_for_pipeline(pipeline: str, *, root: Path | None = None) -> str:
-    """Display path for the lake (ops root in layout 2; unified root in layout 1)."""
+    """Display path for the lake (ops root)."""
     h.prepare_tool()
     from det.destinations.models import lake_roots_for
 
     base = h.root(root)
     config, _ = h.load_pipeline(pipeline, base)
-    roots = lake_roots_for(base, destination=config.destination)
+    roots = lake_roots_for(base)
     return h.rel(roots.ops, base)
 
 

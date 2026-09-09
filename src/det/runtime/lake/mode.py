@@ -73,15 +73,15 @@ def pick_lake_spec(
     Resolve the lake root spec (URI or local path). First hit wins:
 
     1. CLI ``--lake-path`` / ``DetSettings.lake_override``
-    2. Explicit ``destination.path`` in YAML (layout 1 only)
-    3. ``DetSettings.lake_path`` (usually from ``DET_LAKE_PATH`` via ``from_env``)
-    4. ``DET_LAKE_PATH``
-    5. ``./data/lake``
+    2. ``DetSettings.lake_path`` (usually from ``DET_LAKE_PATH`` via ``from_env``)
+    3. ``DET_LAKE_PATH``
+    4. ``./data/lake``
+
+    ``destination_path`` is ignored (layout 2 only; kept for call-site compat).
     """
+    del destination_path
     if cli_lake_path is not None and str(cli_lake_path).strip():
         return str(cli_lake_path).strip()
-    if destination_path is not None and str(destination_path).strip():
-        return str(destination_path).strip()
     if settings_lake_path is not None and str(settings_lake_path).strip():
         return str(settings_lake_path).strip()
     environ = os.environ if env is None else env

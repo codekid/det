@@ -137,13 +137,11 @@ def collect_view_size_warnings(
         return []
 
     root = project_root.resolve()
-    if lake_path is not None:
-        # Rebuild destination path override for bronze_dataset_dir
-        dest = config.destination.model_copy(update={"path": str(lake_path)})
-        cfg = config.model_copy(update={"destination": dest})
-        bronze_root = bronze_dataset_dir(cfg, root)
-    else:
-        bronze_root = bronze_dataset_dir(config, root)
+    bronze_root = bronze_dataset_dir(
+        config,
+        root,
+        cli_lake_path=str(lake_path) if lake_path is not None else None,
+    )
 
     files = _bronze_jsonl_files(bronze_root)
     if not files:

@@ -321,7 +321,7 @@ dbt:
             grain: [title, rate]
 destination:
   type: filesystem
-  path: ./data/lake
+  path: ./lake
 """,
         encoding="utf-8",
     )
@@ -428,7 +428,7 @@ dbt:
                   amount: tax_amount
 destination:
   type: filesystem
-  path: ./data/lake
+  path: ./lake
 """,
         encoding="utf-8",
     )
@@ -496,14 +496,13 @@ dbt:
         materialized: view
 destination:
   type: filesystem
-  path: ./data/lake
+  path: ./lake
 """,
         encoding="utf-8",
     )
     config = load_pipeline_config(pipeline)
     bronze = (
         tmp_path
-        / "data"
         / "lake"
         / "bronze"
         / "example_api"
@@ -555,7 +554,7 @@ dbt:
         materialized: view
 destination:
   type: filesystem
-  path: ./data/lake
+  path: ./lake
 """,
         encoding="utf-8",
     )

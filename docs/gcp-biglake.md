@@ -102,7 +102,8 @@ fi
 | Load SA | objectViewer | objectAdmin | objectCreator |
 | BigLake connection SA | — | objectViewer | objectViewer (ops table) |
 
-Layout 1 can approximate this with prefix-conditioned IAM on one bucket.
+Prefix-conditioned IAM on one bucket can approximate split roles under a derived
+parent (`DET_LAKE_PATH` with `{path}/raw` and `{path}/bronze`).
 
 Run `det biglake-register --dry-run` before `--apply` — it prints an IAM hint
 (with copy-paste `gcloud` when the connection already exists).

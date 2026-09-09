@@ -206,8 +206,9 @@ def run_dbt(
     """
     Invoke the dbt CLI for local/testing use.
 
-    Sets DET_LAKE_PATH from --lake-path, destination.path, existing env, or
-    ``./data/lake``. Requires the optional ``[dbt]`` extra.
+    Sets DET_LAKE_PATH from --lake-path, existing env, or ``./data/lake``
+    (layout 2 derived/split). ``destination.path`` is ignored.
+    Requires the optional ``[dbt]`` extra.
 
     When ``catchup=True``, loads immutable
     ``ops/silver_catchup/<catchup_manifest>.json`` from the same lake (ops root
@@ -249,12 +250,10 @@ def run_dbt(
             return text.rstrip("/")
         return str(open_lake(text, root, env=env))
 
-    dest_path = config.destination.path if config is not None else None
     specs = resolve_lake_root_specs(
         active,
         project_root=root,
         cli_lake_path=spec_cli,
-        destination_path=dest_path,
         env=env,
     )
     if specs.is_split:
