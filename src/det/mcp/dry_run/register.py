@@ -32,13 +32,16 @@ def biglake_register_dry_run(
     if pipeline:
         _, pipe_path = h.load_pipeline(pipeline, base)
         pipe_id = h.canonical_id(pipeline, base)
+    # Resolve lake kwargs before planning so mixed --lake-path + split roots
+    # fail closed (same lake identity as the approval digest).
+    lake_kw = h.approval_lake_kwargs(project_root=base, lake_path=lake_path)
     argv = biglake_register_write_argv(
         pipeline=pipe_id,
         project=project,
         location=location,
         connection=connection,
         skip_ops=skip_ops or pipeline is not None,
-        **h.approval_lake_kwargs(project_root=base, lake_path=lake_path),
+        **lake_kw,
     )
     plan = build_biglake_register_plan(
         project_root=base,
@@ -82,6 +85,8 @@ def iceberg_register_dry_run(
     if pipeline:
         _, pipe_path = h.load_pipeline(pipeline, base)
         pipe_id = h.canonical_id(pipeline, base)
+    # Fail closed on mixed lake_path + split before planning (digest identity).
+    lake_kw = h.approval_lake_kwargs(project_root=base, lake_path=lake_path)
     plan = build_iceberg_register_plan(
         project_root=base,
         lake_path=lake_path,
@@ -92,7 +97,7 @@ def iceberg_register_dry_run(
         iceberg_register_write_argv(
             pipeline=pipe_id,
             skip_ops=skip_ops,
-            **h.approval_lake_kwargs(project_root=base, lake_path=lake_path),
+            **lake_kw,
         ),
         plan,
     )

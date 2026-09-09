@@ -1863,6 +1863,19 @@ def test_approval_lake_kwargs_binds_split_roots(tmp_path: Path, monkeypatch):
     assert "lake_path" not in kw
 
 
+def test_approval_lake_kwargs_rejects_lake_path_with_split_roots(
+    tmp_path: Path, monkeypatch
+):
+    """Explicit --lake-path must not silently lose to DET_LAKE_PATH_* in digests."""
+    from det.cli.common import _approval_lake_kwargs, _settings
+
+    monkeypatch.setenv("DET_LAKE_PATH_RAW", str(tmp_path / "raw"))
+    monkeypatch.setenv("DET_LAKE_PATH_BRONZE", str(tmp_path / "bronze"))
+    monkeypatch.setenv("DET_LAKE_PATH_OPS", str(tmp_path / "ops"))
+    with pytest.raises(ValueError, match="cannot be combined"):
+        _approval_lake_kwargs(_settings(tmp_path, lake_path=str(tmp_path / "other")))
+
+
 def test_migrate_write_argv_with_approval_lake_kwargs_includes_layout(
     tmp_path: Path, monkeypatch
 ):

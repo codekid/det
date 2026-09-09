@@ -85,6 +85,10 @@ def _approval_lake_kwargs(settings) -> dict:
     settings have ``DET_LAKE_PATH`` / overrides / ``DET_LAKE_PATH_*`` — not the
     implicit default ``./data/lake``. Call after :func:`_settings` so CLI
     overrides are already on ``settings``.
+
+    An explicit ``lake_override`` (CLI/MCP ``--lake-path``) cannot be combined
+    with split roots: runtime resolution prefers split and would ignore the
+    parent, so digests would not match the lake the operator meant to bind.
     """
     from det.runtime.lake import (
         is_split_lake_configured,
@@ -93,7 +97,14 @@ def _approval_lake_kwargs(settings) -> dict:
     )
 
     out: dict = {"lake_layout": lake_layout_preference(settings)}
+    override = (settings.lake_override or "").strip()
     if is_split_lake_configured(settings):
+        if override:
+            raise ValueError(
+                "--lake-path cannot be combined with DET_LAKE_PATH_RAW / "
+                "_BRONZE / _OPS (or --lake-path-raw/bronze/ops); omit "
+                "--lake-path or unset the split roots"
+            )
         raw, bronze, ops = split_lake_specs_from_settings(settings)
         if raw:
             out["lake_path_raw"] = raw
@@ -102,7 +113,7 @@ def _approval_lake_kwargs(settings) -> dict:
         if ops:
             out["lake_path_ops"] = ops
         return out
-    parent = (settings.lake_override or "").strip() or (settings.lake_path or "").strip()
+    parent = override or (settings.lake_path or "").strip()
     if parent:
         out["lake_path"] = parent
     return out
