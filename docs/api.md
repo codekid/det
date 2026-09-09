@@ -34,8 +34,8 @@ without bumping `LAKE_LAYOUT`. Bumping `wire_version` in YAML does **not** requi
 a DET major.
 
 **Implemented:** refuse loads when `manifest.lake_layout` is greater than this
-install’s `LAKE_LAYOUT` (`DetContractError`). Missing `lake_layout` still means
-layout 1. Layout 2 split roots: `DetSettings.lake_path_raw` / `_bronze` / `_ops`
+install’s `LAKE_LAYOUT` (`DetContractError`). Missing `lake_layout` means
+layout **2**. Split roots: `DetSettings.lake_path_raw` / `_bronze` / `_ops`
 or `DET_LAKE_PATH_*` — see [lake-layout.md](lake-layout.md). Cutover is new
 buckets (or prefixes) + re-extract; there is no layout migrator.
 

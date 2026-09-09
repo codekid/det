@@ -1,4 +1,4 @@
-"""LakeRoots: unified (layout 1) vs split (layout 2) resolution."""
+"""LakeRoots: layout 2 derived and explicit split resolution."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from det.runtime.lake import (
     LakeRoots,
     clear_memory_lakes,
     is_split_lake_configured,
+    lake_layout_from_env,
     reset_lake_mode_warning_for_tests,
     resolve_lake_root_specs,
     resolve_lake_roots,
@@ -71,26 +72,18 @@ def test_resolve_derived_split_default(tmp_path: Path) -> None:
     assert roots.unified_spec is None
 
 
-def test_resolve_unified_with_layout_1(tmp_path: Path) -> None:
-    settings = DetSettings.from_env(project_root=tmp_path).with_overrides(
-        lake_layout=1
-    )
-    roots = resolve_lake_roots(settings, project_root=tmp_path)
-    assert roots.layout == 1
-    assert not roots.is_split
-    assert roots.raw == roots.bronze == roots.ops
-    assert Path(str(roots.ops)).resolve() == (tmp_path / DEFAULT_LAKE_REL).resolve()
+def test_lake_layout_from_env_rejects_layout_1(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DET_LAKE_LAYOUT", "1")
+    with pytest.raises(ValueError, match="removed"):
+        lake_layout_from_env()
 
 
-def test_layout_1_conflicts_with_split_roots(tmp_path: Path) -> None:
-    settings = DetSettings.from_env(project_root=tmp_path).with_overrides(
-        lake_layout=1,
-        lake_path_raw=str(tmp_path / "r"),
-        lake_path_bronze=str(tmp_path / "b"),
-        lake_path_ops=str(tmp_path / "o"),
-    )
-    with pytest.raises(ValueError, match="cannot be combined"):
-        resolve_lake_roots(settings, project_root=tmp_path)
+def test_settings_from_env_rejects_layout_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DET_LAKE_LAYOUT", "1")
+    with pytest.raises(ValueError, match="removed"):
+        DetSettings.from_env(project_root=tmp_path)
 
 
 def test_resolve_split_from_settings_overrides(tmp_path: Path) -> None:
@@ -148,7 +141,7 @@ def test_dataset_dirs_flattened_in_layout_2(tmp_path: Path) -> None:
     assert "bronze" not in Path(str(bronze_dir)).parts[-3:]
 
 
-def test_derived_default_dataset_dirs_match_layout1_paths(tmp_path: Path) -> None:
+def test_derived_default_dataset_dirs(tmp_path: Path) -> None:
     lake = tmp_path / "lake"
     settings = DetSettings.from_env(project_root=tmp_path).with_overrides(
         lake_path=str(lake)
@@ -165,35 +158,28 @@ def test_derived_default_dataset_dirs_match_layout1_paths(tmp_path: Path) -> Non
     ).resolve()
 
 
-def test_dataset_dirs_prefixed_in_layout_1(tmp_path: Path) -> None:
+def test_destination_path_always_ignored(tmp_path: Path) -> None:
     lake = tmp_path / "lake"
     settings = DetSettings.from_env(project_root=tmp_path).with_overrides(
-        lake_path=str(lake),
-        lake_layout=1,
+        lake_path=str(lake)
     )
-    cfg = _pipeline(tmp_path)
-    with use_settings(settings):
-        raw_dir = raw_dataset_dir(cfg, tmp_path, settings=settings)
-        bronze_dir = bronze_dataset_dir(cfg, tmp_path, settings=settings)
-    assert Path(str(raw_dir)).resolve() == (
-        lake / "raw" / "example_api" / "events_v1"
-    ).resolve()
-    assert Path(str(bronze_dir)).resolve() == (
-        lake / "bronze" / "example_api" / "events_v1"
-    ).resolve()
+    roots = resolve_lake_roots(
+        settings,
+        project_root=tmp_path,
+        destination_path=str(tmp_path / "should-ignore"),
+    )
+    assert Path(str(roots.ops)).resolve() == lake.resolve()
 
-
-def test_destination_path_ignored_in_split_mode(tmp_path: Path) -> None:
     raw = tmp_path / "r"
     bronze = tmp_path / "b"
     ops = tmp_path / "o"
-    settings = DetSettings.from_env(project_root=tmp_path).with_overrides(
+    split = DetSettings.from_env(project_root=tmp_path).with_overrides(
         lake_path_raw=str(raw),
         lake_path_bronze=str(bronze),
         lake_path_ops=str(ops),
     )
     roots = resolve_lake_roots(
-        settings,
+        split,
         project_root=tmp_path,
         destination_path=str(tmp_path / "should-ignore"),
     )

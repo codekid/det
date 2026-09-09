@@ -98,7 +98,7 @@ source:
 schema: schemas/myco/feed/feed.schema.yaml
 destination:
   type: iceberg                # or filesystem for JSONL smoke
-  # path: ./data/lake          # layout 1 only (DET_LAKE_LAYOUT=1); ignored under layout 2
+  # path: ./data/lake          # ignored (layout 2 only); use DET_LAKE_PATH
 wire_version: 1
 ```
 
@@ -138,11 +138,10 @@ PipelineRunner(settings=settings).run("myco.feed", interval_start="2026-01-01")
 Interval: start inclusive, end exclusive (default start + 1 day). Canonical
 pipeline ids work on the runner (same as the CLI).
 
-Split roots are process-wide (all pipelines). Layout **2** is the default:
+Split roots are process-wide (all pipelines). Layout **2** only:
 `DET_LAKE_PATH` / `lake_path` derives `{path}/raw`, `{path}/bronze`, ops parent;
-or set explicit `lake_path_raw` / `lake_path_bronze` / `lake_path_ops`. Unified
-layout 1 only with `DET_LAKE_LAYOUT=1` / `lake_layout=1`. Bucket names for
-explicit split are yours — DET never assigns them. See
+or set explicit `lake_path_raw` / `lake_path_bronze` / `lake_path_ops`. Bucket
+names for explicit split are yours — DET never assigns them. See
 [lake-layout.md](lake-layout.md) and [operator-runbook.md](operator-runbook.md).
 
 Custom secrets (no process-env mutation):

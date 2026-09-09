@@ -43,7 +43,7 @@ class BigLakeRegisterPlan:
     tables: tuple[BigLakeTablePlan, ...]
     bronze_uri: str | None = None
     ops_uri: str | None = None
-    lake_layout: int = 1
+    lake_layout: int = 2
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -333,7 +333,7 @@ def format_iam_hint(plan: BigLakeRegisterPlan) -> str:
     """Human-readable IAM hint block for CLI dry-run."""
     hint = build_iam_hint(plan)
     lines = ["IAM hint:"]
-    if hint.get("lake_layout", 1) >= 2:
+    if hint.get("lake_layout", 2) >= 2:
         lines.append(f"  layout={hint['lake_layout']}")
         if hint.get("bronze_uri"):
             lines.append(f"  bronze_uri={hint['bronze_uri']}")
@@ -377,7 +377,6 @@ def biglake_register_write_argv(
     lake_path_raw: str | None = None,
     lake_path_bronze: str | None = None,
     lake_path_ops: str | None = None,
-    lake_layout: int | None = None,
     pipeline: str | None = None,
     project: str | None = None,
     location: str | None = None,
@@ -391,7 +390,6 @@ def biglake_register_write_argv(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
-            lake_layout=lake_layout,
         )
     )
     if pipeline:

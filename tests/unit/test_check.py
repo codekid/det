@@ -377,22 +377,6 @@ def test_iceberg_glue_requires_s3_is_error(tmp_path: Path, monkeypatch):
     assert any(f.code == "iceberg_glue_requires_s3" for f in findings)
 
 
-def test_iceberg_glue_requires_s3_uses_destination_path(
-    tmp_path: Path, monkeypatch
-):
-    """Layout 1: env lake may be s3:// while destination.path is local — register uses dest."""
-    _write_pipeline(tmp_path)
-    monkeypatch.setenv("DET_ICEBERG_CATALOG", "glue")
-    monkeypatch.setenv("DET_LAKE_MODE", "cloud")
-    monkeypatch.setenv("DET_LAKE_LAYOUT", "1")
-    monkeypatch.setenv("DET_LAKE_PATH", "s3://bucket/det-lake")
-    findings = check_project(tmp_path)
-    assert has_errors(findings)
-    glue = [f for f in findings if f.code == "iceberg_glue_requires_s3"]
-    assert glue
-    assert any(f.pipeline == "example_api.events" for f in glue)
-
-
 def test_iceberg_glue_split_checks_bronze_not_destination_path(
     tmp_path: Path, monkeypatch
 ):

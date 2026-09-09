@@ -8,7 +8,6 @@ import typer
 from det.cli.app import app
 from det.cli.common import (
     _APPROVAL_HELP,
-    _LAKE_LAYOUT_HELP,
     _LAKE_PATH_BRONZE_HELP,
     _LAKE_PATH_HELP,
     _LAKE_PATH_OPS_HELP,
@@ -40,7 +39,6 @@ def extract_raw(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
     lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
-    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     set_: list[str] = typer.Option([], "--set"),
     lock_ttl_sec: int | None = typer.Option(
         None,
@@ -66,7 +64,6 @@ def extract_raw(
         lake_path_raw=lake_path_raw,
         lake_path_bronze=lake_path_bronze,
         lake_path_ops=lake_path_ops,
-        lake_layout=lake_layout,
         lock_ttl_sec=lock_ttl_sec,
     )
     claimed = _gate_approval(
@@ -118,7 +115,6 @@ def load_bronze(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
     lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
-    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     set_: list[str] = typer.Option([], "--set"),
     lock_ttl_sec: int | None = typer.Option(
         None,
@@ -142,7 +138,6 @@ def load_bronze(
         lake_path_raw=lake_path_raw,
         lake_path_bronze=lake_path_bronze,
         lake_path_ops=lake_path_ops,
-        lake_layout=lake_layout,
         lock_ttl_sec=lock_ttl_sec,
     )
     claimed = _gate_approval(
@@ -191,7 +186,6 @@ def run_pipeline(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
     lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
-    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     set_: list[str] = typer.Option([], "--set"),
     lock_ttl_sec: int | None = typer.Option(
         None,
@@ -215,7 +209,6 @@ def run_pipeline(
         lake_path_raw=lake_path_raw,
         lake_path_bronze=lake_path_bronze,
         lake_path_ops=lake_path_ops,
-        lake_layout=lake_layout,
         lock_ttl_sec=lock_ttl_sec,
     )
     claimed = _gate_approval(

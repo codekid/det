@@ -183,7 +183,7 @@ def _payload(
     )
     body: ReceiptPayload = {
         "receipt_version": RECEIPT_VERSION,
-        "lake_layout": int(draft.lake_layout) if draft.lake_layout is not None else 1,
+        "lake_layout": int(draft.lake_layout) if draft.lake_layout is not None else 2,
         "attempt_id": draft.attempt_id,
         "pipeline": draft.pipeline,
         "command": draft.command,

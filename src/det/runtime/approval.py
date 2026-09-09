@@ -523,7 +523,6 @@ def _lake_argv(
     lake_path_raw: str | None = None,
     lake_path_bronze: str | None = None,
     lake_path_ops: str | None = None,
-    lake_layout: int | None = None,
 ) -> list[str]:
     """Lake path / layout flags redirect where data lands, so they must be bound."""
     argv: list[str] = []
@@ -539,8 +538,6 @@ def _lake_argv(
     ops = (lake_path_ops or "").strip()
     if ops:
         argv.extend(["--lake-path-ops", ops])
-    if lake_layout is not None:
-        argv.extend(["--lake-layout", str(int(lake_layout))])
     return argv
 
 
@@ -553,7 +550,6 @@ def extract_write_argv(
     lake_path_raw: str | None = None,
     lake_path_bronze: str | None = None,
     lake_path_ops: str | None = None,
-    lake_layout: int | None = None,
     set_: Sequence[str] | None = None,
 ) -> list[str]:
     argv = ["extract", "-p", _norm_pipeline(pipeline), "-s", _require_interval(interval_start)]
@@ -566,7 +562,6 @@ def extract_write_argv(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
-            lake_layout=lake_layout,
         )
     )
     argv.extend(_set_argv(set_))
@@ -583,7 +578,6 @@ def load_write_argv(
     lake_path_raw: str | None = None,
     lake_path_bronze: str | None = None,
     lake_path_ops: str | None = None,
-    lake_layout: int | None = None,
     set_: Sequence[str] | None = None,
 ) -> list[str]:
     argv = ["load", "-p", _norm_pipeline(pipeline), "-s", _require_interval(interval_start)]
@@ -598,7 +592,6 @@ def load_write_argv(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
-            lake_layout=lake_layout,
         )
     )
     argv.extend(_set_argv(set_))
@@ -614,7 +607,6 @@ def run_write_argv(
     lake_path_raw: str | None = None,
     lake_path_bronze: str | None = None,
     lake_path_ops: str | None = None,
-    lake_layout: int | None = None,
     set_: Sequence[str] | None = None,
 ) -> list[str]:
     argv = ["run", "-p", _norm_pipeline(pipeline), "-s", _require_interval(interval_start)]
@@ -627,7 +619,6 @@ def run_write_argv(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
-            lake_layout=lake_layout,
         )
     )
     argv.extend(_set_argv(set_))
@@ -650,7 +641,6 @@ def migrate_write_argv(
     lake_path_raw: str | None = None,
     lake_path_bronze: str | None = None,
     lake_path_ops: str | None = None,
-    lake_layout: int | None = None,
     ingestion: str | None = None,
     set_: Sequence[str] | None = None,
 ) -> list[str]:
@@ -691,7 +681,6 @@ def migrate_write_argv(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
-            lake_layout=lake_layout,
         )
     )
     argv.extend(_set_argv(set_))
@@ -708,7 +697,6 @@ def prune_write_argv(
     lake_path_raw: str | None = None,
     lake_path_bronze: str | None = None,
     lake_path_ops: str | None = None,
-    lake_layout: int | None = None,
     set_: Sequence[str] | None = None,
 ) -> list[str]:
     argv = ["prune", "-p", _norm_pipeline(pipeline), "-s", _require_interval(interval_start)]
@@ -722,7 +710,6 @@ def prune_write_argv(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
-            lake_layout=lake_layout,
         )
     )
     argv.extend(_set_argv(set_))
@@ -807,7 +794,6 @@ def dbt_write_argv(
     lake_path_raw: str | None = None,
     lake_path_bronze: str | None = None,
     lake_path_ops: str | None = None,
-    lake_layout: int | None = None,
     set_: Sequence[str] | None = None,
 ) -> list[str]:
     argv = ["dbt", "--command", command]
@@ -835,7 +821,6 @@ def dbt_write_argv(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
-            lake_layout=lake_layout,
         )
     )
     argv.extend(_set_argv(set_))
@@ -856,7 +841,6 @@ def silver_catchup_plan_write_argv(
     lake_path_raw: str | None = None,
     lake_path_bronze: str | None = None,
     lake_path_ops: str | None = None,
-    lake_layout: int | None = None,
 ) -> list[str]:
     argv = ["silver-catchup-plan", "--apply"]
     if all_pipelines:
@@ -894,7 +878,6 @@ def silver_catchup_plan_write_argv(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
-            lake_layout=lake_layout,
         )
     )
     return argv
@@ -938,7 +921,6 @@ def lock_release_write_argv(
     lake_path_raw: str | None = None,
     lake_path_bronze: str | None = None,
     lake_path_ops: str | None = None,
-    lake_layout: int | None = None,
     dataset_id: str | None = None,
 ) -> list[str]:
     argv = [
@@ -960,7 +942,6 @@ def lock_release_write_argv(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
-            lake_layout=lake_layout,
         )
     )
     return argv

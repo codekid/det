@@ -31,17 +31,13 @@ def lake_roots_for(
     cli_lake_path_ops: str | None = None,
     settings: DetSettings | None = None,
 ) -> LakeRoots:
-    """Resolve process-wide lake roots (layout 1 unified or layout 2 split)."""
+    """Resolve process-wide lake roots (layout 2 derived or explicit split)."""
     active = settings
     if active is None:
         from det.runtime.settings import get_active_settings
 
         active = get_active_settings()
-    dest_path = None
-    if destination is not None and not _is_split(
-        active, cli_lake_path_raw, cli_lake_path_bronze, cli_lake_path_ops
-    ):
-        dest_path = destination.path
+    del destination  # destination.path never selects the lake root (layout 2 only)
     return resolve_lake_roots(
         active,
         project_root=active.project_root if active is not None else project_root,
@@ -49,7 +45,7 @@ def lake_roots_for(
         cli_lake_path_raw=cli_lake_path_raw,
         cli_lake_path_bronze=cli_lake_path_bronze,
         cli_lake_path_ops=cli_lake_path_ops,
-        destination_path=dest_path,
+        destination_path=None,
     )
 
 
@@ -59,17 +55,9 @@ def _is_split(
     cli_bronze: str | None,
     cli_ops: str | None,
 ) -> bool:
-    """True when effective layout is split (explicit three roots or default L2)."""
-    from det.runtime.lake import is_split_lake_configured, lake_layout_preference
-
-    if is_split_lake_configured(
-        settings,
-        cli_lake_path_raw=cli_raw,
-        cli_lake_path_bronze=cli_bronze,
-        cli_lake_path_ops=cli_ops,
-    ):
-        return True
-    return lake_layout_preference(settings) >= 2
+    """True when effective layout is split (always, under layout 2 only)."""
+    del settings, cli_raw, cli_bronze, cli_ops
+    return True
 
 
 def lake_root(
@@ -80,7 +68,7 @@ def lake_root(
     settings: DetSettings | None = None,
 ) -> LakeRef:
     """
-    Unified lake root for receipts/locks (layout 1) or ops root (layout 2).
+    Ops lake root for receipts/locks (layout 2 ops layer).
 
     Prefer :func:`lake_roots_for` when raw and bronze may differ.
     """
@@ -171,6 +159,7 @@ def _dataset_dir(
     cli_lake_path: str | None = None,
     settings: DetSettings | None = None,
 ) -> LakeRef:
+    del prefix  # layout 2 flattens; medallion prefix is unused
     roots = lake_roots_for(
         project_root,
         destination=config.destination,
@@ -183,9 +172,7 @@ def _dataset_dir(
         out = roots.bronze
     else:
         raise ValueError(f"unknown lake layer {layer!r}")
-    # Layout 1: medallion prefix under unified root. Layout 2: flattened.
-    if roots.layout < 2:
-        out = out / prefix
+    # Layout 2: flattened dataset dirs under the layer root.
     canonical = validate_canonical_id(dataset) if dataset else config.canonical_id
     for part in fs_dataset_parts(canonical):
         out = out / part

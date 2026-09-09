@@ -32,8 +32,8 @@ CLI after the user confirms. Install: `uv pip install -e ".[mcp]"`.
   rebuild historical raw with explicit
   `--from-raw provider.source_v1 --to-bronze provider.source_v2`.
 - Manifest always stamps `wire_version` (legacy missing field ⇒ `1`) and
-  `lake_layout` (current hive/SQL contract; missing ⇒ `1`). See
-  `docs/lake-layout.md` for the layout 1 changelog and what bumps each field.
+  `lake_layout` (current hive/SQL contract; missing ⇒ `2`). See
+  `docs/lake-layout.md` for the layout changelog and what bumps each field.
   Bump `wire_version` for payload breaks only — do not use it to rename hive keys.
 - Contract triangle (schema vs dbt catalog vs analytics): [docs/contract-triangle.md](../../docs/contract-triangle.md).
 - Optional filter: `det migrate … --wire-version N` / MCP

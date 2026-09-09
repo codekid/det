@@ -3,11 +3,10 @@
 The lake root is a runtime location (default ``./data/lake``), not a per-pipeline
 contract. ``destination.type`` still only chooses bronze serving.
 
-Layout **2** (default): split roots — explicit ``DET_LAKE_PATH_{RAW,BRONZE,OPS}``
+Layout **2** only: split roots — explicit ``DET_LAKE_PATH_{RAW,BRONZE,OPS}``
 or derived from ``DET_LAKE_PATH`` as ``{path}/raw``, ``{path}/bronze``, ops =
-``{path}``. Layout **1** (unified): ``DET_LAKE_LAYOUT=1`` / ``--lake-layout 1``.
-Embedders choose arbitrary URIs for explicit split — DET never assigns bucket
-names.
+``{path}``. Embedders choose arbitrary URIs for explicit split — DET never
+assigns bucket names.
 
 ``DET_LAKE_MODE`` (local|cloud) is policy around the URI shape — not a second
 writer path. Unset defaults to local.

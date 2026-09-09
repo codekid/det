@@ -258,7 +258,6 @@ def iceberg_register_write_argv(
     lake_path_raw: str | None = None,
     lake_path_bronze: str | None = None,
     lake_path_ops: str | None = None,
-    lake_layout: int | None = None,
     pipeline: str | None = None,
     skip_ops: bool = False,
 ) -> list[str]:
@@ -269,7 +268,6 @@ def iceberg_register_write_argv(
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
             lake_path_ops=lake_path_ops,
-            lake_layout=lake_layout,
         )
     )
     if pipeline:

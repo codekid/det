@@ -126,13 +126,11 @@ Greenfield: `det init-pipeline --name example_api.events --source-type example_a
 
 ## Destinations
 
-Lake root: `DET_LAKE_PATH` / `--lake-path` (default `./data/lake`). **Layout 2
-(default)** derives `{path}/raw`, `{path}/bronze`, and ops=`{path}` (same on-disk
-tree as the old unified layout; writers stamp `lake_layout: 2`). Explicit split
-roots: `DET_LAKE_PATH_RAW` / `_BRONZE` / `_OPS` (arbitrary bucket URIs; flattened
-`{provider}/{source}_vN`). **Layout 1** (unified single root, medallion prefixes,
-`destination.path` allowed): `DET_LAKE_LAYOUT=1` / `--lake-layout 1`. See
-[docs/lake-layout.md](docs/lake-layout.md) and
+Lake root: `DET_LAKE_PATH` / `--lake-path` (default `./data/lake`). **Layout 2**
+derives `{path}/raw`, `{path}/bronze`, and ops=`{path}` (writers stamp
+`lake_layout: 2`). Explicit split roots: `DET_LAKE_PATH_RAW` / `_BRONZE` / `_OPS`
+(arbitrary bucket URIs; flattened `{provider}/{source}_vN`). `destination.path`
+is ignored. See [docs/lake-layout.md](docs/lake-layout.md) and
 [docs/operator-runbook.md](docs/operator-runbook.md).
 
 **`DET_LAKE_MODE`** (policy around the URI; unset → `local`):
@@ -155,7 +153,7 @@ Publish existing Hadoop tables with `det iceberg-register --dry-run` then
 
 | `destination.type` | Bronze |
 | --- | --- |
-| **`iceberg`** | Default. Layout 2 derived: `{DET_LAKE_PATH}/bronze/<provider>/<source>_vN/`. Explicit split: `{DET_LAKE_PATH_BRONZE}/<provider>/<source>_vN/`. Layout 1: `{destination.path or DET_LAKE_PATH}/bronze/…` (`--lake-path` overrides both). |
+| **`iceberg`** | Default. Derived: `{DET_LAKE_PATH}/bronze/<provider>/<source>_vN/`. Explicit split: `{DET_LAKE_PATH_BRONZE}/<provider>/<source>_vN/` (`--lake-path` / env overrides). |
 | `filesystem` | Hive JSONL (thin / fixtures). Cannot share that path with Iceberg |
 | `duckdb` | `bronze_{provider}.{source}_vN` — needs `connection` |
 | `postgres` | Same SQL names — `connection_env: DET_POSTGRES_DSN` (never a DSN in YAML) |

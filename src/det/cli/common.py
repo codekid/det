@@ -52,7 +52,6 @@ def _settings(
     lake_path_raw: str | None = None,
     lake_path_bronze: str | None = None,
     lake_path_ops: str | None = None,
-    lake_layout: int | None = None,
     lock_ttl_sec: int | None = None,
 ):
     """Build DetSettings from env, then apply CLI flag overrides."""
@@ -68,8 +67,6 @@ def _settings(
         overrides["lake_override_bronze"] = lake_path_bronze
     if lake_path_ops is not None:
         overrides["lake_override_ops"] = lake_path_ops
-    if lake_layout is not None:
-        overrides["lake_layout"] = lake_layout
     if lock_ttl_sec is not None:
         overrides["lock_ttl_sec"] = lock_ttl_sec
     if overrides:
@@ -78,13 +75,11 @@ def _settings(
 
 
 def _approval_lake_kwargs(settings) -> dict:
-    """Effective lake kwargs for approval digests (layout always; paths when configured).
+    """Effective lake path kwargs for approval digests (layout 2 only).
 
-    Always binds ``lake_layout`` (1 or 2) so omit-flag cannot drift with
-    ``DET_LAKE_LAYOUT``. Binds parent ``lake_path`` or split layer roots when
-    settings have ``DET_LAKE_PATH`` / overrides / ``DET_LAKE_PATH_*`` — not the
-    implicit default ``./data/lake``. Call after :func:`_settings` so CLI
-    overrides are already on ``settings``.
+    Binds parent ``lake_path`` or split layer roots when settings have
+    ``DET_LAKE_PATH`` / overrides / ``DET_LAKE_PATH_*`` — not the implicit
+    default ``./data/lake``. Does not bind ``--lake-layout`` (always 2).
 
     An explicit ``lake_override`` (CLI/MCP ``--lake-path``) cannot be combined
     with split roots: runtime resolution prefers split and would ignore the
@@ -92,11 +87,10 @@ def _approval_lake_kwargs(settings) -> dict:
     """
     from det.runtime.lake import (
         is_split_lake_configured,
-        lake_layout_preference,
         split_lake_specs_from_settings,
     )
 
-    out: dict = {"lake_layout": lake_layout_preference(settings)}
+    out: dict = {}
     override = (settings.lake_override or "").strip()
     if is_split_lake_configured(settings):
         if override:
@@ -119,26 +113,17 @@ def _approval_lake_kwargs(settings) -> dict:
     return out
 
 
-def _approval_lake_layout(settings) -> int:
-    """Effective lake layout for approval digests (always bind 1 or 2)."""
-    return int(_approval_lake_kwargs(settings)["lake_layout"])
-
-
 _LAKE_LAYER_PARAMS = frozenset(
-    {"lake_path", "lake_path_raw", "lake_path_bronze", "lake_path_ops", "lake_layout"}
+    {"lake_path", "lake_path_raw", "lake_path_bronze", "lake_path_ops"}
 )
 
 _LAKE_PATH_HELP = (
-    "Lake parent root (layout 2 default: derives raw/bronze under this path; "
-    "layout 1 unified root when --lake-layout 1). Ignored when split roots are set."
+    "Lake parent root (layout 2: derives raw/bronze under this path). "
+    "Ignored when split roots are set."
 )
 _LAKE_PATH_RAW_HELP = "Raw layer root URI (layout 2; requires bronze + ops)."
 _LAKE_PATH_BRONZE_HELP = "Bronze layer root URI (layout 2; requires raw + ops)."
 _LAKE_PATH_OPS_HELP = "Ops layer root URI for runs/locks (layout 2; requires raw + bronze)."
-_LAKE_LAYOUT_HELP = (
-    "Lake layout: 2 = split (default; derive from --lake-path or use layer roots); "
-    "1 = unified single root (DET_LAKE_LAYOUT=1)."
-)
 
 def _resolve_pipeline(ref: str, root: Path):
     """Resolve pipeline ref; log and echo the resolved path for auditability."""

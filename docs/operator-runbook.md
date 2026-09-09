@@ -6,7 +6,7 @@ compresses where to look and what to run. Deep authority:
 - [publication-contract.md](publication-contract.md) — orphan raw / lease fence
 - [api.md](api.md) — approvals and `LeaseHeldError` / `LeaseFencedError`
 - [silver-catchup.md](silver-catchup.md) — bronze↔silver heal
-- [lake-layout.md](lake-layout.md) — layout 1 vs 2 roots
+- [lake-layout.md](lake-layout.md) — layout 2 roots (derived or explicit split)
 
 Approvals are **audit / intent-binding, not authorization**. Never treat
 `det approve` as a security boundary.
@@ -30,32 +30,22 @@ Agent policy: MCP dry-run only; mutating CLI only after explicit user confirm, t
 
 ## Profiles
 
-Both profiles default to **lake layout 2**. Layout 1 is an explicit opt-in.
+Both profiles use **lake layout 2** only.
 
 | | Minimal | Fleet |
 | --- | --- | --- |
-| **Lake layout** | **2** (default): `DET_LAKE_PATH` derives `{path}/raw`, `{path}/bronze`, ops=`{path}` | **2**: same derive, **or** explicit `DET_LAKE_PATH_{RAW,BRONZE,OPS}` multi-bucket |
-| **Layout 1** | Only if `DET_LAKE_LAYOUT=1` / `--lake-layout 1` (unified root; `destination.path` allowed) | Same opt-in; do not mix with split roots |
+| **Lake layout** | **2**: `DET_LAKE_PATH` derives `{path}/raw`, `{path}/bronze`, ops=`{path}` | **2**: same derive, **or** explicit `DET_LAKE_PATH_{RAW,BRONZE,OPS}` multi-bucket |
 | **Bronze** | Iceberg (recommended) or JSONL (`filesystem`) | Iceberg; optional REST/Glue catalog |
 | **Leases** | Lake locks on | Lake locks; Postgres lock backend optional |
 | **Analytics** | Local DuckDB | DuckDB and/or BigQuery (`DET_DBT_TARGET`) |
 | **Catch-up** | Unused | Mode A lookback and/or BQ heal on `gs://` ops ([silver-catchup.md](silver-catchup.md)) |
 | **Orchestration** | CLI | Airflow Compose, ops dbt (`tag:ops`), optional Cube |
 
-### Activate layout 1 (unified)
-
-```bash
-export DET_LAKE_LAYOUT=1
-# or: det run … --lake-layout 1
-```
-
-Fails closed if any of `DET_LAKE_PATH_RAW` / `_BRONZE` / `_OPS` is also set.
-
 ### Try-it (layout 2 derived)
 
 ```bash
 uv sync --extra iceberg --extra examples
 export DET_DISCOVER_EXAMPLES=1
-export DET_LAKE_PATH="$PWD/data/lake"   # stamps lake_layout: 2; same on-disk tree as before
+export DET_LAKE_PATH="$PWD/data/lake"   # stamps lake_layout: 2
 uv run det run -p noaa.storm_events -s 2026-08-06
 ```
