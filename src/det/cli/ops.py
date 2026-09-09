@@ -15,7 +15,7 @@ from det.cli.common import (
     _PIPELINE_HELP,
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
-    _approval_lake_layout,
+    _approval_lake_kwargs,
     _claimed_approval_work,
     _consume_approval,
     _gate_approval,
@@ -224,16 +224,12 @@ def biglake_register_cmd(
         lake_layout=lake_layout,
     )
     argv = biglake_register_write_argv(
-        lake_path=lake_path,
-        lake_path_raw=lake_path_raw,
-        lake_path_bronze=lake_path_bronze,
-        lake_path_ops=lake_path_ops,
-        lake_layout=_approval_lake_layout(settings),
         pipeline=pipe_id,
         project=project,
         location=location,
         connection=connection,
         skip_ops=skip_ops or pipeline is not None,
+        **_approval_lake_kwargs(settings),
     )
     try:
         with use_settings(settings):
@@ -340,13 +336,9 @@ def iceberg_register_cmd(
 
     argv = with_catalog_target_argv(
         iceberg_register_write_argv(
-            lake_path=lake_path,
-            lake_path_raw=lake_path_raw,
-            lake_path_bronze=lake_path_bronze,
-            lake_path_ops=lake_path_ops,
-            lake_layout=_approval_lake_layout(settings),
             pipeline=pipe_id,
             skip_ops=skip_ops,
+            **_approval_lake_kwargs(settings),
         ),
         plan,
     )
@@ -517,12 +509,8 @@ def lock_release(
             resolved.canonical_id,
             start_iso,
             end_iso,
-            lake_path=lake_path,
-            lake_path_raw=lake_path_raw,
-            lake_path_bronze=lake_path_bronze,
-            lake_path_ops=lake_path_ops,
-            lake_layout=_approval_lake_layout(settings),
             dataset_id=dataset_id,
+            **_approval_lake_kwargs(settings),
         ),
         approval,
         require_approval,

@@ -57,6 +57,7 @@ def dbt_dry_run(
                 select=select,
                 catchup=catchup,
                 catchup_manifest=catchup_manifest,
+                **h.approval_lake_kwargs(project_root=base),
             ),
         ),
     }

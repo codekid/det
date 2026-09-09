@@ -86,6 +86,7 @@ def silver_catchup_dry_run(
                 limit=limit,
                 manifest_id=mid,
                 content_digest=digest,
+                **h.approval_lake_kwargs(project_root=base),
             ),
         ),
         "next_steps": (

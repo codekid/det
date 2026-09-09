@@ -36,9 +36,12 @@ or explicit `DET_LAKE_PATH_RAW` / `_BRONZE` / `_OPS`. Unified layout 1 only with
   do guarantee: the record accurately describes the command that runs. Every
   flag that changes what or where data is written is in `plan_digest`, and an
   unrecognized flag is rejected (`approval_unbound_flag`) rather than escaping
-  it. So **re-approve when you change any flag**, including `--lake-path`,
-  `--set`, `--full-refresh`, `--catchup`, `--target`, `--ingestion`, and
-  `--lake-layout`. Pipeline refs and
+  it. Digests bind **effective** `--lake-layout` (1|2) and any configured
+  `DET_LAKE_PATH` / layer roots (not only CLI-typed flags); MCP dry-run
+  `approval_plan` uses the same kwargs. So **re-approve when you change any
+  flag**, including `--lake-path`, `--set`, `--full-refresh`, `--catchup`,
+  `--target`, `--ingestion`, and `--lake-layout`, or when those env lake
+  roots change. Pipeline refs and
   intervals are canonicalized, so `noaa/storm_events` and `noaa.storm_events`,
   or `-s 2026-08-06` and `-s 2026-08-06T00:00:00+00:00`, share one digest.
 - A crashed run leaves its approval `claimed`, and a claim never expires, so it

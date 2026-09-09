@@ -77,15 +77,51 @@ def _settings(
     return settings
 
 
-def _approval_lake_layout(settings) -> int:
-    """Effective lake layout for approval digests (always bind 1 or 2).
+def _approval_lake_kwargs(settings) -> dict:
+    """Effective lake kwargs for approval digests (layout always; paths when configured).
 
-    When ``--lake-layout`` is omitted, bind the resolved preference so the plan
-    cannot silently change if ``DET_LAKE_LAYOUT`` differs at execute time.
+    Always binds ``lake_layout`` (1 or 2) so omit-flag cannot drift with
+    ``DET_LAKE_LAYOUT``. Binds parent ``lake_path`` or split layer roots when
+    settings have ``DET_LAKE_PATH`` / overrides / ``DET_LAKE_PATH_*`` — not the
+    implicit default ``./data/lake``. Call after :func:`_settings` so CLI
+    overrides are already on ``settings``.
+
+    An explicit ``lake_override`` (CLI/MCP ``--lake-path``) cannot be combined
+    with split roots: runtime resolution prefers split and would ignore the
+    parent, so digests would not match the lake the operator meant to bind.
     """
-    from det.runtime.lake import lake_layout_preference
+    from det.runtime.lake import (
+        is_split_lake_configured,
+        lake_layout_preference,
+        split_lake_specs_from_settings,
+    )
 
-    return lake_layout_preference(settings)
+    out: dict = {"lake_layout": lake_layout_preference(settings)}
+    override = (settings.lake_override or "").strip()
+    if is_split_lake_configured(settings):
+        if override:
+            raise ValueError(
+                "--lake-path cannot be combined with DET_LAKE_PATH_RAW / "
+                "_BRONZE / _OPS (or --lake-path-raw/bronze/ops); omit "
+                "--lake-path or unset the split roots"
+            )
+        raw, bronze, ops = split_lake_specs_from_settings(settings)
+        if raw:
+            out["lake_path_raw"] = raw
+        if bronze:
+            out["lake_path_bronze"] = bronze
+        if ops:
+            out["lake_path_ops"] = ops
+        return out
+    parent = override or (settings.lake_path or "").strip()
+    if parent:
+        out["lake_path"] = parent
+    return out
+
+
+def _approval_lake_layout(settings) -> int:
+    """Effective lake layout for approval digests (always bind 1 or 2)."""
+    return int(_approval_lake_kwargs(settings)["lake_layout"])
 
 
 _LAKE_LAYER_PARAMS = frozenset(
@@ -170,7 +206,17 @@ _BOUND_PARAMS: dict[str, frozenset[str]] = {
             "set_",
         }
     ),
-    "prune": frozenset({"pipeline", "interval_start", "interval_end", "keep", "apply", "set_"}),
+    "prune": frozenset(
+        {
+            "pipeline",
+            "interval_start",
+            "interval_end",
+            "keep",
+            "apply",
+            "set_",
+            *_LAKE_LAYER_PARAMS,
+        }
+    ),
     "dbt": frozenset(
         {
             "pipeline",

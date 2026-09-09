@@ -8,10 +8,14 @@ from det.cli.app import app
 from det.cli.common import (
     _APPROVAL_HELP,
     _LAKE_LAYOUT_HELP,
+    _LAKE_PATH_BRONZE_HELP,
+    _LAKE_PATH_HELP,
+    _LAKE_PATH_OPS_HELP,
+    _LAKE_PATH_RAW_HELP,
     _PIPELINE_HELP,
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
-    _approval_lake_layout,
+    _approval_lake_kwargs,
     _claimed_approval_work,
     _consume_approval,
     _gate_approval,
@@ -150,13 +154,9 @@ def migrate_bronze(
                 recreate_iceberg=recreate_iceberg,
                 all_raw=all_raw,
                 all_raw_runs=all_raw_runs,
-                lake_path=lake_path,
-                lake_path_raw=lake_path_raw,
-                lake_path_bronze=lake_path_bronze,
-                lake_path_ops=lake_path_ops,
-                lake_layout=_approval_lake_layout(settings),
                 ingestion=ingestion,
                 set_=set_,
+                **_approval_lake_kwargs(settings),
             ),
             approval,
             require_approval,
@@ -245,6 +245,13 @@ def prune_bronze(
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview deletes only"),
     apply: bool = typer.Option(False, "--apply", help="Perform bronze deletes"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+    lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
+    lake_path_bronze: str | None = typer.Option(
+        None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
+    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
+    lake_layout: int | None = typer.Option(None, "--lake-layout", help=_LAKE_LAYOUT_HELP),
     set_: list[str] = typer.Option([], "--set"),
     lock_ttl_sec: int | None = typer.Option(
         None,
@@ -271,6 +278,15 @@ def prune_bronze(
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
     start_iso, end_iso = _resolve_interval(interval_start, interval_end)
+    settings = _settings(
+        root,
+        lake_path=lake_path,
+        lake_path_raw=lake_path_raw,
+        lake_path_bronze=lake_path_bronze,
+        lake_path_ops=lake_path_ops,
+        lake_layout=lake_layout,
+        lock_ttl_sec=lock_ttl_sec,
+    )
     claimed = False
     if apply:
         claimed = _gate_approval(
@@ -282,15 +298,14 @@ def prune_bronze(
                 interval_end=end_iso,
                 keep=keep,
                 set_=set_,
+                **_approval_lake_kwargs(settings),
             ),
             approval,
             require_approval,
             ctx=ctx,
         )
     config = load_pipeline_config(resolved.path, overrides=set_)
-    pruner = BronzePruner(
-        settings=_settings(root, lock_ttl_sec=lock_ttl_sec)
-    )
+    pruner = BronzePruner(settings=settings)
     plan = pruner.plan(
         config,
         interval_start=start_iso,
