@@ -110,7 +110,10 @@ def init_pipeline_cmd(
     lake_path: str | None = typer.Option(
         None,
         "--lake-path",
-        help="Rare: emit destination.path (default lake is DET_LAKE_PATH or ./data/lake)",
+        help=(
+            "Rejected: init does not set the lake. Use DET_LAKE_PATH or "
+            "--lake-path on extract/load/run/migrate"
+        ),
     ),
     skip_dbt: bool = typer.Option(False, "--skip-dbt", help="Skip scaffold-dbt"),
     force: bool = typer.Option(False, "--force"),

@@ -16,7 +16,6 @@ from det.plugins import load_plugins
 from det.runtime.bronze_land import BronzeLandParams, BronzeLandResult, land_bronze_partition
 from det.runtime.coerce import CoerceError, coerce_record
 from det.runtime.config import (
-    DestinationConfig,
     IngestionConfig,
     MedallionConfig,
     PipelineConfig,
@@ -337,15 +336,6 @@ class BronzeMigrator:
         config = load_pipeline(
             pipeline, project_root=self.project_root, overrides=overrides
         )
-        if lake_path is not None:
-            config.destination = DestinationConfig(
-                type=config.destination.type,
-                path=lake_path,
-                dataset=config.destination.dataset,
-                connection=config.destination.connection,
-                connection_env=config.destination.connection_env,
-                partition=config.destination.partition,
-            )
         if bronze_prefix is not None or raw_prefix is not None:
             config.medallion = MedallionConfig(
                 bronze_prefix=bronze_prefix or config.medallion.bronze_prefix,
@@ -391,7 +381,6 @@ class BronzeMigrator:
                 str(
                     lake_roots_for(
                         self.project_root,
-                        destination=config.destination,
                         settings=ctx_settings,
                     ).ops
                 )
@@ -513,7 +502,6 @@ class BronzeMigrator:
                 sql_schema, sql_table = sql_names_for_config(to_config)
                 migrate_roots = lake_roots_for(
                     self.project_root,
-                    destination=to_config.destination,
                     settings=ctx_settings,
                 )
                 migrate_ops = migrate_roots.ops
@@ -616,7 +604,6 @@ class BronzeMigrator:
             written = 0
             migrate_lake = lake_roots_for(
                 self.project_root,
-                destination=config.destination,
                 settings=ctx_settings,
             ).ops
             lease_opts = resolve_lease_options(

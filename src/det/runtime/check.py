@@ -615,8 +615,7 @@ def _iceberg_glue_lake_findings(project_root: Path) -> list[Finding]:
                 lake = open_lake(lake_spec, root, env=environ)
                 lake_uri = _lake_uri_str(lake)
             except ValueError:
-                # Mode mismatch etc. — still validate the effective spec string
-                # registration would pick (destination.path wins over DET_LAKE_PATH).
+                # Mode mismatch etc. — still validate the effective bronze spec.
                 lake_uri = key
         try:
             _require_register_catalog(environ, lake_uri)

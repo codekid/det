@@ -15,7 +15,6 @@ from det.runtime.ids import (
     parse_canonical_id,
     validate_canonical_id,
 )
-from det.runtime.lake import DEFAULT_LAKE_REL
 from det.runtime.registry import get_source, list_sources
 from det.runtime.secrets import looks_like_passwordful_uri, looks_like_secret_name
 from det.scaffold.dbt import ScaffoldAction, ScaffoldResult, scaffold_dbt
@@ -80,8 +79,15 @@ def init_pipeline(
     Greenfield pipeline: YAML + minimal schema + optional scaffold-dbt.
 
     ``name`` and ``source_type`` must be the same canonical ``provider.source`` id.
+    ``lake_path`` is rejected: lake roots are process-wide via ``DET_LAKE_PATH``
+    / extract-load ``--lake-path``, not pipeline YAML.
     """
     load_plugins()
+    if (lake_path or "").strip():
+        raise ValueError(
+            "init_pipeline does not accept lake_path (destination.path is ignored); "
+            "set DET_LAKE_PATH or pass --lake-path on extract/load/run/migrate"
+        )
     name = validate_canonical_id(name)
     source_type = validate_canonical_id(source_type)
     if name != source_type:
@@ -112,11 +118,6 @@ def init_pipeline(
         # Default extract_run (identity on __extract_run_datetime). Small /
         # reference sources should set partition: none.
         dest["partition"] = "extract_run"
-    if lake_path and lake_path.strip() and lake_path.strip() not in {
-        DEFAULT_LAKE_REL,
-        "data/lake",
-    }:
-        dest["path"] = lake_path.strip()
     if destination_type in {"duckdb", "postgres"}:
         if not connection:
             raise ValueError(

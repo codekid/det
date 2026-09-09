@@ -126,3 +126,14 @@ def test_init_pipeline_iceberg_omits_path_and_scaffolds_scan(tmp_path: Path):
     )
     assert "iceberg_scan(" in text
     assert "**/data.jsonl" not in text
+
+
+def test_init_pipeline_rejects_lake_path(tmp_path: Path):
+    with pytest.raises(ValueError, match="does not accept lake_path"):
+        init_pipeline(
+            name="example_api.events",
+            source_type="example_api.events",
+            project_root=tmp_path,
+            dry_run=True,
+            lake_path=str(tmp_path / "elsewhere"),
+        )

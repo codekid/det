@@ -24,20 +24,23 @@ if TYPE_CHECKING:
 def lake_roots_for(
     project_root: Path,
     *,
-    destination: DestinationConfig | None = None,
     cli_lake_path: str | None = None,
     cli_lake_path_raw: str | None = None,
     cli_lake_path_bronze: str | None = None,
     cli_lake_path_ops: str | None = None,
     settings: DetSettings | None = None,
 ) -> LakeRoots:
-    """Resolve process-wide lake roots (layout 2 derived or explicit split)."""
+    """Resolve process-wide lake roots (layout 2 derived or explicit split).
+
+    Roots come only from ``DET_LAKE_PATH`` / ``--lake-path`` / split
+    ``DET_LAKE_PATH_*`` (and settings overrides). ``destination.path`` is never
+    consulted.
+    """
     active = settings
     if active is None:
         from det.runtime.settings import get_active_settings
 
         active = get_active_settings()
-    del destination  # destination.path never selects the lake root (layout 2 only)
     return resolve_lake_roots(
         active,
         project_root=active.project_root if active is not None else project_root,
@@ -45,7 +48,6 @@ def lake_roots_for(
         cli_lake_path_raw=cli_lake_path_raw,
         cli_lake_path_bronze=cli_lake_path_bronze,
         cli_lake_path_ops=cli_lake_path_ops,
-        destination_path=None,
     )
 
 
@@ -71,10 +73,11 @@ def lake_root(
     Ops lake root for receipts/locks (layout 2 ops layer).
 
     Prefer :func:`lake_roots_for` when raw and bronze may differ.
+    ``destination`` is unused for path resolution (API compat).
     """
+    del destination
     roots = lake_roots_for(
         project_root,
-        destination=destination,
         cli_lake_path=cli_lake_path,
         settings=settings,
     )
@@ -162,7 +165,6 @@ def _dataset_dir(
     del prefix  # layout 2 flattens; medallion prefix is unused
     roots = lake_roots_for(
         project_root,
-        destination=config.destination,
         cli_lake_path=cli_lake_path,
         settings=settings,
     )

@@ -226,7 +226,6 @@ def build_iceberg_register_plan(
         get_active_settings(),
         project_root=root,
         cli_lake_path=lake_path,
-        destination_path=config.destination.path if config is not None else None,
         env=environ,
     )
     bronze_lake = roots.bronze

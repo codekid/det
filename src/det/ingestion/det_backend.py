@@ -175,7 +175,7 @@ class DetBackend:
 
         json_schema = load_json_schema(resolve_path(project_root, config.schema_path))
         schema, table = sql_names_for_config(config)
-        roots = lake_roots_for(project_root, destination=destination)
+        roots = lake_roots_for(project_root)
         # Build location from the selected destination's roots (not config.destination).
         table_location = roots.bronze
         if roots.layout < 2:

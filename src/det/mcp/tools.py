@@ -326,7 +326,7 @@ def lake_path_for_pipeline(pipeline: str, *, root: Path | None = None) -> str:
 
     base = h.root(root)
     config, _ = h.load_pipeline(pipeline, base)
-    roots = lake_roots_for(base, destination=config.destination)
+    roots = lake_roots_for(base)
     return h.rel(roots.ops, base)
 
 
