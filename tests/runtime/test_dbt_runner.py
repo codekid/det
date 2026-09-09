@@ -145,7 +145,7 @@ source:
 schema: schemas/mini.schema.yaml
 destination:
   type: filesystem
-  path: ./data/lake
+  path: ./elsewhere
 """,
         encoding="utf-8",
     )
@@ -162,7 +162,9 @@ destination:
     )
     assert result.returncode == 0
     assert result.select == ("stg_noaa__storm_events+",)
+    # destination.path is ignored; fallback is ./data/lake → layout-2 bronze.
     assert result.lake_path == str((tmp_path / "data" / "lake" / "bronze").resolve())
+    assert result.lake_path != str((tmp_path / "elsewhere" / "bronze").resolve())
     assert result.bronze_source == "filesystem"
     assert "stg_noaa__storm_events+" in result.command
 

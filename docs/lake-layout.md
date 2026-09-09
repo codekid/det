@@ -7,7 +7,7 @@ contract documented here.
 | --- | --- | --- | --- |
 | **`lake_layout`** | Path keys, partition hive, SQL naming rules, sibling prefixes | Hive key renames, partition encoding changes, SQL schema/table rules change | `meta/manifest.json`, run receipt JSON |
 | **`wire_version`** | Dataset era for one pipeline (`{name}_vN`) | True wire/parse breaks; rebuild raw with `det migrate` | Pipeline YAML, manifest, receipt |
-| **`receipt_version`** | JSON shape under `{lake}/runs/` | Receipt schema breaking changes | Run receipt JSON only |
+| **`receipt_version`** | JSON shape under `{ops}/runs/` | Receipt schema breaking changes | Run receipt JSON only |
 
 Package semver (`det` `0.9.0` in `pyproject.toml`) is **not** lake layout. A DET
 release can ship without changing `LAKE_LAYOUT`.
