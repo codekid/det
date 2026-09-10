@@ -1494,6 +1494,7 @@ def test_bound_params_encoded_in_write_argv_builders():
             base = silver_catchup_plan_write_argv(
                 "noaa.storm_events", manifest_id=mid, content_digest=digest
             )
+            assert "--extract-lookback" in base and "48h" in base
             checks = {
                 "pipeline": (
                     silver_catchup_plan_write_argv(
@@ -1533,11 +1534,20 @@ def test_bound_params_encoded_in_write_argv_builders():
                 "extract_lookback": (
                     silver_catchup_plan_write_argv(
                         "noaa.storm_events",
-                        extract_lookback="48h",
+                        extract_lookback="7d",
                         manifest_id=mid,
                         content_digest=digest,
                     ),
-                    ("--extract-lookback", "48h"),
+                    ("--extract-lookback", "7d"),
+                ),
+                "census": (
+                    silver_catchup_plan_write_argv(
+                        "noaa.storm_events",
+                        census=True,
+                        manifest_id=mid,
+                        content_digest=digest,
+                    ),
+                    ("--census",),
                 ),
                 "limit": (
                     silver_catchup_plan_write_argv(

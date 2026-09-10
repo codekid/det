@@ -162,6 +162,56 @@ def test_parse_extract_lookback():
         parse_extract_lookback("two-days")
 
 
+def test_resolve_catchup_candidate_scope_defaults_and_rejects():
+    from det.runtime.silver_catchup import (
+        DEFAULT_EXTRACT_LOOKBACK,
+        resolve_catchup_candidate_scope,
+    )
+
+    assert resolve_catchup_candidate_scope() == DEFAULT_EXTRACT_LOOKBACK == "48h"
+    assert resolve_catchup_candidate_scope(extract_lookback="7d") == "7d"
+    assert resolve_catchup_candidate_scope(census=True) is None
+    assert resolve_catchup_candidate_scope(interval_start="2026-08-06") is None
+    assert (
+        resolve_catchup_candidate_scope(
+            interval_start="2026-08-06", interval_end="2026-08-07"
+        )
+        is None
+    )
+    with pytest.raises(ValueError, match="requires -s/--interval-start"):
+        resolve_catchup_candidate_scope(interval_end="2026-08-07")
+    with pytest.raises(ValueError, match="cannot combine"):
+        resolve_catchup_candidate_scope(census=True, extract_lookback="48h")
+    with pytest.raises(ValueError, match="cannot combine"):
+        resolve_catchup_candidate_scope(census=True, interval_start="2026-08-06")
+    with pytest.raises(ValueError, match="cannot combine"):
+        resolve_catchup_candidate_scope(
+            extract_lookback="48h", interval_start="2026-08-06"
+        )
+
+
+def test_silver_catchup_plan_write_argv_binds_default_lookback_and_census():
+    from det.runtime.approval import silver_catchup_plan_write_argv
+
+    mid = "scm_" + ("ab" * 8)
+    digest = "sha256:" + ("0" * 64)
+    routine = silver_catchup_plan_write_argv(
+        "noaa.storm_events", manifest_id=mid, content_digest=digest
+    )
+    assert routine[0:2] == ["silver-catchup-plan", "--apply"]
+    assert "--extract-lookback" in routine and "48h" in routine
+    assert "--census" not in routine
+
+    census = silver_catchup_plan_write_argv(
+        "noaa.storm_events",
+        census=True,
+        manifest_id=mid,
+        content_digest=digest,
+    )
+    assert "--census" in census
+    assert "--extract-lookback" not in census
+
+
 def test_diff_hole_behind_max_watermark(catchup_root: Path, monkeypatch):
     lake = catchup_root / "data" / "lake"
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))

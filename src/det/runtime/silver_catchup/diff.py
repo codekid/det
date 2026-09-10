@@ -213,7 +213,9 @@ def diff_bronze_silver(
     ``extract_lookback`` (e.g. ``48h``) enables Mode A: candidates from recent
     bronze extract runs, silver probed only for those intervals. Mode A always
     discovers up to ``_APPLY_BRONZE_CAP``; ``limit`` only truncates displayed
-    rows. Omit lookback for Mode B (full census or ``-s``/``-e`` interval window).
+    rows. A missing lookback here is Mode B (full census or ``-s``/``-e``);
+    CLI/MCP apply the routine ``48h`` default and require ``--census`` /
+    ``census=true`` for Mode B full lake.
     """
     root = project_root.resolve()
     if isinstance(pipeline, PipelineConfig):

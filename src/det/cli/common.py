@@ -257,6 +257,7 @@ _BOUND_PARAMS: dict[str, frozenset[str]] = {
             "interval_start",
             "interval_end",
             "extract_lookback",
+            "census",
             "limit",
             "apply",
             "manifest_id",

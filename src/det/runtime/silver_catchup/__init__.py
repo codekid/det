@@ -31,6 +31,7 @@ from det.runtime.silver_catchup.diff import (
 )
 from det.runtime.silver_catchup.duckdb_silver import _list_silver_extract_runs_duckdb
 from det.runtime.silver_catchup.ids import (
+    DEFAULT_EXTRACT_LOOKBACK,
     MANIFEST_ID_PREFIX,
     MANIFEST_VERSION,
     _coverage_key,
@@ -40,6 +41,7 @@ from det.runtime.silver_catchup.ids import (
     new_catchup_manifest_id,
     parse_duration,
     parse_extract_lookback,
+    resolve_catchup_candidate_scope,
     silver_relation,
     validate_catchup_candidate_scope,
     validate_catchup_content_digest,
@@ -125,6 +127,7 @@ __all__ = [
     "plan_catchup_manifest",
     "read_catchup_manifest",
     "resolve_bq_catchup_cleanup_cutoff",
+    "resolve_catchup_candidate_scope",
     "resolve_ops_lake",
     "silver_relation",
     "validate_bq_catchup_cleanup_scope",
@@ -132,4 +135,5 @@ __all__ = [
     "validate_catchup_content_digest",
     "validate_catchup_manifest_id",
     "write_catchup_manifest",
+    "DEFAULT_EXTRACT_LOOKBACK",
 ]
