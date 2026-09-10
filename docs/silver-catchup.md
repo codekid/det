@@ -87,7 +87,8 @@ and `det dbt --catchup`.
 2. **Plan:** `det silver-catchup plan -p <pipeline>` → immutable `manifest_id`
    (`scm_…`) + `content_digest` + `approval_plan` (MCP: `silver_catchup_dry_run`).
    Pass the same scope flags as status (`--census` / lookback / `-s`/`-e`).
-3. **Apply manifest:** `det approve` then
+3. **Apply manifest:** show plan `approval_plan`, **stop** for explicit operator
+   confirmation; after confirm: `det approve`, then a **later** turn
    `det silver-catchup apply --manifest-id <scm_…> --content-digest <sha256:…> --approval <id>`
    (or `det silver-catchup-plan --apply …`) writes create-once:
    - `{DET_LAKE_PATH}/ops/silver_catchup/<manifest_id>.json`

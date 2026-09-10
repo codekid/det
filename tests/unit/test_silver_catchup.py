@@ -172,6 +172,14 @@ def test_resolve_catchup_candidate_scope_defaults_and_rejects():
     assert resolve_catchup_candidate_scope(extract_lookback="7d") == "7d"
     assert resolve_catchup_candidate_scope(census=True) is None
     assert resolve_catchup_candidate_scope(interval_start="2026-08-06") is None
+    assert (
+        resolve_catchup_candidate_scope(
+            interval_start="2026-08-06", interval_end="2026-08-07"
+        )
+        is None
+    )
+    with pytest.raises(ValueError, match="requires -s/--interval-start"):
+        resolve_catchup_candidate_scope(interval_end="2026-08-07")
     with pytest.raises(ValueError, match="cannot combine"):
         resolve_catchup_candidate_scope(census=True, extract_lookback="48h")
     with pytest.raises(ValueError, match="cannot combine"):

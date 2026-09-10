@@ -71,6 +71,7 @@ def resolve_catchup_candidate_scope(
 
     - ``census=True`` → Mode B full (no lookback); rejects an explicit lookback.
     - ``-s`` / ``-e`` → Mode B interval; rejects lookback (and rejects census).
+      ``-e`` alone is rejected (``-s`` required; ``-s`` alone remains valid).
     - Explicit ``extract_lookback`` → Mode A with that window.
     - Otherwise → Mode A with :data:`DEFAULT_EXTRACT_LOOKBACK` (``48h``).
 
@@ -79,7 +80,10 @@ def resolve_catchup_candidate_scope(
     """
     lookback_raw = str(extract_lookback).strip() if extract_lookback is not None else ""
     has_lookback = bool(lookback_raw)
-    has_interval = interval_start is not None or interval_end is not None
+    if interval_end is not None and interval_start is None:
+        raise ValueError("-e/--interval-end requires -s/--interval-start")
+    # Start alone is Mode B interval (end optional); end-only is rejected above.
+    has_interval = interval_start is not None
     if census and has_lookback:
         raise ValueError("--census cannot combine with --extract-lookback / --lookback")
     if census and has_interval:

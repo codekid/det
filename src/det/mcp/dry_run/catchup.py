@@ -127,8 +127,10 @@ def silver_catchup_dry_run(
             "Operator: det approve --plan <approval_plan> --approved-by <id>. "
             "Agent (later turn): det silver-catchup apply "
             f"--manifest-id {mid} --content-digest {digest} --approval <id> "
-            "(or det silver-catchup-plan --apply …); "
-            "then MCP dbt_dry_run(catchup=True, catchup_manifest=…) → approve → "
+            "(or det silver-catchup-plan --apply …). "
+            "Then MCP dbt_dry_run(catchup=True, catchup_manifest=…) → "
+            "show approval_plan, stop; after confirm: det approve; "
+            "later turn: "
             f"det silver-catchup build --manifest-id {mid} --approval <dbt_id> "
             f"(or det dbt --catchup --catchup-manifest {mid} --approval <dbt_id>)."
         ),
