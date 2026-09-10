@@ -54,19 +54,71 @@ def parse_extract_lookback(text: str) -> timedelta:
     return parse_duration(text, what="extract lookback")
 
 
+# Routine Mode A default when neither --census nor -s/-e nor an explicit lookback.
+DEFAULT_EXTRACT_LOOKBACK = "48h"
+
+
+def resolve_catchup_candidate_scope(
+    *,
+    interval_start: str | None = None,
+    interval_end: str | None = None,
+    extract_lookback: str | None = None,
+    census: bool = False,
+) -> str | None:
+    """Return the effective ``extract_lookback`` for discovery (or ``None`` for Mode B).
+
+    Rules:
+
+    - ``census=True`` → Mode B full (no lookback); rejects an explicit lookback.
+    - ``-s`` / ``-e`` → Mode B interval; rejects lookback (and rejects census).
+    - Explicit ``extract_lookback`` → Mode A with that window.
+    - Otherwise → Mode A with :data:`DEFAULT_EXTRACT_LOOKBACK` (``48h``).
+
+    The returned lookback string (when not ``None``) must be passed through to
+    diff/plan **and** into approval argv so digests bind the effective scope.
+    """
+    lookback_raw = str(extract_lookback).strip() if extract_lookback is not None else ""
+    has_lookback = bool(lookback_raw)
+    has_interval = interval_start is not None or interval_end is not None
+    if census and has_lookback:
+        raise ValueError("--census cannot combine with --extract-lookback / --lookback")
+    if census and has_interval:
+        raise ValueError(
+            "--census cannot combine with -s/--interval-start or -e/--interval-end"
+        )
+    if has_lookback and has_interval:
+        raise ValueError(
+            "--extract-lookback cannot combine with -s/--interval-start "
+            "or -e/--interval-end"
+        )
+    if census or has_interval:
+        return None
+    if has_lookback:
+        # Validate shape early (Nh / Nd).
+        parse_extract_lookback(lookback_raw)
+        return lookback_raw
+    parse_extract_lookback(DEFAULT_EXTRACT_LOOKBACK)
+    return DEFAULT_EXTRACT_LOOKBACK
+
+
 def validate_catchup_candidate_scope(
     *,
     interval_start: str | None,
     interval_end: str | None,
     extract_lookback: str | None,
+    census: bool = False,
 ) -> None:
-    """Reject combining extract-run lookback with interval ``-s``/``-e``."""
-    if extract_lookback and str(extract_lookback).strip():
-        if interval_start is not None or interval_end is not None:
-            raise ValueError(
-                "--extract-lookback cannot combine with -s/--interval-start "
-                "or -e/--interval-end"
-            )
+    """Reject illegal catch-up discovery flag combinations.
+
+    Prefer :func:`resolve_catchup_candidate_scope` when applying the routine
+    default; this helper remains for callers that only need validation.
+    """
+    resolve_catchup_candidate_scope(
+        interval_start=interval_start,
+        interval_end=interval_end,
+        extract_lookback=extract_lookback,
+        census=census,
+    )
 
 
 def silver_relation(config: PipelineConfig) -> tuple[str, str]:

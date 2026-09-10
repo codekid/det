@@ -834,6 +834,7 @@ def silver_catchup_plan_write_argv(
     interval_start: str | None = None,
     interval_end: str | None = None,
     extract_lookback: str | None = None,
+    census: bool = False,
     limit: int = 200,
     manifest_id: str | None = None,
     content_digest: str | None = None,
@@ -842,6 +843,8 @@ def silver_catchup_plan_write_argv(
     lake_path_bronze: str | None = None,
     lake_path_ops: str | None = None,
 ) -> list[str]:
+    from det.runtime.silver_catchup.ids import resolve_catchup_candidate_scope
+
     argv = ["silver-catchup-plan", "--apply"]
     if all_pipelines:
         argv.append("--all-pipelines")
@@ -849,14 +852,18 @@ def silver_catchup_plan_write_argv(
         argv.extend(["-p", _norm_pipeline(pipeline)])
     else:
         raise ValueError("pipeline required unless all_pipelines=True")
-    lookback = (extract_lookback or "").strip()
-    if lookback:
-        if interval_start or interval_end:
-            raise ValueError(
-                "--extract-lookback cannot combine with -s/--interval-start "
-                "or -e/--interval-end"
-            )
-        argv.extend(["--extract-lookback", lookback])
+    # Bind effective discovery scope (routine default 48h, explicit lookback,
+    # --census, or -s/-e). Digests must not omit an implicit default lookback.
+    effective = resolve_catchup_candidate_scope(
+        interval_start=interval_start,
+        interval_end=interval_end,
+        extract_lookback=extract_lookback,
+        census=census,
+    )
+    if effective:
+        argv.extend(["--extract-lookback", effective])
+    elif census:
+        argv.append("--census")
     elif interval_start:
         argv.extend(["-s", _require_interval(interval_start)])
         end = _norm_interval(interval_end)

@@ -353,6 +353,40 @@ def test_catchup_tools_reject_both_pipeline_and_all_pipelines(tmp_path: Path):
         silver_catchup_dry_run(root=tmp_path)
 
 
+def test_silver_catchup_dry_run_default_lookback_in_approval_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Omit lookback → routine 48h bound into approval argv (not full census)."""
+    from det.mcp.dry_run.catchup import silver_catchup_dry_run as _dry
+
+    _write_pipeline(tmp_path)
+    monkeypatch.setenv("DET_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path / "lake"))
+    (tmp_path / "lake").mkdir()
+    planned = {
+        "manifest_id": "scm_" + ("ab" * 8),
+        "content_digest": "sha256:" + ("0" * 64),
+        "manifest": {"runs": []},
+        "manifest_relpath": "ops/silver_catchup/scm_x.json",
+        "candidate_mode": "extract_lookback",
+        "extract_lookback": "48h",
+    }
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.plan_catchup_manifest",
+        lambda **kwargs: planned,
+    )
+    out = _dry(pipeline="example_api.events", root=tmp_path)
+    argv = out["approval_plan"]["argv"]
+    assert "--extract-lookback" in argv
+    assert "48h" in argv
+    assert "--census" not in argv
+
+    out_census = _dry(pipeline="example_api.events", census=True, root=tmp_path)
+    argv_c = out_census["approval_plan"]["argv"]
+    assert "--census" in argv_c
+    assert "--extract-lookback" not in argv_c
+
+
 def test_biglake_register_dry_run_returns_iam_hint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

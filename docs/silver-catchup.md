@@ -5,6 +5,9 @@ DET lands bronze independently of dbt. Incremental silver uses a watermark
 silver before an **earlier** interval’s latest bronze run is visible, a normal
 incremental build (`watermark > max(silver)`) never picks up the miss.
 
+DuckDB analytics and BigQuery-on-GCS share the **same CLI verbs**; only the
+heal SQL engine and optional BQ cleanup differ.
+
 ## Scope
 
 | Supported | Not supported |
@@ -36,11 +39,13 @@ Same membership rule either way; only which bronze intervals are considered
 
 | Mode | Flag | Bronze candidates | Silver query | Use when |
 | --- | --- | --- | --- | --- |
-| **A — routine** | `--extract-lookback 48h` (or `7d`, …) | Intervals touched by bronze extract runs in the lookback (siblings expanded) | Probe only those intervals | Frequent / after load |
-| **B — census** | omit lookback; optional `-s`/`-e` | Full lake, or interval-start window | Full `DISTINCT` when unscoped; probe when `-s`/`-e` | Weekly audit / known date range |
+| **A — routine (default)** | omit flags, or `--extract-lookback` / `--lookback` (default **`48h`**) | Intervals touched by bronze extract runs in the lookback (siblings expanded) | Probe only those intervals | Frequent / after load |
+| **B — census** | `--census`, or `-s`/`-e` | Full lake, or interval-start window | Full `DISTINCT` when unscoped; probe when `-s`/`-e` | Weekly audit / known date range |
 
-Default is **Mode B** (backward compatible). Mode A cannot combine with `-s`/`-e`.
-Diff JSON includes `candidate_mode` (`extract_lookback` \| `interval` \| `full`).
+**Default is Mode A (`48h`).** Omitting lookback no longer means a full census —
+pass `--census` (CLI) or `census=true` (MCP) for Mode B full lake. Mode A cannot
+combine with `--census` or `-s`/`-e`. Diff JSON includes `candidate_mode`
+(`extract_lookback` \| `interval` \| `full`).
 
 Mode A discovers **all** bronze extract runs in the lookback window up to the
 apply safety cap (`100_000`), independent of `--limit`. `--limit` only truncates
@@ -51,46 +56,68 @@ plan/apply `complete` mode: apply safety cap; Mode B inspect: `--limit`);
 `display_truncated` = output lists were sliced for display.
 
 Mode A can miss historical holes with **no** recent bronze extract. Mode A
-`catchup_count=0` is not a forever census — run Mode B periodically. When
-`truncated=true` on Mode A, the lookback window itself was not fully searched.
+`catchup_count=0` is not a forever census — run Mode B (`--census`) periodically.
+When `truncated=true` on Mode A, the lookback window itself was not fully searched.
+
+Approval digests always bind the **effective** lookback (including the `48h`
+default) or `--census`, so apply cannot silently change discovery scope.
+
+## CLI group
+
+Preferred verbs (legacy aliases still work):
+
+```text
+det silver-catchup status   # was silver-catchup-diff
+det silver-catchup plan     # dry-run only (+ approval_plan / next steps)
+det silver-catchup apply    # write scm_… (same digest as silver-catchup-plan --apply)
+det silver-catchup build    # det dbt --catchup --catchup-manifest …
+det silver-catchup verify   # status; exit 1 if catchup_count != 0
+det silver-catchup cleanup  # BQ external tables; DuckDB → skipped=duckdb
+```
+
+Aliases: `silver-catchup-diff`, `silver-catchup-plan`, `silver-catchup-cleanup`,
+and `det dbt --catchup`.
 
 ## Flow
 
-1. **Diff (read-only):** `det silver-catchup-diff -p <pipeline>` or
-   `--all-pipelines` (MCP: `diff_bronze_silver`). Prefer
-   `--extract-lookback 48h` for routine checks. Reads DuckDB analytics silver,
-   or BigQuery silver when `DET_DBT_TARGET=bigquery`.
-2. **Plan:** `det silver-catchup-plan --dry-run …` → immutable `manifest_id`
-   (`scm_…` = silver catch-up manifest) + `content_digest` + `approval_plan`
-   (MCP: `silver_catchup_dry_run`). Pass the same lookback or `-s`/`-e` as the
-   diff (include the same `-e` when the diff used `-e`).
+1. **Status (read-only):** `det silver-catchup status -p <pipeline>` (MCP:
+   `diff_bronze_silver`). Default lookback `48h`. Use `--census` for a full
+   audit. Reads DuckDB analytics silver, or BigQuery silver when
+   `DET_DBT_TARGET=bigquery`.
+2. **Plan:** `det silver-catchup plan -p <pipeline>` → immutable `manifest_id`
+   (`scm_…`) + `content_digest` + `approval_plan` (MCP: `silver_catchup_dry_run`).
+   Pass the same scope flags as status (`--census` / lookback / `-s`/`-e`).
 3. **Apply manifest:** `det approve` then
-   `det silver-catchup-plan --apply --manifest-id <scm_…> --content-digest <sha256:…> --approval <id>`
-   writes create-once:
-   - `{lake}/ops/silver_catchup/<manifest_id>.json`
-   - `{lake}/ops/silver_catchup/<manifest_id>.runs.jsonl` (flat NDJSON for BigQuery)
+   `det silver-catchup apply --manifest-id <scm_…> --content-digest <sha256:…> --approval <id>`
+   (or `det silver-catchup-plan --apply …`) writes create-once:
+   - `{DET_LAKE_PATH}/ops/silver_catchup/<manifest_id>.json`
+   - `{DET_LAKE_PATH}/ops/silver_catchup/<manifest_id>.runs.jsonl` (flat NDJSON for BigQuery)
    Apply re-diffs and **fails** if the live coverage digest no longer matches.
 4. **Catch-up build:** later turn
-   `det dbt --catchup --catchup-manifest <scm_…> --approval <id>` — one process;
+   `det silver-catchup build --manifest-id <scm_…> --approval <id>`
+   (or `det dbt --catchup --catchup-manifest <scm_…> --approval <id>`) — one process;
    sets `DET_CATCHUP_MANIFEST_PATH` and tiny `--vars`
    (`det_catchup`, `det_catchup_manifest_id`).
    - **DuckDB:** macros `read_json` the scm `.json`.
    - **BigQuery:** requires `gs://` scm path; registers external table
      `_det_catchup_runs_<scm_…>` over the sibling `.runs.jsonl`; sets
      `DET_CATCHUP_BQ_RELATION`. Local-lake → BQ raises.
-5. **Verify:** re-run the diff (same mode/flags); `catchup_count` should be 0.
+5. **Verify:** `det silver-catchup verify` with the **same** scope flags;
+   `catchup_count` should be 0 (exit 1 otherwise).
 6. **BQ cleanup (optional):** each BigQuery heal registers
    `_det_catchup_runs_<scm_…>` and does **not** auto-drop it. After verify:
-   - `det silver-catchup-cleanup --list` / `--list --older-than 7d`
+   - `det silver-catchup cleanup --list` / `--list --older-than 7d`
    - MCP `silver_catchup_cleanup_dry_run` (`manifest_id` **or** `older_than`) →
      `det approve` → later
-     `det silver-catchup-cleanup --apply --manifest-id <scm_…> --approval <id>`
+     `det silver-catchup cleanup --apply --manifest-id <scm_…> --approval <id>`
      or `--created-before <iso> --apply --approval <id>` (dry-run freezes the
      cutoff from `--older-than`; relative duration is not re-evaluated at apply)
    Age uses BQ table `created`. Tables without `created` are skipped under
-   retention filters. DuckDB heals never create these tables.
+   retention filters. On DuckDB, cleanup prints `skipped=duckdb` and exits 0
+   (no external tables were created).
 
-Do **not** default to `--full-refresh` for large sources.
+Do **not** default to `--full-refresh` for large sources. Apply and build stay
+**separate** approvals / turns.
 
 ## Catch-up SQL (incremental only)
 
@@ -113,16 +140,16 @@ stays manifest-driven — do not use the tag as `--select` for heal builds.
 
 ## Manifest location
 
-Optional layout-1 sibling (no `lake_layout` bump):
+Layout 2 ops root (`DET_LAKE_PATH` parent or `DET_LAKE_PATH_OPS`):
 
 ```text
 {DET_LAKE_PATH}/ops/silver_catchup/<manifest_id>.json
 {DET_LAKE_PATH}/ops/silver_catchup/<manifest_id>.runs.jsonl
-# split layout: {DET_LAKE_PATH_OPS}/ops/silver_catchup/…
+# split roots: {DET_LAKE_PATH_OPS}/ops/silver_catchup/…
 ```
 
 Each apply creates a **new immutable** pair (`scm_` + 16 hex). There is no
-shared mutable `manifest.json` pointer — `det dbt --catchup` must pass
-`--catchup-manifest`. Approval plans bind both `--manifest-id` and
-`--content-digest` (coverage-key hash) so apply cannot silently heal a different
-set than the dry-run.
+shared mutable `manifest.json` pointer — `det dbt --catchup` / `silver-catchup build`
+must pass `--catchup-manifest` / `--manifest-id`. Approval plans bind both
+`--manifest-id` and `--content-digest` (coverage-key hash) so apply cannot
+silently heal a different set than the dry-run.

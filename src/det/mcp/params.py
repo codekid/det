@@ -63,9 +63,18 @@ ExtractLookbackOpt = Annotated[
     str | None,
     Field(
         description=(
-            "Catch-up Mode A: only intervals touched by bronze extract runs in "
-            "this lookback (e.g. 48h, 7d). Cannot combine with interval_start/end. "
-            "Omit for full census (Mode B)."
+            "Mode A lookback (e.g. 48h, 7d). Default 48h when census is false and "
+            "interval_start/end are omitted. Cannot combine with census or "
+            "interval_start/end. Pass explicitly or omit for the routine default."
+        )
+    ),
+]
+CensusOpt = Annotated[
+    bool,
+    Field(
+        description=(
+            "Mode B full-lake census (no lookback). Default false. Set true for a "
+            "full audit; omitting lookback no longer means census."
         )
     ),
 ]

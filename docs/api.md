@@ -27,7 +27,7 @@ In-tree demos (`noaa`, `example_api`, `openlibrary`) list only when
 | **Package SemVer** | `det.__all__` and documented behavioral guarantees | DET releases |
 | **`lake_layout`** | Hive keys, path skeleton, SQL naming, DET meta column names | DET (rare); see [lake-layout.md](lake-layout.md) |
 | **`wire_version`** | Per-pipeline dataset era (`{name}_vN`) | Pipeline owners |
-| **`receipt_version`** | JSON shape under `{lake}/runs/` | DET |
+| **`receipt_version`** | JSON shape under `{ops}/runs/` | DET |
 
 Package version is **not** lake layout. A DET release can change Python helpers
 without bumping `LAKE_LAYOUT`. Bumping `wire_version` in YAML does **not** require

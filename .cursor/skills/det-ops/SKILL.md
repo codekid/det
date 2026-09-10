@@ -58,32 +58,35 @@ When bronze has data but incremental silver appears behind (watermark hole):
 
 1. MCP `diff_bronze_silver` — `catchup_runs` are **latest bronze extract-run per
    interval** not yet in silver (DuckDB analytics, or BigQuery when
-   `DET_DBT_TARGET=bigquery`). Prefer `extract_lookback="48h"` for routine
-   checks; omit for a full census. Mode A discovers the full lookback window
+   `DET_DBT_TARGET=bigquery`). Routine default is `48h` lookback (omit
+   `extract_lookback` or pass `"48h"`). Full census: `census=true` (omit no
+   longer means census). Mode A discovers the full lookback window
    (up to the apply safety cap); `--limit` / MCP `limit` only truncates
    displayed rows (`display_truncated`). `truncated=true` means discovery hit
    the safety cap — not a complete lookback. Ignore
    `stale_siblings_ignored` (older siblings; silver stays deduped).
-2. MCP `silver_catchup_dry_run` (same lookback / interval flags) → show immutable
+2. MCP `silver_catchup_dry_run` (same lookback / census / interval flags) → show immutable
    `manifest_id` / `content_digest` + `approval_plan` → **stop**.
 3. After confirm: `det approve` then later
-   `det silver-catchup-plan --apply --manifest-id <scm_…> --content-digest <sha256:…> --approval <id>`
-   (writes immutable `.json` + sibling `.runs.jsonl`; bind `--extract-lookback` if Mode A).
+   `det silver-catchup apply --manifest-id <scm_…> --content-digest <sha256:…> --approval <id>`
+   (or `det silver-catchup-plan --apply …`; writes immutable `.json` + sibling `.runs.jsonl`;
+   digests bind effective `--extract-lookback` or `--census`).
 4. MCP `dbt_dry_run` with `catchup=True` and `catchup_manifest=<scm_…>` → show its
    separate `approval_plan` → **stop**. After confirm: `det approve` then later
-   `det dbt --catchup --catchup-manifest <scm_…> --approval <dbt_id>` (distinct id;
+   `det silver-catchup build --manifest-id <scm_…> --approval <dbt_id>`
+   (or `det dbt --catchup --catchup-manifest <scm_…> --approval <dbt_id>`; distinct id;
    one build; DuckDB `read_json` via `DET_CATCHUP_MANIFEST_PATH`, or BQ external
    table via `DET_CATCHUP_BQ_RELATION` when ops is `gs://`; local→BQ fails;
    not `--full-refresh`).
-5. Re-diff to verify `catchup_count=0`.
+5. `det silver-catchup verify` (same scope flags) — `catchup_count=0`.
 6. After a **BigQuery** heal: MCP `silver_catchup_cleanup_dry_run`
    (`manifest_id` or `older_than`, e.g. `"7d"`) → show `approval_plan` with
    `--created-before` (frozen UTC cutoff) → **stop**.
    After confirm: `det approve` then later
-   `det silver-catchup-cleanup --apply --manifest-id <scm_…> --approval <id>`
+   `det silver-catchup cleanup --apply --manifest-id <scm_…> --approval <id>`
    or `--created-before <iso> --apply --approval <id>`. Heal does not auto-drop
    `_det_catchup_runs_*` tables. Use `--list` / `--list --older-than 7d` to
-   inspect. Skip for DuckDB heals.
+   inspect. DuckDB cleanup is a no-op (`skipped=duckdb`).
 
 See [docs/silver-catchup.md](../../docs/silver-catchup.md).
 

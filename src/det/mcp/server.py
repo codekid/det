@@ -181,6 +181,7 @@ def create_server():
         interval_start: p.IntervalStartOpt = None,
         interval_end: p.IntervalEndOpt = None,
         extract_lookback: p.ExtractLookbackOpt = None,
+        census: p.CensusOpt = False,
         limit: p.ListLimit = t.DEFAULT_LIST_LIMIT,
     ) -> dict[str, Any]:
         """Latest bronze extract-run per interval vs silver (catch-up candidates)."""
@@ -190,6 +191,7 @@ def create_server():
             interval_start=interval_start,
             interval_end=interval_end,
             extract_lookback=extract_lookback,
+            census=census,
             limit=limit,
         )
 
@@ -200,6 +202,7 @@ def create_server():
         interval_start: p.IntervalStartOpt = None,
         interval_end: p.IntervalEndOpt = None,
         extract_lookback: p.ExtractLookbackOpt = None,
+        census: p.CensusOpt = False,
         limit: p.ListLimit = t.DEFAULT_LIST_LIMIT,
     ) -> dict[str, Any]:
         """Preview silver catch-up manifest + approval_plan (never writes)."""
@@ -209,6 +212,7 @@ def create_server():
             interval_start=interval_start,
             interval_end=interval_end,
             extract_lookback=extract_lookback,
+            census=census,
             limit=limit,
         )
 

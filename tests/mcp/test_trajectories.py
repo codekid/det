@@ -85,6 +85,24 @@ def test_writing_argv_classifier():
         ["det", "silver-catchup-plan", "-p", "x", "--dry-run"]
     )
     assert not is_writing_cli(["det", "silver-catchup-diff", "-p", "x"])
+    assert is_writing_cli(["det", "silver-catchup", "apply", "-p", "x"])
+    assert is_writing_cli(
+        ["det", "silver-catchup", "build", "--manifest-id", "scm_ab"]
+    )
+    assert is_writing_cli(
+        [
+            "det",
+            "silver-catchup",
+            "cleanup",
+            "--apply",
+            "--manifest-id",
+            "scm_ab",
+        ]
+    )
+    assert not is_writing_cli(["det", "silver-catchup", "plan", "-p", "x"])
+    assert not is_writing_cli(["det", "silver-catchup", "status", "-p", "x"])
+    assert not is_writing_cli(["det", "silver-catchup", "verify", "-p", "x"])
+    assert not is_writing_cli(["det", "silver-catchup", "cleanup", "--list"])
     assert is_writing_cli(
         [
             "det",

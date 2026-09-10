@@ -202,6 +202,14 @@ def is_writing_cli(argv: Sequence[str]) -> bool:
     if not cmd:
         return False
     name = cmd[0]
+    # Nested group: det silver-catchup {apply,build,cleanup --apply}
+    if name == "silver-catchup" and len(cmd) >= 2:
+        sub = cmd[1]
+        if sub in {"apply", "build"}:
+            return True
+        if sub == "cleanup":
+            return "--apply" in cmd
+        return False
     if name not in WRITING_CLI_COMMANDS:
         return False
     if name == "migrate":
