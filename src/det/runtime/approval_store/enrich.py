@@ -16,7 +16,11 @@ def _utcnow() -> datetime:
 
 
 def _parse_iso(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    """Parse ISO stamps; offset-less values are treated as UTC (never naive)."""
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def enrich_heartbeat_fields(
@@ -33,12 +37,16 @@ def enrich_heartbeat_fields(
         return out
     try:
         beat = _parse_iso(str(stamp))
-    except (TypeError, ValueError):
+        clock = now or _utcnow()
+        if clock.tzinfo is None:
+            clock = clock.replace(tzinfo=UTC)
+        else:
+            clock = clock.astimezone(UTC)
+        age = max(0, int((clock - beat).total_seconds()))
+    except (TypeError, ValueError, OverflowError):
         out["heartbeat_age_sec"] = None
         out["heartbeat_status"] = "unknown"
         return out
-    clock = now or _utcnow()
-    age = max(0, int((clock - beat).total_seconds()))
     out["heartbeat_age_sec"] = age
     try:
         interval = int(out.get("heartbeat_interval_sec") or DEFAULT_HEARTBEAT_INTERVAL_SEC)

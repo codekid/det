@@ -681,6 +681,79 @@ def test_cli_release_round_trip(tmp_path: Path, monkeypatch):
     assert json.loads(back.stdout)["approvals"][0]["id"] == rec["id"]
 
 
+def test_cli_release_honors_lake_path(tmp_path: Path, monkeypatch):
+    """approval-release must open the same {ops}/approvals as the claimed run."""
+    from det.runtime.settings import DetSettings
+
+    monkeypatch.delenv("DET_APPROVED_BY", raising=False)
+    monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    monkeypatch.delenv("DET_LAKE_PATH_RAW", raising=False)
+    monkeypatch.delenv("DET_LAKE_PATH_BRONZE", raising=False)
+    monkeypatch.delenv("DET_LAKE_PATH_OPS", raising=False)
+
+    lake = tmp_path / "alt-lake"
+    lake.mkdir()
+    settings = DetSettings.from_env(project_root=tmp_path).with_overrides(
+        lake_override=str(lake)
+    )
+    rec = create_approval(
+        tmp_path,
+        command="prune",
+        argv=prune_write_argv("example_api.events", "2026-08-01"),
+        approved_by="tester",
+        settings=settings,
+    )
+    claim_approval(
+        tmp_path,
+        "prune",
+        rec["argv"],
+        rec["id"],
+        require=True,
+        settings=settings,
+    )
+
+    missing = _invoke(
+        [
+            "approval-release",
+            rec["id"],
+            "--force",
+            "--released-by",
+            "operator",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    assert missing.exit_code != 0
+    assert "approval_not_found" in missing.output
+
+    released = _invoke(
+        [
+            "approval-release",
+            rec["id"],
+            "--force",
+            "--released-by",
+            "operator",
+            "--project-root",
+            str(tmp_path),
+            "--lake-path",
+            str(lake),
+        ]
+    )
+    assert released.exit_code == 0, released.output
+    assert json.loads(released.stdout)["status"] == "unused"
+    listed = _invoke(
+        [
+            "list-approvals",
+            "--project-root",
+            str(tmp_path),
+            "--lake-path",
+            str(lake),
+        ]
+    )
+    assert listed.exit_code == 0, listed.output
+    assert json.loads(listed.stdout)["approvals"][0]["id"] == rec["id"]
+
+
 def test_cli_list_approvals_rejects_bad_status(tmp_path: Path):
     result = _invoke(["list-approvals", "--status", "nope", "--project-root", str(tmp_path)])
     assert result.exit_code != 0

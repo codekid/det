@@ -48,36 +48,37 @@ def resolve_approval_options(
     env: Mapping[str, str] | None = None,
     settings: Any | None = None,
 ) -> ResolvedApprovalOptions:
+    """Resolve backend options.
+
+    Explicit non-empty values on ``DetSettings`` (including ``with_overrides``)
+    win over ``DET_APPROVAL_*`` env. Env is used only when settings is absent
+    or the corresponding settings field is empty.
+    """
     environ = os.environ if env is None else env
-    backend = parse_approval_backend(environ.get(ENV_BACKEND))
-    if backend is None and settings is not None:
+
+    backend = None
+    if settings is not None:
         backend = parse_approval_backend(getattr(settings, "approval_backend", None))
+    if backend is None:
+        backend = parse_approval_backend(environ.get(ENV_BACKEND))
     if backend is None:
         backend = DEFAULT_APPROVAL_BACKEND
 
-    pg_dsn_env = (environ.get(ENV_PG_DSN_ENV) or "").strip()
-    if not pg_dsn_env and settings is not None:
-        pg_dsn_env = str(getattr(settings, "approval_pg_dsn_env", "") or "").strip()
-    if not pg_dsn_env:
-        pg_dsn_env = DEFAULT_APPROVAL_PG_DSN_ENV
-
-    pg_schema = (environ.get(ENV_PG_SCHEMA) or "").strip()
-    if not pg_schema and settings is not None:
-        pg_schema = str(getattr(settings, "approval_pg_schema", "") or "").strip()
-    if not pg_schema:
-        pg_schema = DEFAULT_APPROVAL_PG_SCHEMA
-
-    pg_table = (environ.get(ENV_PG_TABLE) or "").strip()
-    if not pg_table and settings is not None:
-        pg_table = str(getattr(settings, "approval_pg_table", "") or "").strip()
-    if not pg_table:
-        pg_table = DEFAULT_APPROVAL_PG_TABLE
+    def _pick(attr: str, env_key: str, default: str) -> str:
+        if settings is not None:
+            from_settings = str(getattr(settings, attr, "") or "").strip()
+            if from_settings:
+                return from_settings
+        from_env = (environ.get(env_key) or "").strip()
+        if from_env:
+            return from_env
+        return default
 
     return ResolvedApprovalOptions(
         backend=backend,
-        pg_dsn_env=pg_dsn_env,
-        pg_schema=pg_schema,
-        pg_table=pg_table,
+        pg_dsn_env=_pick("approval_pg_dsn_env", ENV_PG_DSN_ENV, DEFAULT_APPROVAL_PG_DSN_ENV),
+        pg_schema=_pick("approval_pg_schema", ENV_PG_SCHEMA, DEFAULT_APPROVAL_PG_SCHEMA),
+        pg_table=_pick("approval_pg_table", ENV_PG_TABLE, DEFAULT_APPROVAL_PG_TABLE),
     )
 
 
@@ -113,9 +114,7 @@ def open_approval_store(
         from det.runtime.approval_store.lake_store import LakeApprovalStore
         from det.runtime.silver_catchup.paths import resolve_ops_lake
 
-        ops = resolve_ops_lake(
-            project_root=root, settings=active, lake_path=lake_path
-        )
+        ops = resolve_ops_lake(project_root=root, settings=active, lake_path=lake_path)
         primary = LakeApprovalStore(ops)
 
     from det.runtime.approval_store.legacy import LegacyApprovalReader

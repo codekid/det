@@ -77,6 +77,16 @@ def test_enrich_heartbeat_fresh_stale_unknown():
         "heartbeat_at": "2026-08-18T11:00:00Z",
     }
     assert enrich_heartbeat_fields(stale, now=NOW)["heartbeat_status"] == "stale"
+    # Offset-less ISO must not raise against an aware clock (treat as UTC).
+    naive = enrich_heartbeat_fields(
+        {**base, "heartbeat_at": "2026-08-18T12:00:00"},
+        now=NOW,
+    )
+    assert naive["heartbeat_status"] == "fresh"
+    assert naive["heartbeat_age_sec"] == 0
+    bad = enrich_heartbeat_fields({**base, "heartbeat_at": "not-a-time"}, now=NOW)
+    assert bad["heartbeat_status"] == "unknown"
+    assert bad["heartbeat_age_sec"] is None
 
 
 def test_legacy_dot_det_read_fallback(tmp_path: Path):
@@ -254,3 +264,31 @@ def test_heartbeat_does_not_resurrect_consumed(tmp_path: Path):
         with pytest.raises(ApprovalError) as exc:
             touch_approval_heartbeat(tmp_path, rec["id"], now=NOW + timedelta(seconds=2))
         assert exc.value.code == "approval_not_claimed"
+
+
+def test_settings_overrides_beat_env_for_approval_options(tmp_path: Path):
+    """DetSettings.with_overrides wins over conflicting DET_APPROVAL_* env."""
+    from det.runtime.approval_store import open_approval_store, resolve_approval_options
+    from det.runtime.approval_store.lake_store import LakeApprovalStore
+
+    settings = DetSettings.from_env(project_root=tmp_path).with_overrides(
+        approval_backend="lake",
+        approval_pg_dsn_env="MY_APPROVAL_DSN",
+        approval_pg_schema="apr_schema",
+        approval_pg_table="apr_table",
+        lake_override=str(tmp_path / "lake"),
+    )
+    conflicting = {
+        "DET_APPROVAL_BACKEND": "postgres",
+        "DET_APPROVAL_PG_DSN_ENV": "OTHER_DSN",
+        "DET_APPROVAL_PG_SCHEMA": "other_schema",
+        "DET_APPROVAL_PG_TABLE": "other_table",
+    }
+    opts = resolve_approval_options(settings=settings, env=conflicting)
+    assert opts.backend == "lake"
+    assert opts.pg_dsn_env == "MY_APPROVAL_DSN"
+    assert opts.pg_schema == "apr_schema"
+    assert opts.pg_table == "apr_table"
+
+    store = open_approval_store(tmp_path, settings=settings)
+    assert isinstance(store._primary, LakeApprovalStore)
