@@ -99,15 +99,14 @@ def approval_show_cmd(
     approval_id: str = typer.Argument(..., help="Approval id (apr_…)"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
 ) -> None:
-    """Print one approval record (expired status is derived at read time)."""
+    """Print one approval record (expired status + heartbeat triage at read time)."""
     import json
 
-    from det.runtime.approval import ApprovalError, effective_status, load_approval
+    from det.runtime.approval import ApprovalError, describe_approval_record
 
     root = _project_root(project_root)
     try:
-        record = dict(load_approval(root, approval_id))
-        record["status"] = effective_status(record)
+        record = describe_approval_record(root, approval_id)
     except ApprovalError as exc:
         typer.echo(f"{exc.code}: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -122,12 +121,16 @@ def list_approvals_cmd(
     status: list[str] = typer.Option(
         [],
         "--status",
-        help=f"Filter by derived status (repeatable): {', '.join(_STATUSES)}. Default: unused",
+        help=(
+            f"Filter by derived status (repeatable): {', '.join(_STATUSES)}. "
+            "Default: unused. Use --status claimed for stuck crash claims "
+            "(lake/postgres store; never expire)."
+        ),
     ),
     all_: bool = typer.Option(False, "--all", help="Every record regardless of status"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
 ) -> None:
-    """List approvals under .det/approvals/ (defaults to unused, unexpired).
+    """List approvals from the configured store (defaults to unused, unexpired).
 
     Use `--status claimed` to find an approval left stuck by a crashed run; a
     claimed record never expires, so it will not show up in the default listing.
@@ -175,7 +178,12 @@ def approval_release_cmd(
     """
     import json
 
-    from det.runtime.approval import ApprovalError, approved_by_from_env, release_approval
+    from det.runtime.approval import (
+        ApprovalError,
+        approved_by_from_env,
+        describe_approval_record,
+        release_approval,
+    )
 
     if not force:
         raise typer.BadParameter(
@@ -185,6 +193,13 @@ def approval_release_cmd(
     root = _project_root(project_root)
     who = (released_by or approved_by_from_env() or "").strip()
     try:
+        current = describe_approval_record(root, approval_id)
+        if current.get("heartbeat_status") == "fresh":
+            typer.echo(
+                "warning: heartbeat looks fresh — the claiming writer may still be alive; "
+                "releasing now can reopen a double-write window",
+                err=True,
+            )
         record = release_approval(root, approval_id, released_by=who)
     except ApprovalError as exc:
         typer.echo(f"{exc.code}: {exc}", err=True)

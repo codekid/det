@@ -113,9 +113,7 @@ def _approval_lake_kwargs(settings) -> dict:
     return out
 
 
-_LAKE_LAYER_PARAMS = frozenset(
-    {"lake_path", "lake_path_raw", "lake_path_bronze", "lake_path_ops"}
-)
+_LAKE_LAYER_PARAMS = frozenset({"lake_path", "lake_path_raw", "lake_path_bronze", "lake_path_ops"})
 
 _LAKE_PATH_HELP = (
     "Lake parent root (layout 2: derives raw/bronze under this path). "
@@ -124,6 +122,7 @@ _LAKE_PATH_HELP = (
 _LAKE_PATH_RAW_HELP = "Raw layer root URI (layout 2; requires bronze + ops)."
 _LAKE_PATH_BRONZE_HELP = "Bronze layer root URI (layout 2; requires raw + ops)."
 _LAKE_PATH_OPS_HELP = "Ops layer root URI for runs/locks (layout 2; requires raw + bronze)."
+
 
 def _resolve_pipeline(ref: str, root: Path):
     """Resolve pipeline ref; log and echo the resolved path for auditability."""
@@ -170,9 +169,7 @@ _BOUND_PARAMS: dict[str, frozenset[str]] = {
             "set_",
         }
     ),
-    "run": frozenset(
-        {"pipeline", "interval_start", "interval_end", *_LAKE_LAYER_PARAMS, "set_"}
-    ),
+    "run": frozenset({"pipeline", "interval_start", "interval_end", *_LAKE_LAYER_PARAMS, "set_"}),
     "migrate": frozenset(
         {
             "pipeline",
@@ -335,8 +332,7 @@ def _unbound_params(ctx: typer.Context | None, command: str) -> list[str]:
 def _approval_failure_hint(approval_id: str) -> None:
     """Tell operators how to find and recover a claimed approval after a failed write."""
     typer.echo(
-        f"approval {approval_id} remains claimed; list with: "
-        "det list-approvals --status claimed",
+        f"approval {approval_id} remains claimed; list with: det list-approvals --status claimed",
         err=True,
     )
     typer.echo(
@@ -349,14 +345,45 @@ def _approval_failure_hint(approval_id: str) -> None:
 def _claimed_approval_work(
     claimed: bool,
     approval: str | None,
+    project_root: Path | None = None,
+    *,
+    settings=None,
 ) -> Iterator[None]:
-    """On failure after a successful claim, print recovery hints then re-raise."""
+    """Heartbeat while claimed; on failure print recovery hints then re-raise."""
+    import threading
+
+    stop = threading.Event()
+    thread: threading.Thread | None = None
+    if claimed and approval and project_root is not None:
+        root = project_root
+        active_settings = settings
+
+        def _loop() -> None:
+            from det.runtime.approval import touch_approval_heartbeat
+            from det.runtime.approval_store import DEFAULT_HEARTBEAT_INTERVAL_SEC
+
+            while not stop.wait(DEFAULT_HEARTBEAT_INTERVAL_SEC):
+                try:
+                    touch_approval_heartbeat(root, approval, settings=active_settings)
+                except Exception:
+                    logger.debug(
+                        "approval heartbeat touch failed",
+                        approval_id=approval,
+                        exc_info=True,
+                    )
+
+        thread = threading.Thread(target=_loop, name=f"det-approval-hb-{approval}", daemon=True)
+        thread.start()
     try:
         yield
     except BaseException:
         if claimed and approval:
             _approval_failure_hint(approval)
         raise
+    finally:
+        stop.set()
+        if thread is not None:
+            thread.join(timeout=1.0)
 
 
 def _gate_approval(
@@ -367,6 +394,7 @@ def _gate_approval(
     require_approval: bool,
     *,
     ctx: typer.Context | None,
+    settings=None,
 ) -> bool:
     """Validate and atomically claim the approval before any write happens.
 
@@ -375,6 +403,9 @@ def _gate_approval(
 
     ``ctx`` drives the unbound-flag backstop, so writing commands must declare a
     ``typer.Context`` parameter and forward it.
+
+    ``settings`` must be the same ``DetSettings`` used for the write (CLI lake
+    overrides) so claim/consume/heartbeat hit one approval store.
 
     Returns ``True`` when an approval id was successfully claimed, else ``False``.
     """
@@ -398,6 +429,7 @@ def _gate_approval(
             argv,
             approval,
             require=require,
+            settings=settings,
         )
     except ApprovalError as exc:
         typer.echo(f"{exc.code}: {exc}", err=True)
@@ -405,13 +437,18 @@ def _gate_approval(
     return rec is not None
 
 
-def _consume_approval(root: Path, approval: str | None) -> None:
+def _consume_approval(
+    root: Path,
+    approval: str | None,
+    *,
+    settings=None,
+) -> None:
     if not approval:
         return
     from det.runtime.approval import ApprovalError, consume_approval
 
     try:
-        consume_approval(root, approval)
+        consume_approval(root, approval, settings=settings)
     except ApprovalError as exc:
         typer.echo(f"{exc.code}: {exc}", err=True)
         raise typer.Exit(code=1) from exc

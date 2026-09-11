@@ -77,15 +77,11 @@ def dbt_cmd(
         "--lake-path",
         help=_LAKE_PATH_HELP,
     ),
-    lake_path_raw: str | None = typer.Option(
-        None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP
-    ),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
     lake_path_bronze: str | None = typer.Option(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
-    lake_path_ops: str | None = typer.Option(
-        None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
-    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -145,13 +141,17 @@ def dbt_cmd(
             approval,
             require_approval,
             ctx=ctx,
+            settings=settings,
         )
     pipe = None
     if resolved is not None:
         pipe = resolved.path
 
     try:
-        with _claimed_approval_work(claimed, approval), use_settings(settings):
+        with (
+            _claimed_approval_work(claimed, approval, root, settings=settings),
+            use_settings(settings),
+        ):
             if resolved is not None:
                 from det.runtime.config import load_pipeline_config
                 from det.scaffold.view_warn import emit_view_size_warnings
@@ -182,7 +182,7 @@ def dbt_cmd(
             if not dry_run and result.returncode != 0:
                 raise typer.Exit(code=result.returncode)
             if not dry_run:
-                _consume_approval(root, approval)
+                _consume_approval(root, approval, settings=settings)
     except DbtNotInstalledError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -200,4 +200,3 @@ def dbt_cmd(
     if dry_run:
         return
     typer.echo(f"OK dbt finished exit={result.returncode}")
-

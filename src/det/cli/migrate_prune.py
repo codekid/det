@@ -158,6 +158,7 @@ def migrate_bronze(
             approval,
             require_approval,
             ctx=ctx,
+            settings=settings,
         )
     else:
         settings = _settings(
@@ -169,7 +170,7 @@ def migrate_bronze(
             lock_ttl_sec=lock_ttl_sec,
         )
     try:
-        with _claimed_approval_work(claimed, approval):
+        with _claimed_approval_work(claimed, approval, root, settings=settings):
             result = BronzeMigrator(settings=settings).migrate(
                 pipeline=resolved.path,
                 to_bronze=to_bronze,
@@ -189,7 +190,7 @@ def migrate_bronze(
                 all_raw_runs=all_raw_runs,
             )
             if not dry_run and not isinstance(result, MigratePlan):
-                _consume_approval(root, approval)
+                _consume_approval(root, approval, settings=settings)
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -297,6 +298,7 @@ def prune_bronze(
             approval,
             require_approval,
             ctx=ctx,
+            settings=settings,
         )
     config = load_pipeline_config(resolved.path, overrides=set_)
     pruner = BronzePruner(settings=settings)
@@ -319,7 +321,7 @@ def prune_bronze(
         return
 
     try:
-        with _claimed_approval_work(claimed, approval):
+        with _claimed_approval_work(claimed, approval, root, settings=settings):
             removed = pruner.apply(
                 config,
                 plan,
@@ -329,5 +331,5 @@ def prune_bronze(
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
-    _consume_approval(root, approval)
+    _consume_approval(root, approval, settings=settings)
     typer.echo(f"OK prune pipeline={config.name} keep={keep} removed={removed}")

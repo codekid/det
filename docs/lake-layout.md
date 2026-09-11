@@ -127,6 +127,7 @@ Every landed row includes:
 | `bronze/` | Typed bronze (derived parent only; explicit split uses BRONZE root) |
 | `locks/` | Interval leases `{pipeline}/{start}_{end}.json`; bronze-dataset RW `{ops}/locks/datasets/…/_lock.json` |
 | `runs/dt=YYYY-MM-DD/{pipeline}/` | Extract/load attempt receipts (JSON) |
+| `approvals/` | Single-use intent records (`apr_….json` + claim sidecars); default approval store. Opt-in Postgres via `DET_APPROVAL_BACKEND=postgres` instead. See [api.md](api.md). |
 | `ops/` | Materialized receipt Iceberg table (`run_receipts`) for ops dbt |
 | `ops/silver_catchup/` | Optional JSON catch-up manifest (`manifest.json`) for bronze↔silver heal; see [silver-catchup.md](silver-catchup.md) |
 
