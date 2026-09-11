@@ -233,11 +233,12 @@ def list_approvals(
     *,
     root: Path | None = None,
 ) -> dict[str, Any]:
-    """Approval records (MCP never creates these files).
+    """Approval records (MCP never creates these).
 
     Defaults to unused, unexpired. Pass ``status="claimed"`` to find an approval
     left stuck by a crashed run — claimed records never expire, so they do not
-    appear in the default listing.
+    appear in the default listing. Records live on the lake ops root (or
+    Postgres when ``DET_APPROVAL_BACKEND=postgres``).
     """
     h.prepare_tool()
     from det.runtime.approval import list_approval_records
@@ -257,16 +258,14 @@ def list_approvals(
 
 
 def describe_approval(approval_id: str, *, root: Path | None = None) -> dict[str, Any]:
-    """Load one approval record; expired is derived at read time."""
+    """Load one approval record; expired + heartbeat triage derived at read time."""
     h.prepare_tool()
-    from det.runtime.approval import ApprovalError, effective_status, load_approval
+    from det.runtime.approval import ApprovalError, describe_approval_record
 
     base = h.root(root)
     try:
-        record = dict(load_approval(base, approval_id))
+        return describe_approval_record(base, approval_id)
     except ApprovalError as exc:
         if exc.code == "approval_not_found":
             raise FileNotFoundError(str(exc)) from exc
         raise
-    record["status"] = effective_status(record)
-    return record

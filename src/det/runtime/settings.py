@@ -16,6 +16,13 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from det.runtime.approval_store.constants import (
+    DEFAULT_APPROVAL_BACKEND,
+    DEFAULT_APPROVAL_PG_DSN_ENV,
+    DEFAULT_APPROVAL_PG_SCHEMA,
+    DEFAULT_APPROVAL_PG_TABLE,
+    parse_approval_backend,
+)
 from det.runtime.lake import LakeMode, lake_layout_from_env, lake_mode_from_env
 from det.runtime.lease import (
     DEFAULT_LOCK_BACKEND,
@@ -152,6 +159,10 @@ class DetSettings:
     lock_pg_dsn_env: str
     lock_pg_schema: str
     lock_pg_table: str
+    approval_backend: str
+    approval_pg_dsn_env: str
+    approval_pg_schema: str
+    approval_pg_table: str
     # Layout 2 parent root. CLI ``--lake-path`` wins via lake_override.
     lake_override: str | None = None
     # Layout 2 split roots (opaque URIs; embedders choose bucket names).
@@ -226,6 +237,14 @@ class DetSettings:
             or DEFAULT_LOCK_PG_SCHEMA,
             lock_pg_table=(environ.get("DET_LOCK_PG_TABLE") or "").strip()
             or DEFAULT_LOCK_PG_TABLE,
+            approval_backend=parse_approval_backend(environ.get("DET_APPROVAL_BACKEND"))
+            or DEFAULT_APPROVAL_BACKEND,
+            approval_pg_dsn_env=(environ.get("DET_APPROVAL_PG_DSN_ENV") or "").strip()
+            or DEFAULT_APPROVAL_PG_DSN_ENV,
+            approval_pg_schema=(environ.get("DET_APPROVAL_PG_SCHEMA") or "").strip()
+            or DEFAULT_APPROVAL_PG_SCHEMA,
+            approval_pg_table=(environ.get("DET_APPROVAL_PG_TABLE") or "").strip()
+            or DEFAULT_APPROVAL_PG_TABLE,
             lake_override=None,
             lake_path_raw=lake_path_raw,
             lake_path_bronze=lake_path_bronze,
@@ -256,6 +275,10 @@ class DetSettings:
         lock_pg_dsn_env: Any = _MISSING,
         lock_pg_schema: Any = _MISSING,
         lock_pg_table: Any = _MISSING,
+        approval_backend: Any = _MISSING,
+        approval_pg_dsn_env: Any = _MISSING,
+        approval_pg_schema: Any = _MISSING,
+        approval_pg_table: Any = _MISSING,
         secrets_backend: Any = _MISSING,
         secrets_file: Any = _MISSING,
         secrets_ttl_sec: Any = _MISSING,
@@ -314,6 +337,29 @@ class DetSettings:
                 DEFAULT_LOCK_PG_TABLE
                 if lock_pg_table is None or not str(lock_pg_table).strip()
                 else str(lock_pg_table).strip()
+            )
+        if approval_backend is not _MISSING:
+            parsed_apr = parse_approval_backend(
+                None if approval_backend is None else str(approval_backend)
+            )
+            kwargs["approval_backend"] = parsed_apr or DEFAULT_APPROVAL_BACKEND
+        if approval_pg_dsn_env is not _MISSING:
+            kwargs["approval_pg_dsn_env"] = (
+                DEFAULT_APPROVAL_PG_DSN_ENV
+                if approval_pg_dsn_env is None or not str(approval_pg_dsn_env).strip()
+                else str(approval_pg_dsn_env).strip()
+            )
+        if approval_pg_schema is not _MISSING:
+            kwargs["approval_pg_schema"] = (
+                DEFAULT_APPROVAL_PG_SCHEMA
+                if approval_pg_schema is None or not str(approval_pg_schema).strip()
+                else str(approval_pg_schema).strip()
+            )
+        if approval_pg_table is not _MISSING:
+            kwargs["approval_pg_table"] = (
+                DEFAULT_APPROVAL_PG_TABLE
+                if approval_pg_table is None or not str(approval_pg_table).strip()
+                else str(approval_pg_table).strip()
             )
         if secrets_backend is not _MISSING:
             kwargs["secrets_backend"] = secrets_backend

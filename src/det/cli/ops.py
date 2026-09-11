@@ -167,15 +167,11 @@ def biglake_register_cmd(
         help="Register one pipeline bronze table only (default: all bronze + ops)",
     ),
     lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
-    lake_path_raw: str | None = typer.Option(
-        None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP
-    ),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
     lake_path_bronze: str | None = typer.Option(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
-    lake_path_ops: str | None = typer.Option(
-        None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
-    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
     project: str | None = typer.Option(None, "--project", help="GCP project (DET_GCP_PROJECT)"),
     location: str | None = typer.Option(None, "--location", help="BQ location (DET_BQ_LOCATION)"),
     connection: str | None = typer.Option(
@@ -246,19 +242,22 @@ def biglake_register_cmd(
         typer.echo(format_dry_run(plan, argv))
         return
 
-    claimed = _gate_approval(root, "biglake-register", argv, approval, require_approval, ctx=ctx)
+    claimed = _gate_approval(
+        root, "biglake-register", argv, approval, require_approval, ctx=ctx, settings=settings
+    )
     try:
-        with _claimed_approval_work(claimed, approval), use_settings(settings):
+        with (
+            _claimed_approval_work(claimed, approval, root, settings=settings),
+            use_settings(settings),
+        ):
             result = apply_biglake_register(plan)
     except RuntimeError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
-    _consume_approval(root, approval)
+    _consume_approval(root, approval, settings=settings)
     typer.echo(f"OK biglake-register applied={result['count']}")
     for row in result["applied"]:
-        typer.echo(
-            f"  {row['bq_dataset']}.{row['bq_table']} metadata={row['metadata_uri']}"
-        )
+        typer.echo(f"  {row['bq_dataset']}.{row['bq_table']} metadata={row['metadata_uri']}")
 
 
 @app.command("iceberg-register")
@@ -271,15 +270,11 @@ def iceberg_register_cmd(
         help="Register one pipeline bronze table only (default: all bronze + ops)",
     ),
     lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
-    lake_path_raw: str | None = typer.Option(
-        None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP
-    ),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
     lake_path_bronze: str | None = typer.Option(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
-    lake_path_ops: str | None = typer.Option(
-        None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
-    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
     skip_ops: bool = typer.Option(False, "--skip-ops", help="Do not register ops.run_receipts"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview registration plan only"),
     apply: bool = typer.Option(False, "--apply", help="Register tables into REST/Glue catalog"),
@@ -342,19 +337,23 @@ def iceberg_register_cmd(
         typer.echo(format_dry_run(plan, argv))
         return
 
-    claimed = _gate_approval(root, "iceberg-register", argv, approval, require_approval, ctx=ctx)
+    claimed = _gate_approval(
+        root, "iceberg-register", argv, approval, require_approval, ctx=ctx, settings=settings
+    )
     try:
-        with _claimed_approval_work(claimed, approval), use_settings(settings):
+        with (
+            _claimed_approval_work(claimed, approval, root, settings=settings),
+            use_settings(settings),
+        ):
             result = apply_iceberg_register(plan, project_root=root)
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
-    _consume_approval(root, approval)
+    _consume_approval(root, approval, settings=settings)
     typer.echo(f"OK iceberg-register applied={result['count']}")
     for row in result["applied"]:
         typer.echo(
-            f"  {row['status']} {row['namespace']}.{row['table']} "
-            f"metadata={row['metadata_uri']}"
+            f"  {row['status']} {row['namespace']}.{row['table']} metadata={row['metadata_uri']}"
         )
 
 
@@ -382,17 +381,14 @@ def lock_show(
     options = resolve_lease_options(settings=settings, pipeline=config)
     lake = lake_root(config.destination, root, cli_lake_path=lake_path, settings=settings)
     store = open_lease_store(lake, options, resolve_secret=settings.resolve_secret)
-    payload = store.inspect(
-        pipeline=config.name, interval_start=start_iso, interval_end=end_iso
-    )
+    payload = store.inspect(pipeline=config.name, interval_start=start_iso, interval_end=end_iso)
     if payload is None:
         if options.backend == "lake":
             path = lock_path(lake, config.name, start_iso, end_iso)
             typer.echo(f"no lock path={path}")
         else:
             typer.echo(
-                f"no lock backend=postgres schema={options.pg_schema} "
-                f"table={options.pg_table}"
+                f"no lock backend=postgres schema={options.pg_schema} table={options.pg_table}"
             )
         return
     if options.backend == "lake":
@@ -429,15 +425,11 @@ def lock_release(
     ),
     force: bool = typer.Option(False, "--force", help="Required to delete a live lease"),
     lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
-    lake_path_raw: str | None = typer.Option(
-        None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP
-    ),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
     lake_path_bronze: str | None = typer.Option(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
-    lake_path_ops: str | None = typer.Option(
-        None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
-    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
@@ -471,12 +463,9 @@ def lock_release(
             "-s/--interval-start is required unless --dataset-id is set",
             param_hint="-s",
         )
-    if dataset_id is not None and (
-        interval_start is not None or interval_end is not None
-    ):
+    if dataset_id is not None and (interval_start is not None or interval_end is not None):
         raise typer.BadParameter(
-            "--dataset-id cannot be combined with -s/--interval-start or "
-            "-e/--interval-end",
+            "--dataset-id cannot be combined with -s/--interval-start or -e/--interval-end",
             param_hint="--dataset-id",
         )
 
@@ -508,8 +497,9 @@ def lock_release(
         approval,
         require_approval,
         ctx=ctx,
+        settings=settings,
     )
-    with _claimed_approval_work(claimed, approval):
+    with _claimed_approval_work(claimed, approval, root, settings=settings):
         if dataset_id is not None:
             held = force_release_dataset_lock(
                 lake,
@@ -523,7 +513,7 @@ def lock_release(
                 else f"postgres:{options.pg_schema}.dataset_locks/{dataset_id}"
             )
             if held is None:
-                _consume_approval(root, approval)
+                _consume_approval(root, approval, settings=settings)
                 typer.echo(f"no dataset lock location={location}")
                 return
             ex = held.get("exclusive") or {}
@@ -532,7 +522,7 @@ def lock_release(
                 f"shared_holders={len(held.get('shared') or [])} location={location}",
                 err=True,
             )
-            _consume_approval(root, approval)
+            _consume_approval(root, approval, settings=settings)
             typer.echo(f"OK lock-release location={location}")
             return
 
@@ -551,7 +541,7 @@ def lock_release(
             else f"postgres:{options.pg_schema}.{options.pg_table}"
         )
         if held is None:
-            _consume_approval(root, approval)
+            _consume_approval(root, approval, settings=settings)
             typer.echo(f"no lock location={location}")
             return
         typer.echo(
@@ -562,7 +552,7 @@ def lock_release(
         store.force_release(
             pipeline=config.name, interval_start=start_iso, interval_end=end_iso or start_iso
         )
-        _consume_approval(root, approval)
+        _consume_approval(root, approval, settings=settings)
         typer.echo(f"OK lock-release location={location}")
 
 

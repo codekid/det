@@ -156,7 +156,7 @@ def init_pipeline_cmd(
             ctx=ctx,
         )
     try:
-        with _claimed_approval_work(claimed, approval):
+        with _claimed_approval_work(claimed, approval, root):
             result = init_pipeline(
                 name=name,
                 source_type=source_type,
@@ -224,7 +224,7 @@ def scaffold_dbt_cmd(
         )
     from det.scaffold.view_warn import collect_view_size_warnings
 
-    with _claimed_approval_work(claimed, approval):
+    with _claimed_approval_work(claimed, approval, root):
         result = scaffold_dbt(config, project_root=root, force=force, dry_run=dry_run, warn=False)
         if not dry_run:
             _consume_approval(root, approval)
@@ -274,7 +274,7 @@ def scaffold_ops_cmd(
             ctx=ctx,
         )
 
-    with _claimed_approval_work(claimed, approval):
+    with _claimed_approval_work(claimed, approval, root):
         result = scaffold_ops(project_root=root, force=force, dry_run=dry_run)
         if not dry_run:
             _consume_approval(root, approval)
@@ -287,4 +287,3 @@ def scaffold_ops_cmd(
         except ValueError:
             pass
         typer.echo(f"  {action.action}: {rel}" + (f" ({action.detail})" if action.detail else ""))
-

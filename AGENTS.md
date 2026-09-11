@@ -25,7 +25,8 @@ or explicit `DET_LAKE_PATH_RAW` / `_BRONZE` / `_OPS`. Day-2 stuck states:
   the id mandatory; default is off so local/CI extract is unchanged. Prefer
   `DET_REQUIRE_APPROVAL=1` in agent sessions. Airflow scheduled extract/load
   stay ungated; prune-**apply** on `det_extract_bronze` needs DagRun conf
-  `"approval": "apr_…"` (same `.det/approvals/` files as CLI — not MCP triggers).
+  `"approval": "apr_…"` (same lake/postgres approval store as CLI — not MCP
+  triggers).
   Manual `det_backfill_extract_bronze` likewise needs conf `"approval"` for the
   backfill **window** (MCP `preview_backfill_conf` → `det approve`); spawned
   daily extract runs stay ungated. Do not set `DET_REQUIRE_APPROVAL=1` on
@@ -42,10 +43,13 @@ or explicit `DET_LAKE_PATH_RAW` / `_BRONZE` / `_OPS`. Day-2 stuck states:
   env lake roots change. Pipeline refs and
   intervals are canonicalized, so `noaa/storm_events` and `noaa.storm_events`,
   or `-s 2026-08-06` and `-s 2026-08-06T00:00:00+00:00`, share one digest.
+  Default store is `{ops}/approvals/` on the lake; `DET_APPROVAL_BACKEND=postgres`
+  is opt-in (never auto-reuse bronze DSN).
 - A crashed run leaves its approval `claimed`, and a claim never expires, so it
   is hidden from the default listing. Find it with `det list-approvals --status
-  claimed` (or MCP `list_approvals` `status="claimed"`). Recovery is either a new
-  approval or, once the worker is dead, the operator running
+  claimed` (or MCP `list_approvals` `status="claimed"`). Advisory
+  `heartbeat_status` on describe is triage only — never auto-release. Recovery
+  is either a new approval or, once the worker is dead, the operator running
   `det approval-release <id> --force`. Releasing is not a TTL bypass and never
   automatic — never suggest releasing an approval whose run may still be alive.
 - Never suggest `dlt.pipeline` / `pipeline.run` for landing.

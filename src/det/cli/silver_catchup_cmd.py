@@ -308,6 +308,7 @@ def _run_plan(
             approval,
             require_approval,
             ctx=ctx,
+            settings=settings,
         )
 
     with use_settings(settings):
@@ -373,10 +374,7 @@ def _run_plan(
                         f"{row.get('interval_start')}..{row.get('interval_end')} "
                         f"run={row.get('extract_run_datetime')}"
                     )
-                typer.echo(
-                    f"approval_plan digest={plan.plan_digest} "
-                    f"argv={' '.join(plan.argv)}"
-                )
+                typer.echo(f"approval_plan digest={plan.plan_digest} argv={' '.join(plan.argv)}")
                 typer.echo(payload["next_steps"])
             return
 
@@ -390,7 +388,7 @@ def _run_plan(
                 raise typer.Exit(code=1) from exc
 
         try:
-            with _claimed_approval_work(claimed, approval):
+            with _claimed_approval_work(claimed, approval, root, settings=settings):
                 path = write_catchup_manifest(
                     planned["manifest"],
                     project_root=root,
@@ -399,7 +397,7 @@ def _run_plan(
         except DetConflictError as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from exc
-        _consume_approval(root, approval)
+        _consume_approval(root, approval, settings=settings)
 
     if as_json:
         typer.echo(
@@ -455,8 +453,7 @@ def _run_cleanup(
         payload = {
             "cleanup_skipped": "duckdb",
             "note": (
-                "BigQuery catch-up external tables are not used for DuckDB heals; "
-                "nothing to clean."
+                "BigQuery catch-up external tables are not used for DuckDB heals; nothing to clean."
             ),
         }
         if as_json:
@@ -535,9 +532,7 @@ def _run_cleanup(
         if not mid and not apply_before and older:
             from det.runtime.silver_catchup import resolve_bq_catchup_cleanup_cutoff
 
-            _cutoff, apply_before, _older = resolve_bq_catchup_cleanup_cutoff(
-                older_than=older
-            )
+            _cutoff, apply_before, _older = resolve_bq_catchup_cleanup_cutoff(older_than=older)
         if mid:
             gate_argv = silver_catchup_cleanup_write_argv(manifest_id=mid)
         elif apply_before:
@@ -555,7 +550,7 @@ def _run_cleanup(
             require_approval,
             ctx=ctx,
         )
-        with _claimed_approval_work(claimed, approval):
+        with _claimed_approval_work(claimed, approval, root):
             try:
                 result = apply_bq_catchup_cleanup(
                     manifest_id=mid or None,
@@ -573,9 +568,7 @@ def _run_cleanup(
                 f"targets={result.get('target_count', 0)}"
             )
             for row in result.get("results") or []:
-                typer.echo(
-                    f"  {row.get('relation')} dropped={row.get('dropped')}"
-                )
+                typer.echo(f"  {row.get('relation')} dropped={row.get('dropped')}")
         return
 
     try:
@@ -604,8 +597,7 @@ def _run_cleanup(
         for row in planned.get("targets") or []:
             existed = row.get("existed")
             typer.echo(
-                f"  {row.get('relation')} existed={existed} "
-                f"created={row.get('created') or '?'}"
+                f"  {row.get('relation')} existed={existed} created={row.get('created') or '?'}"
             )
 
 
@@ -626,15 +618,11 @@ def silver_catchup_status_cmd(
     limit: int = typer.Option(200, "--limit"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
-    lake_path_raw: str | None = typer.Option(
-        None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP
-    ),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
     lake_path_bronze: str | None = typer.Option(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
-    lake_path_ops: str | None = typer.Option(
-        None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
-    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON"),
 ) -> None:
     """Compare latest bronze extract-run per interval to silver coverage (read-only)."""
@@ -670,15 +658,11 @@ def silver_catchup_verify_cmd(
     limit: int = typer.Option(200, "--limit"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
-    lake_path_raw: str | None = typer.Option(
-        None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP
-    ),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
     lake_path_bronze: str | None = typer.Option(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
-    lake_path_ops: str | None = typer.Option(
-        None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
-    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON"),
 ) -> None:
     """Re-diff with the same scope; exit 1 if catchup_count != 0."""
@@ -716,15 +700,11 @@ def silver_catchup_plan_group_cmd(
     limit: int = typer.Option(200, "--limit"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
-    lake_path_raw: str | None = typer.Option(
-        None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP
-    ),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
     lake_path_bronze: str | None = typer.Option(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
-    lake_path_ops: str | None = typer.Option(
-        None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
-    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON"),
 ) -> None:
     """Preview immutable catch-up manifest + approval_plan (never writes)."""
@@ -770,20 +750,14 @@ def silver_catchup_apply_group_cmd(
     content_digest: str | None = typer.Option(None, "--content-digest"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
-    lake_path_raw: str | None = typer.Option(
-        None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP
-    ),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
     lake_path_bronze: str | None = typer.Option(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
-    lake_path_ops: str | None = typer.Option(
-        None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
-    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON"),
     approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
-    require_approval: bool = typer.Option(
-        False, "--require-approval", help=_REQUIRE_APPROVAL_HELP
-    ),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Write ops/silver_catchup/<id>.json. Digests match silver-catchup-plan --apply."""
     _run_plan(
@@ -824,21 +798,15 @@ def silver_catchup_build_cmd(
     project_dir: Path | None = typer.Option(None, "--project-dir"),
     target: str | None = typer.Option(None, "--target"),
     lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
-    lake_path_raw: str | None = typer.Option(
-        None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP
-    ),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
     lake_path_bronze: str | None = typer.Option(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
-    lake_path_ops: str | None = typer.Option(
-        None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
-    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     set_: list[str] = typer.Option([], "--set"),
     approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
-    require_approval: bool = typer.Option(
-        False, "--require-approval", help=_REQUIRE_APPROVAL_HELP
-    ),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Run catch-up dbt heal (same approval digest as ``det dbt --catchup``).
 
@@ -892,16 +860,14 @@ def silver_catchup_build_cmd(
     )
     # ctx=None: unbound already checked above with manifest_id remapped.
     claimed = _gate_approval(
-        root,
-        "dbt",
-        gate_argv,
-        approval,
-        require_approval,
-        ctx=None,
+        root, "dbt", gate_argv, approval, require_approval, ctx=None, settings=settings
     )
     pipe = resolved.path if resolved is not None else None
     try:
-        with _claimed_approval_work(claimed, approval), use_settings(settings):
+        with (
+            _claimed_approval_work(claimed, approval, root, settings=settings),
+            use_settings(settings),
+        ):
             if resolved is not None:
                 from det.runtime.config import load_pipeline_config
                 from det.scaffold.view_warn import emit_view_size_warnings
@@ -931,7 +897,7 @@ def silver_catchup_build_cmd(
             )
             if result.returncode != 0:
                 raise typer.Exit(code=result.returncode)
-            _consume_approval(root, approval)
+            _consume_approval(root, approval, settings=settings)
     except DbtNotInstalledError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -980,9 +946,7 @@ def silver_catchup_cleanup_group_cmd(
     apply: bool = typer.Option(False, "--apply"),
     as_json: bool = typer.Option(False, "--json"),
     approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
-    require_approval: bool = typer.Option(
-        False, "--require-approval", help=_REQUIRE_APPROVAL_HELP
-    ),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """List/drop BQ catch-up external tables; no-op skip on DuckDB."""
     _run_cleanup(
@@ -1013,15 +977,11 @@ def silver_catchup_diff_cmd(
     limit: int = typer.Option(200, "--limit"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
-    lake_path_raw: str | None = typer.Option(
-        None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP
-    ),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
     lake_path_bronze: str | None = typer.Option(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
-    lake_path_ops: str | None = typer.Option(
-        None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
-    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON"),
 ) -> None:
     """Alias for ``det silver-catchup status``."""
@@ -1062,20 +1022,14 @@ def silver_catchup_plan_cmd(
     content_digest: str | None = typer.Option(None, "--content-digest"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
-    lake_path_raw: str | None = typer.Option(
-        None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP
-    ),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
     lake_path_bronze: str | None = typer.Option(
         None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
     ),
-    lake_path_ops: str | None = typer.Option(
-        None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP
-    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
     as_json: bool = typer.Option(False, "--json"),
     approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
-    require_approval: bool = typer.Option(
-        False, "--require-approval", help=_REQUIRE_APPROVAL_HELP
-    ),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Alias for ``det silver-catchup plan`` / ``apply``."""
     _run_plan(
@@ -1112,9 +1066,7 @@ def silver_catchup_cleanup_cmd(
     apply: bool = typer.Option(False, "--apply"),
     as_json: bool = typer.Option(False, "--json"),
     approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
-    require_approval: bool = typer.Option(
-        False, "--require-approval", help=_REQUIRE_APPROVAL_HELP
-    ),
+    require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Alias for ``det silver-catchup cleanup``."""
     _run_cleanup(

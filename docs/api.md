@@ -135,13 +135,21 @@ boundary.** The same shell that runs `det extract --approval` can also run
 - Claiming is atomic (`claim_approval`), so two concurrent runs cannot both
   write against one approval.
 
+**Store:** default is the lake ops root `{ops}/approvals/apr_….json` (shared by
+local CLI and managed Airflow). Opt-in Postgres with `DET_APPROVAL_BACKEND=postgres`
+and `DET_APPROVAL_PG_DSN` (schema/table default `det_approval.approvals`). Legacy
+`{project_root}/.det/approvals` is **read-only fallback** for one release; new
+creates never write there.
+
 A crash between claim and consume leaves the record `claimed`, and a claim never
 ages out (TTL gates *claiming*, not finishing), so it is excluded from the default
 listing. Use `list_approval_records(root, statuses=("claimed",))` — or
-`det list-approvals --status claimed` — to find it. Recover with a fresh approval,
-or `release_approval` (`det approval-release <id> --force`), which mirrors
-`force_release_lock` for lake leases: explicit, operator-only, and recorded via
-`released_at` / `released_by` / `released_from_claim`.
+`det list-approvals --status claimed` — to find it. CLI claims refresh an advisory
+`heartbeat_at` while the write runs; `describe_approval` / list expose
+`heartbeat_status` (`fresh` / `stale` / `unknown`) for triage only — never auto-release.
+Recover with a fresh approval (preferred), or `release_approval`
+(`det approval-release <id> --force`) after the worker is confirmed dead.
+`approval-release` warns when the heartbeat still looks fresh.
 
 Releasing is deliberately **not** a TTL bypass — the record returns to `unused`,
 so one that expired while claimed reads as `expired` — and deliberately **not**

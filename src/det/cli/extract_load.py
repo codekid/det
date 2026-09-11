@@ -79,9 +79,10 @@ def extract_raw(
         approval,
         require_approval,
         ctx=ctx,
+        settings=settings,
     )
     try:
-        with _claimed_approval_work(claimed, approval):
+        with _claimed_approval_work(claimed, approval, root, settings=settings):
             result = PipelineRunner(settings=settings).extract(
                 resolved.path,
                 interval_start=start_iso,
@@ -91,7 +92,7 @@ def extract_raw(
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
-    _consume_approval(root, approval)
+    _consume_approval(root, approval, settings=settings)
     typer.echo(
         f"OK extract pipeline={result.pipeline} artifacts={result.artifacts} raw={result.raw_dir}"
     )
@@ -154,9 +155,10 @@ def load_bronze(
         approval,
         require_approval,
         ctx=ctx,
+        settings=settings,
     )
     try:
-        with _claimed_approval_work(claimed, approval):
+        with _claimed_approval_work(claimed, approval, root, settings=settings):
             result = PipelineRunner(settings=settings).load(
                 resolved.path,
                 interval_start=start_iso,
@@ -167,7 +169,7 @@ def load_bronze(
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
-    _consume_approval(root, approval)
+    _consume_approval(root, approval, settings=settings)
     typer.echo(
         f"OK load pipeline={result.pipeline} rows={result.rows} partition={result.partition_dir}"
     )
@@ -224,10 +226,11 @@ def run_pipeline(
         approval,
         require_approval,
         ctx=ctx,
+        settings=settings,
     )
     print("det: run starting…", file=sys.stderr, flush=True)
     try:
-        with _claimed_approval_work(claimed, approval):
+        with _claimed_approval_work(claimed, approval, root, settings=settings):
             result = PipelineRunner(settings=settings).run(
                 resolved.path,
                 interval_start=start_iso,
@@ -237,5 +240,5 @@ def run_pipeline(
     except LeaseHeldError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
-    _consume_approval(root, approval)
+    _consume_approval(root, approval, settings=settings)
     typer.echo(f"OK pipeline={result.pipeline} rows={result.rows} partition={result.partition_dir}")

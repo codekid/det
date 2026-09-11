@@ -1,6 +1,10 @@
-"""File-based, single-use approval records for writing DET CLI commands.
+"""Lake/postgres-backed single-use approval records for writing DET CLI commands.
 
-MCP never creates these files. ``det approve`` writes ``.det/approvals/{id}.json``.
+MCP never creates these records. ``det approve`` writes to the configured store
+(default: ``{ops_root}/approvals/`` on the lake; opt-in Postgres via
+``DET_APPROVAL_BACKEND=postgres``). Legacy ``.det/approvals`` remains a read-only
+fallback for one release.
+
 Writing CLI validates ``--approval`` (always if passed; required when
 ``DET_REQUIRE_APPROVAL=1`` or ``--require-approval``).
 
@@ -26,6 +30,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 from det.logging import get_logger
+from det.runtime.approval_store import (
+    DEFAULT_HEARTBEAT_INTERVAL_SEC,
+    enrich_heartbeat_fields,
+    open_approval_store,
+)
+from det.runtime.approval_store.legacy import legacy_approvals_dir
 
 logger = get_logger(__name__)
 
@@ -33,7 +43,6 @@ DEFAULT_TTL_SEC = 3600
 ENV_REQUIRE = "DET_REQUIRE_APPROVAL"
 ENV_APPROVED_BY = "DET_APPROVED_BY"
 ENV_TTL = "DET_APPROVAL_TTL_SEC"
-_DIR_REL = Path(".det") / "approvals"
 
 ApprovalStatus = Literal["unused", "claimed", "consumed", "expired"]
 
@@ -69,7 +78,8 @@ class ApprovalPlan:
 
 
 def approvals_dir(project_root: Path) -> Path:
-    return project_root.resolve() / _DIR_REL
+    """Legacy local approvals directory (read fallback / tests)."""
+    return legacy_approvals_dir(project_root)
 
 
 def require_approvals_enabled() -> bool:
@@ -141,8 +151,11 @@ def _iso(dt: datetime) -> str:
 
 
 def _parse_iso(value: str) -> datetime:
-    text = value.replace("Z", "+00:00")
-    return datetime.fromisoformat(text)
+    """Parse ISO stamps; offset-less values are treated as UTC (never naive)."""
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def effective_status(record: dict[str, Any], *, now: datetime | None = None) -> ApprovalStatus:
@@ -157,10 +170,24 @@ def effective_status(record: dict[str, Any], *, now: datetime | None = None) -> 
         return "consumed"
     if status == "claimed":
         return "claimed"
-    expires = _parse_iso(str(record["expires_at"]))
-    if (now or utcnow()) >= expires:
+    try:
+        expires = _parse_iso(str(record["expires_at"]))
+        clock = now or utcnow()
+        if clock.tzinfo is None:
+            clock = clock.replace(tzinfo=UTC)
+        else:
+            clock = clock.astimezone(UTC)
+    except (TypeError, ValueError, OverflowError, KeyError):
+        # Malformed expiry must not break list/describe; fail closed for claiming.
+        return "expired"
+    if clock >= expires:
         return "expired"
     return "unused"
+
+
+def _store(project_root: Path, *, settings: Any | None = None):
+    """Open the approval store, honoring active/CLI ``DetSettings`` lake roots."""
+    return open_approval_store(project_root, settings=settings)
 
 
 def create_approval(
@@ -171,6 +198,7 @@ def create_approval(
     approved_by: str,
     ttl_sec: int | None = None,
     now: datetime | None = None,
+    settings: Any | None = None,
 ) -> dict[str, Any]:
     who = (approved_by or "").strip()
     if not who:
@@ -195,48 +223,16 @@ def create_approval(
         "status": "unused",
         "consumed_at": None,
     }
-    path = approvals_dir(project_root) / f"{record_id}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    return record
+    return _store(project_root, settings=settings).create(record)
 
 
-def _record_path(project_root: Path, approval_id: str) -> Path:
-    if not approval_id.startswith("apr_") or "/" in approval_id or "\\" in approval_id:
-        raise ApprovalError("approval_not_found", f"invalid approval id {approval_id!r}")
-    return approvals_dir(project_root) / f"{approval_id}.json"
-
-
-def _claim_path(project_root: Path, approval_id: str) -> Path:
-    """Sidecar whose exclusive creation is the claim mutex."""
-    return _record_path(project_root, approval_id).with_suffix(".claim")
-
-
-def _write_record(project_root: Path, record: dict[str, Any]) -> None:
-    """Replace a record atomically so a crash cannot leave a torn file."""
-    path = _record_path(project_root, str(record["id"]))
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def _runner_identity() -> str:
-    """Best-effort identity of the process claiming an approval (audit only)."""
-    named = os.environ.get("DET_LOCK_OWNER", "").strip()
-    if named:
-        return named
-    try:
-        host = socket.gethostname()
-    except OSError:
-        host = "unknown"
-    return f"{host}/pid:{os.getpid()}"
-
-
-def load_approval(project_root: Path, approval_id: str) -> dict[str, Any]:
-    path = _record_path(project_root, approval_id)
-    if not path.is_file():
-        raise ApprovalError("approval_not_found", f"no approval file for {approval_id}")
-    return json.loads(path.read_text(encoding="utf-8"))
+def load_approval(
+    project_root: Path,
+    approval_id: str,
+    *,
+    settings: Any | None = None,
+) -> dict[str, Any]:
+    return _store(project_root, settings=settings).load(approval_id)
 
 
 def list_approval_records(
@@ -244,6 +240,8 @@ def list_approval_records(
     *,
     statuses: Sequence[str] | None = None,
     now: datetime | None = None,
+    enrich: bool = True,
+    settings: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Approval records with status derived at read time.
 
@@ -252,23 +250,19 @@ def list_approval_records(
     (see ``effective_status``) — so an operator whose run crashed needs this to
     find it.
     """
-    folder = approvals_dir(project_root)
-    if not folder.is_dir():
-        return []
-    wanted = set(statuses) if statuses is not None else None
-    found: list[dict[str, Any]] = []
-    for path in sorted(folder.glob("apr_*.json")):
-        rec = dict(json.loads(path.read_text(encoding="utf-8")))
-        rec["status"] = effective_status(rec, now=now)
-        if wanted is None or rec["status"] in wanted:
-            found.append(rec)
-    return found
+    found = _store(project_root, settings=settings).list(statuses=statuses, now=now)
+    if not enrich:
+        return found
+    return [enrich_heartbeat_fields(rec, now=now) for rec in found]
 
 
 def list_unused_approvals(
-    project_root: Path, *, now: datetime | None = None
+    project_root: Path,
+    *,
+    now: datetime | None = None,
+    settings: Any | None = None,
 ) -> list[dict[str, Any]]:
-    return list_approval_records(project_root, statuses=("unused",), now=now)
+    return list_approval_records(project_root, statuses=("unused",), now=now, settings=settings)
 
 
 def check_approval(
@@ -279,12 +273,16 @@ def check_approval(
     *,
     require: bool,
     now: datetime | None = None,
+    settings: Any | None = None,
 ) -> dict[str, Any] | None:
     """
     Validate an approval when required or when an id is passed.
 
     Returns the record when validation ran; ``None`` when enforcement is off
     and no id was given.
+
+    Rejects legacy-only ``.det/approvals`` ids so Airflow check→consume and CLI
+    claim cannot validate a ticket that the primary store cannot mutate.
     """
     if not approval_id:
         if require:
@@ -293,7 +291,11 @@ def check_approval(
                 "DET_REQUIRE_APPROVAL is set (or --require-approval); pass --approval <id>",
             )
         return None
-    rec = load_approval(project_root, approval_id)
+    store = _store(project_root, settings=settings)
+    ensure = getattr(store, "ensure_writable", None)
+    if callable(ensure):
+        ensure(approval_id)
+    rec = store.load(approval_id)
     status = effective_status(rec, now=now)
     if status == "expired":
         raise ApprovalError("approval_expired", f"approval {approval_id} has expired")
@@ -318,6 +320,18 @@ def check_approval(
     return rec
 
 
+def _runner_identity() -> str:
+    """Best-effort identity of the process claiming an approval (audit only)."""
+    named = os.environ.get("DET_LOCK_OWNER", "").strip()
+    if named:
+        return named
+    try:
+        host = socket.gethostname()
+    except OSError:
+        host = "unknown"
+    return f"{host}/pid:{os.getpid()}"
+
+
 def claim_approval(
     project_root: Path,
     command: str,
@@ -326,52 +340,35 @@ def claim_approval(
     *,
     require: bool,
     now: datetime | None = None,
+    heartbeat_interval_sec: int = DEFAULT_HEARTBEAT_INTERVAL_SEC,
+    settings: Any | None = None,
 ) -> dict[str, Any] | None:
     """Validate then **atomically** claim an approval before the write starts.
 
-    ``check_approval`` alone leaves a race: two processes both validate while the
-    record is still ``unused``, both perform the write, and only the second
-    ``consume_approval`` fails — after the duplicate write already landed.
-    Claiming closes that window because exclusive creation of the ``.claim``
-    sidecar has exactly one winner.
-
-    A crash between claim and consume leaves the record ``claimed``, which is the
-    fail-closed outcome for an authorization token: recover by issuing a new
-    approval (the default TTL is one hour, so this is cheap).
+    A crash between claim and consume leaves the record ``claimed``. Recover by
+    issuing a new approval (preferred) or ``det approval-release --force`` after
+    the worker is confirmed dead.
     """
-    rec = check_approval(project_root, command, argv, approval_id, require=require, now=now)
+    rec = check_approval(
+        project_root,
+        command,
+        argv,
+        approval_id,
+        require=require,
+        now=now,
+        settings=settings,
+    )
     if rec is None:
         return None
     if approval_id is None:
-        # check_approval returns None only without an id when require is off
         raise RuntimeError("approval claim requires a non-None approval_id")
 
-    stamp = _iso(now or utcnow())
-    who = _runner_identity()
-    claim = _claim_path(project_root, approval_id)
-    claim.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        fd = os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    except FileExistsError:
-        raise ApprovalError(
-            "approval_in_flight",
-            f"approval {approval_id} is already claimed by another run",
-        ) from None
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(
-                json.dumps({"approval_id": approval_id, "claimed_at": stamp, "claimed_by": who})
-                + "\n"
-            )
-    except OSError:
-        claim.unlink(missing_ok=True)
-        raise
-
-    rec["status"] = "claimed"
-    rec["claimed_at"] = stamp
-    rec["claimed_by"] = who
-    _write_record(project_root, rec)
-    return rec
+    return _store(project_root, settings=settings).claim(
+        approval_id,
+        claimed_by=_runner_identity(),
+        now=now,
+        heartbeat_interval_sec=heartbeat_interval_sec,
+    )
 
 
 def release_approval(
@@ -380,21 +377,12 @@ def release_approval(
     *,
     released_by: str,
     now: datetime | None = None,
+    settings: Any | None = None,
 ) -> dict[str, Any]:
     """Hand a stuck ``claimed`` approval back for one more attempt.
 
-    A run that dies between claim and consume leaves the record ``claimed``
-    forever, since a claim never ages out. This is the operator escape hatch,
-    deliberately shaped like ``force_release_lock`` for lake leases: explicit,
-    manual, and recorded.
-
-    It is **not** a TTL bypass. The record returns to ``unused``, so if
-    ``expires_at`` has already passed, ``effective_status`` reports ``expired``
-    and the approval is dead anyway — releasing cannot extend a lifetime.
-
     Only ``claimed`` records can be released. There is intentionally no automatic
-    or TTL-driven release: that would silently reopen the double-write window
-    that claiming exists to close.
+    or TTL-driven release.
     """
     who = (released_by or "").strip()
     if not who:
@@ -402,33 +390,7 @@ def release_approval(
             "approval_identity_required",
             f"--released-by or {ENV_APPROVED_BY} is required to release an approval",
         )
-    rec = load_approval(project_root, approval_id)
-    status = effective_status(rec, now=now)
-    if status != "claimed":
-        raise ApprovalError(
-            "approval_not_claimed",
-            f"approval {approval_id} is {status}, only a claimed approval can be released",
-        )
-
-    _claim_path(project_root, approval_id).unlink(missing_ok=True)
-    rec["status"] = "unused"
-    rec["released_at"] = _iso(now or utcnow())
-    rec["released_by"] = who
-    # Keep the claim we tore down; the point of releasing is the audit trail.
-    rec["released_from_claim"] = {
-        "claimed_at": rec.pop("claimed_at", None),
-        "claimed_by": rec.pop("claimed_by", None),
-    }
-    _write_record(project_root, rec)
-    logger.warning(
-        "released a claimed approval",
-        approval_id=approval_id,
-        released_by=who,
-        prior_claim=rec["released_from_claim"],
-        command=rec.get("command"),
-        expires_at=rec.get("expires_at"),
-    )
-    return rec
+    return _store(project_root, settings=settings).release(approval_id, released_by=who, now=now)
 
 
 def consume_approval(
@@ -436,20 +398,38 @@ def consume_approval(
     approval_id: str,
     *,
     now: datetime | None = None,
+    settings: Any | None = None,
 ) -> dict[str, Any]:
     """Finalize an approval.
 
     Accepts ``claimed`` (the CLI claim-then-write path) and ``unused`` (the
     Airflow check-then-write path, which does not claim).
     """
-    rec = load_approval(project_root, approval_id)
-    status = effective_status(rec, now=now)
-    if status not in {"unused", "claimed"}:
-        raise ApprovalError(f"approval_{status}", f"approval {approval_id} is {status}")
-    rec["status"] = "consumed"
-    rec["consumed_at"] = _iso(now or utcnow())
-    _write_record(project_root, rec)
-    return rec
+    return _store(project_root, settings=settings).consume(approval_id, now=now)
+
+
+def touch_approval_heartbeat(
+    project_root: Path,
+    approval_id: str,
+    *,
+    now: datetime | None = None,
+    settings: Any | None = None,
+) -> dict[str, Any]:
+    """Advisory heartbeat while a CLI claim is held."""
+    return _store(project_root, settings=settings).touch_heartbeat(approval_id, now=now)
+
+
+def describe_approval_record(
+    project_root: Path,
+    approval_id: str,
+    *,
+    now: datetime | None = None,
+    settings: Any | None = None,
+) -> dict[str, Any]:
+    """Load one record with derived status + heartbeat triage fields."""
+    rec = dict(load_approval(project_root, approval_id, settings=settings))
+    rec["status"] = effective_status(rec, now=now)
+    return enrich_heartbeat_fields(rec, now=now)
 
 
 # --- write-argv builders (MCP dry-run and CLI must use the same lists) ---
@@ -623,6 +603,7 @@ def run_write_argv(
     )
     argv.extend(_set_argv(set_))
     return argv
+
 
 def migrate_write_argv(
     pipeline: str,

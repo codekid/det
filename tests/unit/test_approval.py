@@ -97,6 +97,29 @@ def test_expire_derived_at_read(tmp_path: Path):
     assert exc.value.code == "approval_expired"
 
 
+def test_effective_status_offset_less_and_malformed_expiry():
+    """Inspection must not TypeError on naive/malformed expires_at."""
+    unused = {
+        "status": "unused",
+        "expires_at": "2026-08-18T13:00:00",  # no offset
+    }
+    assert effective_status(unused, now=NOW) == "unused"
+    expired = {
+        "status": "unused",
+        "expires_at": "2026-08-18T11:00:00",
+    }
+    assert effective_status(expired, now=NOW) == "expired"
+    assert effective_status({"status": "unused", "expires_at": "not-a-time"}, now=NOW) == "expired"
+    # Claimed stays claimed even with bad expiry (TTL does not apply after claim).
+    assert (
+        effective_status(
+            {"status": "claimed", "expires_at": "not-a-time"},
+            now=NOW,
+        )
+        == "claimed"
+    )
+
+
 def test_argv_mismatch(tmp_path: Path):
     rec = _create(tmp_path)
     with pytest.raises(ApprovalError) as exc:
@@ -679,6 +702,79 @@ def test_cli_release_round_trip(tmp_path: Path, monkeypatch):
     assert json.loads(released.stdout)["status"] == "unused"
     back = _invoke(["list-approvals", "--project-root", str(tmp_path)])
     assert json.loads(back.stdout)["approvals"][0]["id"] == rec["id"]
+
+
+def test_cli_release_honors_lake_path(tmp_path: Path, monkeypatch):
+    """approval-release must open the same {ops}/approvals as the claimed run."""
+    from det.runtime.settings import DetSettings
+
+    monkeypatch.delenv("DET_APPROVED_BY", raising=False)
+    monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    monkeypatch.delenv("DET_LAKE_PATH_RAW", raising=False)
+    monkeypatch.delenv("DET_LAKE_PATH_BRONZE", raising=False)
+    monkeypatch.delenv("DET_LAKE_PATH_OPS", raising=False)
+
+    lake = tmp_path / "alt-lake"
+    lake.mkdir()
+    settings = DetSettings.from_env(project_root=tmp_path).with_overrides(
+        lake_override=str(lake)
+    )
+    rec = create_approval(
+        tmp_path,
+        command="prune",
+        argv=prune_write_argv("example_api.events", "2026-08-01"),
+        approved_by="tester",
+        settings=settings,
+    )
+    claim_approval(
+        tmp_path,
+        "prune",
+        rec["argv"],
+        rec["id"],
+        require=True,
+        settings=settings,
+    )
+
+    missing = _invoke(
+        [
+            "approval-release",
+            rec["id"],
+            "--force",
+            "--released-by",
+            "operator",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    assert missing.exit_code != 0
+    assert "approval_not_found" in missing.output
+
+    released = _invoke(
+        [
+            "approval-release",
+            rec["id"],
+            "--force",
+            "--released-by",
+            "operator",
+            "--project-root",
+            str(tmp_path),
+            "--lake-path",
+            str(lake),
+        ]
+    )
+    assert released.exit_code == 0, released.output
+    assert json.loads(released.stdout)["status"] == "unused"
+    listed = _invoke(
+        [
+            "list-approvals",
+            "--project-root",
+            str(tmp_path),
+            "--lake-path",
+            str(lake),
+        ]
+    )
+    assert listed.exit_code == 0, listed.output
+    assert json.loads(listed.stdout)["approvals"][0]["id"] == rec["id"]
 
 
 def test_cli_list_approvals_rejects_bad_status(tmp_path: Path):

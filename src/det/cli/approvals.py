@@ -6,10 +6,33 @@ import typer
 
 from det.cli.app import app
 from det.cli.common import (
+    _LAKE_PATH_BRONZE_HELP,
+    _LAKE_PATH_HELP,
+    _LAKE_PATH_OPS_HELP,
+    _LAKE_PATH_RAW_HELP,
     _PROJECT_ROOT_HELP,
     _project_root,
+    _settings,
 )
 from det.runtime.approval import ENV_APPROVED_BY
+
+
+def _approval_settings(
+    root: Path,
+    *,
+    lake_path: str | None,
+    lake_path_raw: str | None,
+    lake_path_bronze: str | None,
+    lake_path_ops: str | None,
+):
+    """Same lake roots as the claimed writing command (CLI flags or DET_LAKE_PATH*)."""
+    return _settings(
+        root,
+        lake_path=lake_path,
+        lake_path_raw=lake_path_raw,
+        lake_path_bronze=lake_path_bronze,
+        lake_path_ops=lake_path_ops,
+    )
 
 
 @app.command("approve")
@@ -41,6 +64,12 @@ def approve_cmd(
         help="Override DET_APPROVAL_TTL_SEC (default 3600)",
     ),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+    lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
+    lake_path_bronze: str | None = typer.Option(
+        None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
+    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
 ) -> None:
     """Create a single-use approval record for a later writing CLI command."""
     import json
@@ -54,6 +83,13 @@ def approve_cmd(
     )
 
     root = _project_root(project_root)
+    settings = _approval_settings(
+        root,
+        lake_path=lake_path,
+        lake_path_raw=lake_path_raw,
+        lake_path_bronze=lake_path_bronze,
+        lake_path_ops=lake_path_ops,
+    )
     who = (approved_by or approved_by_from_env() or "").strip()
     try:
         if plan is not None:
@@ -85,6 +121,7 @@ def approve_cmd(
             argv=stub.argv,
             approved_by=who,
             ttl_sec=ttl_sec,
+            settings=settings,
         )
     except json.JSONDecodeError as exc:
         raise typer.BadParameter(f"invalid JSON: {exc}") from exc
@@ -98,16 +135,28 @@ def approve_cmd(
 def approval_show_cmd(
     approval_id: str = typer.Argument(..., help="Approval id (apr_…)"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+    lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
+    lake_path_bronze: str | None = typer.Option(
+        None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
+    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
 ) -> None:
-    """Print one approval record (expired status is derived at read time)."""
+    """Print one approval record (expired status + heartbeat triage at read time)."""
     import json
 
-    from det.runtime.approval import ApprovalError, effective_status, load_approval
+    from det.runtime.approval import ApprovalError, describe_approval_record
 
     root = _project_root(project_root)
+    settings = _approval_settings(
+        root,
+        lake_path=lake_path,
+        lake_path_raw=lake_path_raw,
+        lake_path_bronze=lake_path_bronze,
+        lake_path_ops=lake_path_ops,
+    )
     try:
-        record = dict(load_approval(root, approval_id))
-        record["status"] = effective_status(record)
+        record = describe_approval_record(root, approval_id, settings=settings)
     except ApprovalError as exc:
         typer.echo(f"{exc.code}: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -122,15 +171,28 @@ def list_approvals_cmd(
     status: list[str] = typer.Option(
         [],
         "--status",
-        help=f"Filter by derived status (repeatable): {', '.join(_STATUSES)}. Default: unused",
+        help=(
+            f"Filter by derived status (repeatable): {', '.join(_STATUSES)}. "
+            "Default: unused. Use --status claimed for stuck crash claims "
+            "(lake/postgres store; never expire)."
+        ),
     ),
     all_: bool = typer.Option(False, "--all", help="Every record regardless of status"),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+    lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
+    lake_path_bronze: str | None = typer.Option(
+        None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
+    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
 ) -> None:
-    """List approvals under .det/approvals/ (defaults to unused, unexpired).
+    """List approvals from the configured store (defaults to unused, unexpired).
 
     Use `--status claimed` to find an approval left stuck by a crashed run; a
     claimed record never expires, so it will not show up in the default listing.
+
+    Pass the same ``--lake-path`` / split roots (or ``DET_LAKE_PATH*``) as the
+    claimed writing command so listing hits ``{ops}/approvals/``.
     """
     import json
 
@@ -146,8 +208,15 @@ def list_approvals_cmd(
         )
 
     root = _project_root(project_root)
+    settings = _approval_settings(
+        root,
+        lake_path=lake_path,
+        lake_path_raw=lake_path_raw,
+        lake_path_bronze=lake_path_bronze,
+        lake_path_ops=lake_path_ops,
+    )
     statuses = None if all_ else tuple(status or ("unused",))
-    records = list_approval_records(root, statuses=statuses)
+    records = list_approval_records(root, statuses=statuses, settings=settings)
     typer.echo(json.dumps({"approvals": records}, indent=2))
 
 
@@ -163,6 +232,12 @@ def approval_release_cmd(
         help=f"Who released it (or set {ENV_APPROVED_BY}); recorded on the file",
     ),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+    lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
+    lake_path_bronze: str | None = typer.Option(
+        None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
+    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
 ) -> None:
     """Hand a claimed approval back after its run died. Operator-only.
 
@@ -172,10 +247,18 @@ def approval_release_cmd(
     This is not a TTL bypass: the record returns to unused, so an approval that
     expired while claimed stays dead. It is also deliberately not gated on an
     approval — the recovery path must not depend on the mechanism that is stuck.
+
+    Use the same ``--lake-path`` / split roots (or ``DET_LAKE_PATH*``) as the
+    claimed run so release resolves the correct ``{ops}/approvals/`` root.
     """
     import json
 
-    from det.runtime.approval import ApprovalError, approved_by_from_env, release_approval
+    from det.runtime.approval import (
+        ApprovalError,
+        approved_by_from_env,
+        describe_approval_record,
+        release_approval,
+    )
 
     if not force:
         raise typer.BadParameter(
@@ -183,11 +266,24 @@ def approval_release_cmd(
             param_hint="--force",
         )
     root = _project_root(project_root)
+    settings = _approval_settings(
+        root,
+        lake_path=lake_path,
+        lake_path_raw=lake_path_raw,
+        lake_path_bronze=lake_path_bronze,
+        lake_path_ops=lake_path_ops,
+    )
     who = (released_by or approved_by_from_env() or "").strip()
     try:
-        record = release_approval(root, approval_id, released_by=who)
+        current = describe_approval_record(root, approval_id, settings=settings)
+        if current.get("heartbeat_status") == "fresh":
+            typer.echo(
+                "warning: heartbeat looks fresh — the claiming writer may still be alive; "
+                "releasing now can reopen a double-write window",
+                err=True,
+            )
+        record = release_approval(root, approval_id, released_by=who, settings=settings)
     except ApprovalError as exc:
         typer.echo(f"{exc.code}: {exc}", err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(json.dumps(record, indent=2))
-
