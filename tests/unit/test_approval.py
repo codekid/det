@@ -97,6 +97,29 @@ def test_expire_derived_at_read(tmp_path: Path):
     assert exc.value.code == "approval_expired"
 
 
+def test_effective_status_offset_less_and_malformed_expiry():
+    """Inspection must not TypeError on naive/malformed expires_at."""
+    unused = {
+        "status": "unused",
+        "expires_at": "2026-08-18T13:00:00",  # no offset
+    }
+    assert effective_status(unused, now=NOW) == "unused"
+    expired = {
+        "status": "unused",
+        "expires_at": "2026-08-18T11:00:00",
+    }
+    assert effective_status(expired, now=NOW) == "expired"
+    assert effective_status({"status": "unused", "expires_at": "not-a-time"}, now=NOW) == "expired"
+    # Claimed stays claimed even with bad expiry (TTL does not apply after claim).
+    assert (
+        effective_status(
+            {"status": "claimed", "expires_at": "not-a-time"},
+            now=NOW,
+        )
+        == "claimed"
+    )
+
+
 def test_argv_mismatch(tmp_path: Path):
     rec = _create(tmp_path)
     with pytest.raises(ApprovalError) as exc:

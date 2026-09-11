@@ -151,8 +151,11 @@ def _iso(dt: datetime) -> str:
 
 
 def _parse_iso(value: str) -> datetime:
-    text = value.replace("Z", "+00:00")
-    return datetime.fromisoformat(text)
+    """Parse ISO stamps; offset-less values are treated as UTC (never naive)."""
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def effective_status(record: dict[str, Any], *, now: datetime | None = None) -> ApprovalStatus:
@@ -167,8 +170,17 @@ def effective_status(record: dict[str, Any], *, now: datetime | None = None) -> 
         return "consumed"
     if status == "claimed":
         return "claimed"
-    expires = _parse_iso(str(record["expires_at"]))
-    if (now or utcnow()) >= expires:
+    try:
+        expires = _parse_iso(str(record["expires_at"]))
+        clock = now or utcnow()
+        if clock.tzinfo is None:
+            clock = clock.replace(tzinfo=UTC)
+        else:
+            clock = clock.astimezone(UTC)
+    except (TypeError, ValueError, OverflowError, KeyError):
+        # Malformed expiry must not break list/describe; fail closed for claiming.
+        return "expired"
+    if clock >= expires:
         return "expired"
     return "unused"
 
