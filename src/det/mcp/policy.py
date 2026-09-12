@@ -30,6 +30,7 @@ ALLOWED_MCP_TOOLS: frozenset[str] = frozenset(
         "diff_partitions",
         "diff_bronze_silver",
         "silver_catchup_dry_run",
+        "silver_catchup_heal_dry_run",
         "silver_catchup_cleanup_dry_run",
         "sample_raw",
         "validate_sample",
@@ -89,7 +90,7 @@ SCENARIO_REQUIRED_MCP: dict[str, tuple[str, ...]] = {
     "fleet_metrics": ("cube_load", "cube_meta"),
     "gold_metrics": ("cube_load", "cube_meta"),
     "new_source": ("list_sources",),
-    "silver_catchup": ("diff_bronze_silver", "silver_catchup_dry_run"),
+    "silver_catchup": ("diff_bronze_silver",),
 }
 
 _DLT_LANDING_MARKERS: tuple[str, ...] = ("dlt.pipeline", "pipeline.run")
@@ -364,16 +365,18 @@ def _score_scenario(trace: Trace) -> list[Violation]:
 def _score_silver_catchup_required(
     trace: Trace, required: tuple[str, ...]
 ) -> list[Violation]:
-    """diff_bronze_silver and silver_catchup_dry_run are both required (not alternatives)."""
+    """Require diff + a plan preview (dry_run or heal) before any write."""
     write_at = _first_write_index(trace)
     missing: list[str] = []
     for name in required:
         positions = _mcp_positions(trace, (name,))
-        if not positions:
+        if not positions or (write_at is not None and min(positions) > write_at):
             missing.append(name)
-            continue
-        if write_at is not None and min(positions) > write_at:
-            missing.append(name)
+    plan_pos = _mcp_positions(
+        trace, ("silver_catchup_dry_run", "silver_catchup_heal_dry_run")
+    )
+    if not plan_pos or (write_at is not None and min(plan_pos) > write_at):
+        missing.append("silver_catchup_dry_run|silver_catchup_heal_dry_run")
     if not missing:
         return []
     return [
@@ -381,7 +384,8 @@ def _score_silver_catchup_required(
             code="missing_inspect",
             turn=0 if write_at is None else write_at[0],
             detail=(
-                f"scenario 'silver_catchup' requires {list(required)} before any write "
+                "scenario 'silver_catchup' requires diff_bronze_silver and "
+                "silver_catchup_dry_run|silver_catchup_heal_dry_run before any write "
                 f"(missing or after write: {missing})"
             ),
         )

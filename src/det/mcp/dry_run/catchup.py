@@ -83,7 +83,10 @@ def silver_catchup_dry_run(
 ) -> dict[str, Any]:
     """Preview immutable ops/silver_catchup/<id>.json + approval_plan (never writes)."""
     h.prepare_tool()
-    from det.runtime.approval import silver_catchup_plan_write_argv
+    from det.runtime.approval import (
+        silver_catchup_apply_cli_hint,
+        silver_catchup_plan_write_argv,
+    )
     from det.runtime.silver_catchup import plan_catchup_manifest
 
     h.require_catchup_scope(pipeline=pipeline, all_pipelines=all_pipelines)
@@ -106,36 +109,151 @@ def silver_catchup_dry_run(
     )
     mid = str(planned["manifest_id"])
     digest = str(planned["content_digest"])
+    write_argv = silver_catchup_plan_write_argv(
+        pipeline=pipe_id,
+        all_pipelines=all_pipelines,
+        interval_start=interval_start,
+        interval_end=interval_end,
+        extract_lookback=effective,
+        census=census_argv,
+        limit=limit,
+        manifest_id=mid,
+        content_digest=digest,
+        **h.approval_lake_kwargs(project_root=base),
+    )
+    apply_cli = silver_catchup_apply_cli_hint(write_argv)
     return {
         **planned,
-        "approval_plan": h.approval_plan(
-            "silver-catchup-plan",
-            silver_catchup_plan_write_argv(
-                pipeline=pipe_id,
-                all_pipelines=all_pipelines,
-                interval_start=interval_start,
-                interval_end=interval_end,
-                extract_lookback=effective,
-                census=census_argv,
-                limit=limit,
-                manifest_id=mid,
-                content_digest=digest,
-                **h.approval_lake_kwargs(project_root=base),
-            ),
-        ),
+        "ladder_rung": "apply",
+        "next_rung": "apply",
+        "approval_plan": h.approval_plan("silver-catchup-plan", write_argv),
         "next_steps": (
             "Show approval_plan, then STOP — do not apply in this turn. "
             "After operator confirm: det approve --plan <approval_plan> "
-            "--approved-by <id>. Later turn only: det silver-catchup apply "
-            f"--manifest-id {mid} --content-digest {digest} --approval <id> "
-            "(or det silver-catchup-plan --apply …). Apply and build are "
-            "separate approvals: after apply succeeds, MCP "
-            f"dbt_dry_run(catchup=True, catchup_manifest={mid}) → show that "
-            "approval_plan, STOP again; separate approve; later turn: "
-            f"det silver-catchup build --manifest-id {mid} --approval <dbt_id> "
-            f"(or det dbt --catchup --catchup-manifest {mid} --approval <dbt_id>)."
+            f"--approved-by <id>. Later turn only: {apply_cli} "
+            "(or det silver-catchup-plan --apply …). After apply succeeds, "
+            "start the build rung with a separate "
+            f"dbt_dry_run(catchup=True, catchup_manifest={mid})."
         ),
     }
+
+
+def _mode_a_heal_preview(
+    pipeline: str,
+    *,
+    extract_lookback: str | None = None,
+    limit: int = h.DEFAULT_LIST_LIMIT,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Build Mode A heal preview payload (no MCP prepare_tool)."""
+    from det.runtime.approval import (
+        silver_catchup_apply_cli_hint,
+        silver_catchup_plan_write_argv,
+    )
+    from det.runtime.silver_catchup import plan_catchup_manifest
+
+    if not (pipeline and str(pipeline).strip()):
+        raise ValueError("Mode A heal requires pipeline")
+    effective, _census = _effective_lookback(
+        interval_start=None,
+        interval_end=None,
+        extract_lookback=extract_lookback,
+        census=False,
+    )
+    base = h.root(root)
+    pipe_id = h.canonical_id(pipeline, base)
+    planned = plan_catchup_manifest(
+        project_root=base,
+        pipeline=pipe_id,
+        all_pipelines=False,
+        interval_start=None,
+        interval_end=None,
+        extract_lookback=effective,
+        limit=limit,
+    )
+    raw_diff = planned.get("diff")
+    diff: dict[str, Any] = raw_diff if isinstance(raw_diff, dict) else {}
+    catchup_count = int(diff.get("catchup_count") or 0)
+    runs = list(diff.get("catchup_runs") or [])
+    mid = str(planned["manifest_id"])
+    digest = str(planned["content_digest"])
+    lookback = planned.get("extract_lookback") or effective or "48h"
+    base_out: dict[str, Any] = {
+        "dry_run": True,
+        "route": "mode_a",
+        "boring": True,
+        "pipeline": pipe_id,
+        "extract_lookback": lookback,
+        "catchup_count": catchup_count,
+        "catchup_runs": runs[: min(10, limit)],
+        "candidate_mode": planned.get("candidate_mode"),
+        "nothing_to_do": catchup_count == 0,
+    }
+    if catchup_count == 0:
+        return {
+            **base_out,
+            "ladder_rung": "apply",
+            "next_rung": None,
+            "next_steps": (
+                "Mode A heal: nothing to do (catchup_count=0). "
+                "Verify with det silver-catchup verify -p "
+                f"{pipe_id}, or use Advanced census if you need a full audit."
+            ),
+        }
+    write_argv = silver_catchup_plan_write_argv(
+        pipeline=pipe_id,
+        all_pipelines=False,
+        interval_start=None,
+        interval_end=None,
+        extract_lookback=effective,
+        census=False,
+        limit=limit,
+        manifest_id=mid,
+        content_digest=digest,
+        **h.approval_lake_kwargs(project_root=base),
+    )
+    apply_cli = silver_catchup_apply_cli_hint(write_argv)
+    return {
+        **base_out,
+        "manifest_id": mid,
+        "content_digest": digest,
+        "manifest_relpath": planned.get("manifest_relpath"),
+        "ladder_rung": "apply",
+        "next_rung": "apply",
+        "approval_plan": h.approval_plan("silver-catchup-plan", write_argv),
+        "next_steps": (
+            "Mode A heal (boring route). Show approval_plan, then STOP — "
+            "do not apply in this turn. After operator confirm: det approve "
+            f"--plan <approval_plan> --approved-by <id>. Later turn only: "
+            f"{apply_cli}."
+        ),
+        "after_apply": (
+            f"After apply succeeds: det silver-catchup heal --continue "
+            f"--manifest-id {mid} (or MCP dbt_dry_run catchup=True, "
+            f"catchup_manifest={mid}) → STOP → separate approve → build."
+        ),
+    }
+
+
+def silver_catchup_heal_dry_run(
+    pipeline: str,
+    *,
+    extract_lookback: str | None = None,
+    limit: int = h.DEFAULT_LIST_LIMIT,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Mode A boring-route preview: holes + apply approval_plan (never writes).
+
+    Rejects census / fleet / interval windows — those stay on
+    ``silver_catchup_dry_run`` (Advanced). Default lookback is 48h when omitted.
+    """
+    h.prepare_tool()
+    return _mode_a_heal_preview(
+        pipeline,
+        extract_lookback=extract_lookback,
+        limit=limit,
+        root=root,
+    )
 
 
 def silver_catchup_cleanup_dry_run(
@@ -170,6 +288,8 @@ def silver_catchup_cleanup_dry_run(
     return {
         **planned,
         "dry_run": True,
+        "ladder_rung": "cleanup",
+        "next_rung": "cleanup",
         "approval_plan": h.approval_plan("silver-catchup-cleanup", write_argv),
         "next_steps": (
             "Show approval_plan, then STOP — do not cleanup --apply in this turn. "

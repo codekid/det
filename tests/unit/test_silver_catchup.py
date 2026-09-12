@@ -212,6 +212,29 @@ def test_silver_catchup_plan_write_argv_binds_default_lookback_and_census():
     assert "--extract-lookback" not in census
 
 
+def test_silver_catchup_apply_cli_hint_includes_scope_flags():
+    from det.runtime.approval import (
+        silver_catchup_apply_cli_hint,
+        silver_catchup_plan_write_argv,
+    )
+
+    mid = "scm_" + ("ab" * 8)
+    digest = "sha256:" + ("0" * 64)
+    argv = silver_catchup_plan_write_argv(
+        "noaa.storm_events",
+        extract_lookback="48h",
+        manifest_id=mid,
+        content_digest=digest,
+    )
+    hint = silver_catchup_apply_cli_hint(argv)
+    assert hint.startswith("det silver-catchup apply ")
+    assert "-p noaa.storm_events" in hint
+    assert "--extract-lookback 48h" in hint
+    assert "--manifest-id" in hint
+    assert "--approval <id>" in hint
+    assert "silver-catchup-plan" not in hint
+
+
 def test_diff_hole_behind_max_watermark(catchup_root: Path, monkeypatch):
     lake = catchup_root / "data" / "lake"
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))

@@ -1,0 +1,43 @@
+{
+  "id": "silver_catchup_heal_chain_apply",
+  "scenario": "silver_catchup",
+  "expect": [
+    "dry_run_then_write"
+  ],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "diff_bronze_silver",
+          "arguments": {
+            "pipeline": "noaa.storm_events"
+          }
+        },
+        {
+          "type": "mcp",
+          "name": "silver_catchup_heal_dry_run",
+          "arguments": {
+            "pipeline": "noaa.storm_events"
+          }
+        },
+        {
+          "type": "cli",
+          "argv": [
+            "det",
+            "silver-catchup",
+            "apply",
+            "-p",
+            "noaa.storm_events",
+            "--extract-lookback",
+            "48h",
+            "--manifest-id",
+            "scm_abababababababab",
+            "--content-digest",
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+          ]
+        }
+      ]
+    }
+  ]
+}

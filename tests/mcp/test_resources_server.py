@@ -38,6 +38,7 @@ def test_create_server_registers_tools():
         "init_pipeline_dry_run",
         "diff_partitions",
         "diff_bronze_silver",
+        "silver_catchup_heal_dry_run",
         "silver_catchup_dry_run",
         "sample_raw",
         "validate_sample",

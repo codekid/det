@@ -871,6 +871,21 @@ def silver_catchup_plan_write_argv(
     return argv
 
 
+def silver_catchup_apply_cli_hint(write_argv: Sequence[str]) -> str:
+    """Nested ``det silver-catchup apply … --approval <id>`` matching plan argv.
+
+    ``approval_plan.argv`` is ``silver-catchup-plan --apply`` form. Apply rebuilds
+    the same digest from CLI scope flags (``-p`` / lookback / census / ``-s``/``-e``),
+    so next_steps must include those flags — not only manifest-id + digest.
+    """
+    argv = [str(a) for a in write_argv]
+    if len(argv) >= 2 and argv[0] == "silver-catchup-plan" and argv[1] == "--apply":
+        rest = argv[2:]
+    else:
+        rest = argv
+    return "det silver-catchup apply " + " ".join(rest) + " --approval <id>"
+
+
 def silver_catchup_cleanup_write_argv(
     *,
     manifest_id: str | None = None,

@@ -240,28 +240,21 @@ not a DET destination — there is no `destination.type: bigquery`.
 ## Catch-up (watermark holes)
 
 Incremental silver can miss a bronze extract-run whose stamp is **behind**
-`max(silver.watermark)` (cross-interval overlap). Heal with the catch-up path —
-not `--full-refresh` by default:
+`max(silver.watermark)` (cross-interval overlap). Mode A boring route (default
+`48h`) — one rung per turn; not `--full-refresh` by default:
 
-1. MCP `diff_bronze_silver` / `det silver-catchup status` (default `48h`;
-   `census=true` / `--census` for full audit)
-2. MCP `silver_catchup_dry_run` → show `approval_plan` → **stop** (do not apply
-   in the same turn)
-3. After confirm: `det approve` then a **later** turn
-   `det silver-catchup apply --manifest-id <scm_…> --content-digest <sha256:…> --approval <id>`
-4. Later: MCP `dbt_dry_run(catchup=True, catchup_manifest=…)` → show plan →
-   **stop**; after confirm: separate approve → later-turn
-   `det silver-catchup build --manifest-id <scm_…> --approval <id>` (or
-   `det dbt --catchup --catchup-manifest <scm_…> --approval <id>`; DuckDB, or BigQuery when
-   ops/scm is `gs://`; sets `DET_CATCHUP_MANIFEST_PATH` + tiny `det_catchup` /
-   `det_catchup_manifest_id` vars; BQ also `DET_CATCHUP_BQ_RELATION` over sibling
-   `.runs.jsonl`; local-lake → BQ raises). Scaffolded incremental models apply
-   only rows that are missing or **younger** than silver for the unique_key.
-   Incremental scaffold also sets `tags=["det_catchup"]` (discoverability only;
-   heal `--select` stays manifest-driven, not `tag:det_catchup`).
-5. `det silver-catchup verify` with the same scope flags.
+1. MCP `diff_bronze_silver` / `det silver-catchup status`
+2. **Apply rung:** prefer MCP `silver_catchup_heal_dry_run` (or
+   `det silver-catchup heal`) → `next_rung=apply` → **stop** → approve → later
+   apply
+3. **Build rung (after apply):** `det silver-catchup heal --continue
+   --manifest-id …` or MCP `dbt_dry_run(catchup=True, catchup_manifest=…)` →
+   `next_rung=build` → **stop** → separate approve → later build (not
+   `--full-refresh`; heal `--select` is manifest-driven, not `tag:det_catchup`)
+4. `det silver-catchup verify` with the same scope flags
 
-Details: [docs/silver-catchup.md](../../docs/silver-catchup.md).
+Advanced census / fleet: `silver_catchup_dry_run`. Details:
+[docs/silver-catchup.md](../../docs/silver-catchup.md) (Mode A happy path).
 
 ## Hard rules
 

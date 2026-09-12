@@ -353,6 +353,62 @@ def test_catchup_tools_reject_both_pipeline_and_all_pipelines(tmp_path: Path):
         silver_catchup_dry_run(root=tmp_path)
 
 
+def test_silver_catchup_heal_dry_run_mode_a(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Heal preview: apply plan only; empty holes → nothing_to_do."""
+    from det.mcp.dry_run.catchup import silver_catchup_heal_dry_run as _heal
+
+    _write_pipeline(tmp_path)
+    monkeypatch.setenv("DET_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path / "lake"))
+    (tmp_path / "lake").mkdir()
+    mid = "scm_" + ("ab" * 8)
+    digest = "sha256:" + ("0" * 64)
+    planned = {
+        "manifest_id": mid,
+        "content_digest": digest,
+        "manifest": {"runs": [{"extract_run": "er_1"}]},
+        "manifest_relpath": f"ops/silver_catchup/{mid}.json",
+        "candidate_mode": "extract_lookback",
+        "extract_lookback": "48h",
+        "diff": {
+            "catchup_count": 1,
+            "catchup_runs": [{"extract_run": "er_1", "interval_start": "2026-01-01"}],
+        },
+    }
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.plan_catchup_manifest",
+        lambda **kwargs: planned,
+    )
+    out = _heal(pipeline="example_api.events", root=tmp_path)
+    assert out["boring"] is True
+    assert out["route"] == "mode_a"
+    assert out["next_rung"] == "apply"
+    assert out["nothing_to_do"] is False
+    argv = out["approval_plan"]["argv"]
+    assert "-p" in argv
+    assert "--extract-lookback" in argv
+    assert "apply" in argv or "--apply" in argv
+    assert "-p" in out["next_steps"]
+    assert "--extract-lookback" in out["next_steps"]
+    assert "silver-catchup build" not in out["next_steps"]
+    assert "after_apply" in out
+
+    planned_empty = {
+        **planned,
+        "diff": {"catchup_count": 0, "catchup_runs": []},
+        "manifest": {"runs": []},
+    }
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.plan_catchup_manifest",
+        lambda **kwargs: planned_empty,
+    )
+    empty = _heal(pipeline="example_api.events", root=tmp_path)
+    assert empty["nothing_to_do"] is True
+    assert "approval_plan" not in empty
+
+
 def test_silver_catchup_dry_run_default_lookback_in_approval_plan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
