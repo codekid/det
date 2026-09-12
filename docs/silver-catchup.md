@@ -87,14 +87,18 @@ and `det dbt --catchup`.
 2. **Plan:** `det silver-catchup plan -p <pipeline>` → immutable `manifest_id`
    (`scm_…`) + `content_digest` + `approval_plan` (MCP: `silver_catchup_dry_run`).
    Pass the same scope flags as status (`--census` / lookback / `-s`/`-e`).
-3. **Apply manifest:** show plan `approval_plan`, **stop** for explicit operator
-   confirmation; after confirm: `det approve`, then a **later** turn
+3. **Apply manifest:** show plan `approval_plan`, **stop** (do not apply in the
+   same turn as the dry-run). After explicit operator confirmation:
+   `det approve`, then a **later** turn
    `det silver-catchup apply --manifest-id <scm_…> --content-digest <sha256:…> --approval <id>`
    (or `det silver-catchup-plan --apply …`) writes create-once:
    - `{DET_LAKE_PATH}/ops/silver_catchup/<manifest_id>.json`
    - `{DET_LAKE_PATH}/ops/silver_catchup/<manifest_id>.runs.jsonl` (flat NDJSON for BigQuery)
    Apply re-diffs and **fails** if the live coverage digest no longer matches.
-4. **Catch-up build:** later turn
+4. **Catch-up build (separate approval):** after apply succeeds, MCP
+   `dbt_dry_run(catchup=True, catchup_manifest=<scm_…>)` → show that
+   `approval_plan`, **stop** again. Do **not** chain apply and build in one
+   turn. After a **separate** confirm + `det approve`, later turn:
    `det silver-catchup build --manifest-id <scm_…> --approval <id>`
    (or `det dbt --catchup --catchup-manifest <scm_…> --approval <id>`) — one process;
    sets `DET_CATCHUP_MANIFEST_PATH` and tiny `--vars`
@@ -109,7 +113,7 @@ and `det dbt --catchup`.
    `_det_catchup_runs_<scm_…>` and does **not** auto-drop it. After verify:
    - `det silver-catchup cleanup --list` / `--list --older-than 7d`
    - MCP `silver_catchup_cleanup_dry_run` (`manifest_id` **or** `older_than`) →
-     `det approve` → later
+     show `approval_plan`, **stop**; after confirm: `det approve` → later turn
      `det silver-catchup cleanup --apply --manifest-id <scm_…> --approval <id>`
      or `--created-before <iso> --apply --approval <id>` (dry-run freezes the
      cutoff from `--older-than`; relative duration is not re-evaluated at apply)
@@ -117,8 +121,8 @@ and `det dbt --catchup`.
    retention filters. On DuckDB, cleanup prints `skipped=duckdb` and exits 0
    (no external tables were created).
 
-Do **not** default to `--full-refresh` for large sources. Apply and build stay
-**separate** approvals / turns.
+Do **not** default to `--full-refresh` for large sources. Apply, build, and
+cleanup each need their own dry-run → **stop** → approve → later-turn write.
 
 ## Catch-up SQL (incremental only)
 

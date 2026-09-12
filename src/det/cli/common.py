@@ -7,6 +7,7 @@ from pathlib import Path
 import typer
 
 from det.cli.app import logger
+from det.runtime.approval_bound import APPROVAL_BOUND_PARAMS as _BOUND_PARAMS
 
 _PIPELINE_HELP = (
     "Pipeline ref: canonical id (noaa.storm_events), slash form, or YAML path under the project"
@@ -113,8 +114,6 @@ def _approval_lake_kwargs(settings) -> dict:
     return out
 
 
-_LAKE_LAYER_PARAMS = frozenset({"lake_path", "lake_path_raw", "lake_path_bronze", "lake_path_ops"})
-
 _LAKE_PATH_HELP = (
     "Lake parent root (layout 2: derives raw/bronze under this path). "
     "Ignored when split roots are set."
@@ -152,124 +151,6 @@ def _analytics_exclude(select: list[str] | None) -> list[str] | None:
 
     return analytics_exclude(select)
 
-
-# Params each command's *_write_argv builder encodes, so they are covered by
-# plan_digest. Keep in lockstep with det.runtime.approval builders.
-_BOUND_PARAMS: dict[str, frozenset[str]] = {
-    "extract": frozenset(
-        {"pipeline", "interval_start", "interval_end", *_LAKE_LAYER_PARAMS, "set_"}
-    ),
-    "load": frozenset(
-        {
-            "pipeline",
-            "interval_start",
-            "interval_end",
-            "extract_run_datetime",
-            *_LAKE_LAYER_PARAMS,
-            "set_",
-        }
-    ),
-    "run": frozenset({"pipeline", "interval_start", "interval_end", *_LAKE_LAYER_PARAMS, "set_"}),
-    "migrate": frozenset(
-        {
-            "pipeline",
-            "to_bronze",
-            "schema",
-            "mapper",
-            "interval_start",
-            "interval_end",
-            "from_raw",
-            "wire_version",
-            "recreate_iceberg",
-            "all_raw",
-            "all_raw_runs",
-            "ingestion",
-            *_LAKE_LAYER_PARAMS,
-            "set_",
-        }
-    ),
-    "prune": frozenset(
-        {
-            "pipeline",
-            "interval_start",
-            "interval_end",
-            "keep",
-            "apply",
-            "set_",
-            *_LAKE_LAYER_PARAMS,
-        }
-    ),
-    "dbt": frozenset(
-        {
-            "pipeline",
-            "select",
-            "command",
-            "full_refresh",
-            "catchup",
-            "catchup_manifest",
-            "target",
-            *_LAKE_LAYER_PARAMS,
-            "set_",
-        }
-    ),
-    "scaffold-dbt": frozenset({"pipeline", "force", "set_"}),
-    "scaffold-ops": frozenset({"force"}),
-    "init-pipeline": frozenset(
-        {
-            "name",
-            "source_type",
-            "destination_type",
-            "connection",
-            "lake_path",
-            "skip_dbt",
-            "force",
-        }
-    ),
-    "biglake-register": frozenset(
-        {
-            *_LAKE_LAYER_PARAMS,
-            "pipeline",
-            "project",
-            "location",
-            "connection",
-            "skip_ops",
-            "apply",
-        }
-    ),
-    "iceberg-register": frozenset({*_LAKE_LAYER_PARAMS, "pipeline", "skip_ops", "apply"}),
-    "lock-release": frozenset(
-        {
-            "pipeline",
-            "interval_start",
-            "interval_end",
-            "dataset_id",
-            "force",
-            *_LAKE_LAYER_PARAMS,
-        }
-    ),
-    "silver-catchup-plan": frozenset(
-        {
-            "pipeline",
-            "all_pipelines",
-            "interval_start",
-            "interval_end",
-            "extract_lookback",
-            "census",
-            "limit",
-            "apply",
-            "manifest_id",
-            "content_digest",
-            *_LAKE_LAYER_PARAMS,
-        }
-    ),
-    "silver-catchup-cleanup": frozenset(
-        {
-            "manifest_id",
-            "created_before",
-            "apply",
-        }
-    ),
-}
 
 # Params that cannot change what or where anything is written, so they are safe
 # to vary under an approval.
