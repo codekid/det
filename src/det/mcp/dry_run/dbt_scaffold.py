@@ -63,13 +63,23 @@ def dbt_dry_run(
         ),
     }
     if catchup:
+        cmd = str(result.command).strip() or "build"
+        dbt_hint = (
+            f"det dbt --command {cmd} --catchup --catchup-manifest {mid} "
+            "--approval <id>"
+        )
+        if cmd == "build":
+            write_hint = (
+                f"det silver-catchup build --manifest-id {mid} --approval <id> "
+                f"(or {dbt_hint})"
+            )
+        else:
+            write_hint = dbt_hint
         out["next_steps"] = (
             "Show approval_plan, then STOP — do not build/dbt write in this turn. "
             "Apply and build stay separate approvals. After operator confirm: "
             "det approve --plan <approval_plan> --approved-by <id>. Later turn "
-            "only: "
-            f"det silver-catchup build --manifest-id {mid} --approval <id> "
-            f"(or det dbt --catchup --catchup-manifest {mid} --approval <id>)."
+            f"only: {write_hint}."
         )
     return out
 
