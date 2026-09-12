@@ -54,41 +54,34 @@ Install: `uv pip install -e ".[mcp]"`.
 
 ## Silver lag (bronze present, silver missing latest run)
 
-When bronze has data but incremental silver appears behind (watermark hole):
+Mode A (default **48h** lookback) is the boring heal route. One **rung per turn** —
+never chain dry-run→write or apply+build in the same turn. Full census /
+cleanup: see Advanced below and [docs/silver-catchup.md](../../docs/silver-catchup.md).
 
 1. MCP `diff_bronze_silver` — `catchup_runs` are **latest bronze extract-run per
-   interval** not yet in silver (DuckDB analytics, or BigQuery when
-   `DET_DBT_TARGET=bigquery`). Routine default is `48h` lookback (omit
-   `extract_lookback` or pass `"48h"`). Full census: `census=true` (omit no
-   longer means census). Mode A discovers the full lookback window
-   (up to the apply safety cap); `--limit` / MCP `limit` only truncates
-   displayed rows (`display_truncated`). `truncated=true` means discovery hit
-   the safety cap — not a complete lookback. Ignore
-   `stale_siblings_ignored` (older siblings; silver stays deduped).
-2. MCP `silver_catchup_dry_run` (same lookback / census / interval flags) → show immutable
-   `manifest_id` / `content_digest` + `approval_plan` → **stop**.
-3. After confirm: `det approve` then later
-   `det silver-catchup apply --manifest-id <scm_…> --content-digest <sha256:…> --approval <id>`
-   (or `det silver-catchup-plan --apply …`; writes immutable `.json` + sibling `.runs.jsonl`;
-   digests bind effective `--extract-lookback` or `--census`).
-4. MCP `dbt_dry_run` with `catchup=True` and `catchup_manifest=<scm_…>` → show its
-   separate `approval_plan` → **stop**. After confirm: `det approve` then later
+   interval** not yet in silver. Omit `extract_lookback` (or `"48h"`). Mode A
+   discovers the full lookback window (up to the apply safety cap); `limit`
+   only truncates displayed rows. Ignore `stale_siblings_ignored`.
+2. **Apply rung:** prefer MCP `silver_catchup_heal_dry_run` (or CLI
+   `det silver-catchup heal -p …`) → show `approval_plan` / `next_rung=apply` →
+   **stop**. After confirm: `det approve` then later
+   `det silver-catchup apply -p <pipeline> --extract-lookback 48h --manifest-id <scm_…> --content-digest <sha256:…> --approval <id>`
+   (same scope as `approval_plan.argv`; or `det silver-catchup-plan --apply …`).
+3. **Build rung (after apply succeeds):** CLI
+   `det silver-catchup heal --continue --manifest-id <scm_…>` or MCP `dbt_dry_run`
+   with `catchup=True` and `catchup_manifest=<scm_…>` → show its `approval_plan` /
+   `next_rung=build` → **stop**. After confirm: `det approve` then later
    `det silver-catchup build --manifest-id <scm_…> --approval <dbt_id>`
-   (or `det dbt --catchup --catchup-manifest <scm_…> --approval <dbt_id>`; distinct id;
-   one build; DuckDB `read_json` via `DET_CATCHUP_MANIFEST_PATH`, or BQ external
-   table via `DET_CATCHUP_BQ_RELATION` when ops is `gs://`; local→BQ fails;
+   (or `det dbt --catchup --catchup-manifest <scm_…> --approval <dbt_id>`;
    not `--full-refresh`).
-5. `det silver-catchup verify` (same scope flags) — `catchup_count=0`.
-6. After a **BigQuery** heal: MCP `silver_catchup_cleanup_dry_run`
-   (`manifest_id` or `older_than`, e.g. `"7d"`) → show `approval_plan` with
-   `--created-before` (frozen UTC cutoff) → **stop**.
-   After confirm: `det approve` then later
-   `det silver-catchup cleanup --apply --manifest-id <scm_…> --approval <id>`
-   or `--created-before <iso> --apply --approval <id>`. Heal does not auto-drop
-   `_det_catchup_runs_*` tables. Use `--list` / `--list --older-than 7d` to
-   inspect. DuckDB cleanup is a no-op (`skipped=duckdb`).
+4. `det silver-catchup verify` (same scope) — `catchup_count=0`.
 
-See [docs/silver-catchup.md](../../docs/silver-catchup.md).
+**Advanced:** `silver_catchup_dry_run` / `census=true` / `-s`/`-e` for Mode B.
+After a **BigQuery** heal verify: MCP `silver_catchup_cleanup_dry_run` → **stop**
+→ approve → later `det silver-catchup cleanup --apply …` (does not auto-drop
+`_det_catchup_runs_*`; DuckDB cleanup is `skipped=duckdb`).
+
+See [docs/silver-catchup.md](../../docs/silver-catchup.md) (Mode A happy path).
 
 ## Debug a failed or slow run
 

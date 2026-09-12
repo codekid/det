@@ -27,7 +27,10 @@ def create_server():
             "default 5, max 50). "
             "Generate (dry-run): schema_from_sample_dry_run, mapper_from_diff_dry_run. "
             "scaffold_ops_dry_run previews ops dbt models (never writes). "
-            "silver_catchup_dry_run previews ops/silver_catchup/<scm_id>.json (never writes). "
+            "silver_catchup_heal_dry_run is the Mode A (48h) boring-route preview "
+            "(apply rung only; never writes). "
+            "silver_catchup_dry_run previews ops/silver_catchup/<scm_id>.json (never writes; "
+            "Advanced: census / fleet / intervals). "
             "silver_catchup_cleanup_dry_run previews BQ _det_catchup_runs_* drops (never writes). "
             "Airflow inspect (read-only): airflow_health, list_airflow_dags, "
             "list_airflow_dag_runs, describe_airflow_det_env, preview_backfill_conf. "
@@ -192,6 +195,19 @@ def create_server():
             interval_end=interval_end,
             extract_lookback=extract_lookback,
             census=census,
+            limit=limit,
+        )
+
+    @mcp.tool()
+    def silver_catchup_heal_dry_run(
+        pipeline: p.PipelineRef,
+        extract_lookback: p.ExtractLookbackOpt = None,
+        limit: p.ListLimit = t.DEFAULT_LIST_LIMIT,
+    ) -> dict[str, Any]:
+        """Mode A boring-route heal preview + apply approval_plan (never writes)."""
+        return t.silver_catchup_heal_dry_run(
+            pipeline,
+            extract_lookback=extract_lookback,
             limit=limit,
         )
 

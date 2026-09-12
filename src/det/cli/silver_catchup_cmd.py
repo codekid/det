@@ -1,4 +1,4 @@
-"""CLI: bronze↔silver catch-up status/plan/apply/build/verify/cleanup (+ legacy aliases)."""
+"""CLI: bronze↔silver catch-up status/heal/plan/apply/build/verify/cleanup (+ legacy aliases)."""
 
 from __future__ import annotations
 
@@ -33,9 +33,9 @@ from det.cli.common import (
 catchup_app = typer.Typer(
     name="silver-catchup",
     help=(
-        "Bronze↔silver catch-up. Routine default is --extract-lookback 48h; "
-        "use --census for a full-lake audit. DuckDB and BigQuery-on-GCS share "
-        "the same verbs."
+        "Bronze↔silver catch-up. Routine Mode A heal: `det silver-catchup heal -p …` "
+        "(default lookback 48h). Use --census for a full-lake audit. DuckDB and "
+        "BigQuery-on-GCS share the same verbs."
     ),
     no_args_is_help=True,
 )
@@ -219,7 +219,11 @@ def _run_plan(
     require_approval: bool,
 ) -> None:
     from det.errors import DetConflictError
-    from det.runtime.approval import make_plan, silver_catchup_plan_write_argv
+    from det.runtime.approval import (
+        make_plan,
+        silver_catchup_apply_cli_hint,
+        silver_catchup_plan_write_argv,
+    )
     from det.runtime.settings import use_settings
     from det.runtime.silver_catchup import (
         assert_catchup_digest_matches,
@@ -343,16 +347,20 @@ def _run_plan(
                 "argv": list(plan.argv),
                 "plan_digest": plan.plan_digest,
             }
+            apply_cli = silver_catchup_apply_cli_hint(write_argv)
             payload = {
                 **planned,
                 "dry_run": True,
+                "ladder_rung": "apply",
+                "next_rung": "apply",
                 "approval_plan": approval_plan,
                 "next_steps": (
-                    "Operator: det approve --plan <approval_plan> --approved-by <id>. "
-                    "Later: det silver-catchup apply "
-                    f"--manifest-id {mid} --content-digest {digest} --approval <id> "
-                    "(or det silver-catchup-plan --apply …); then "
-                    f"det silver-catchup build --manifest-id {mid} --approval <dbt_id>."
+                    "Show approval_plan, then STOP — do not apply in this turn. "
+                    "After operator confirm: det approve --plan <approval_plan> "
+                    f"--approved-by <id>. Later turn only: {apply_cli} "
+                    "(or det silver-catchup-plan --apply …). After apply succeeds, "
+                    "start the build rung with a separate "
+                    f"dbt_dry_run(catchup=True, catchup_manifest={mid})."
                 ),
             }
             if as_json:
@@ -730,6 +738,173 @@ def silver_catchup_plan_group_cmd(
         approval=None,
         require_approval=False,
     )
+
+
+@catchup_app.command("heal")
+def silver_catchup_heal_cmd(
+    pipeline: str | None = typer.Option(
+        None, "--pipeline", "-p", help=f"Single pipeline (Mode A). {_PIPELINE_HELP}"
+    ),
+    extract_lookback: str | None = typer.Option(
+        None, "--extract-lookback", "--lookback", help=_LOOKBACK_HELP
+    ),
+    continue_build: bool = typer.Option(
+        False,
+        "--continue",
+        help="Build-rung preview after apply (requires --manifest-id)",
+    ),
+    manifest_id: str | None = typer.Option(
+        None, "--manifest-id", help="scm_… id from apply (with --continue)"
+    ),
+    all_pipelines: bool = typer.Option(False, "--all-pipelines", hidden=True),
+    interval_start: str | None = typer.Option(
+        None, "--interval-start", "-s", hidden=True
+    ),
+    interval_end: str | None = typer.Option(None, "--interval-end", "-e", hidden=True),
+    census: bool = typer.Option(False, "--census", hidden=True),
+    limit: int = typer.Option(200, "--limit"),
+    project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
+    lake_path: str | None = typer.Option(None, "--lake-path", help=_LAKE_PATH_HELP),
+    lake_path_raw: str | None = typer.Option(None, "--lake-path-raw", help=_LAKE_PATH_RAW_HELP),
+    lake_path_bronze: str | None = typer.Option(
+        None, "--lake-path-bronze", help=_LAKE_PATH_BRONZE_HELP
+    ),
+    lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON"),
+) -> None:
+    """Mode A boring-route preview (never writes).
+
+    Default: holes + apply ``approval_plan``. After apply:
+    ``heal --continue --manifest-id scm_…`` previews the build rung.
+    Census / fleet / ``-s``/``-e`` are Advanced — use ``plan`` / ``status``.
+    """
+    advanced = (
+        "Mode A heal refuses Advanced scope. Use `det silver-catchup plan` / "
+        "`status` with --census, --all-pipelines, or -s/-e."
+    )
+    if census or all_pipelines or interval_start is not None or interval_end is not None:
+        typer.echo(advanced, err=True)
+        raise typer.Exit(code=1)
+
+    root = _project_root(project_root)
+    settings = _settings(
+        root,
+        lake_path=lake_path,
+        lake_path_raw=lake_path_raw,
+        lake_path_bronze=lake_path_bronze,
+        lake_path_ops=lake_path_ops,
+    )
+
+    if continue_build:
+        mid = str(manifest_id or "").strip()
+        if not mid:
+            raise typer.BadParameter(
+                "--continue requires --manifest-id", param_hint="--manifest-id"
+            )
+        from det.runtime.approval import dbt_write_argv, make_plan
+        from det.runtime.dbt_runner import analytics_exclude, run_dbt
+        from det.runtime.settings import use_settings
+        from det.runtime.silver_catchup import read_catchup_manifest
+
+        with use_settings(settings):
+            loaded = read_catchup_manifest(
+                manifest_id=mid, project_root=root, settings=settings
+            )
+        if loaded is None:
+            typer.echo(
+                f"catch-up manifest not found: {mid} (apply first, then --continue)",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        pipe_id = None
+        if pipeline is not None:
+            pipe_id = _resolve_pipeline(pipeline, root).canonical_id
+        write_argv = dbt_write_argv(
+            pipe_id,
+            command="build",
+            catchup=True,
+            catchup_manifest=mid,
+            **_approval_lake_kwargs(settings),
+        )
+        plan = make_plan("dbt", write_argv)
+        with use_settings(settings):
+            result = run_dbt(
+                project_root=root,
+                command="build",
+                select=None,
+                exclude=analytics_exclude(None),
+                pipeline=_resolve_pipeline(pipeline, root).path if pipeline else None,
+                catchup=True,
+                catchup_manifest=mid,
+                dry_run=True,
+            )
+        payload = {
+            "dry_run": True,
+            "route": "mode_a",
+            "boring": True,
+            "ladder_rung": "build",
+            "next_rung": "build",
+            "manifest_id": mid,
+            "command": result.command,
+            "approval_plan": {
+                "command": plan.command,
+                "argv": list(plan.argv),
+                "plan_digest": plan.plan_digest,
+            },
+            "next_steps": (
+                "Show approval_plan, then STOP — do not build in this turn. "
+                "After operator confirm: det approve --plan <approval_plan> "
+                "--approved-by <id>. Later turn only: "
+                f"det silver-catchup build --manifest-id {mid} --approval <id> "
+                f"(or det dbt --command build --catchup --catchup-manifest {mid} "
+                "--approval <id>)."
+            ),
+        }
+        if as_json:
+            typer.echo(json.dumps(payload, indent=2, default=str))
+        else:
+            typer.echo(
+                f"HEAL continue (build rung) manifest_id={mid} "
+                f"approval_plan digest={plan.plan_digest}"
+            )
+            typer.echo(payload["next_steps"])
+        return
+
+    if pipeline is None:
+        raise typer.BadParameter("pipeline required for Mode A heal", param_hint="-p")
+
+    from det.mcp.dry_run.catchup import _mode_a_heal_preview
+    from det.runtime.settings import use_settings
+
+    with use_settings(settings):
+        payload = _mode_a_heal_preview(
+            pipeline,
+            extract_lookback=extract_lookback,
+            limit=limit,
+            root=root,
+        )
+    if as_json:
+        typer.echo(json.dumps(payload, indent=2, default=str))
+        return
+    if payload.get("nothing_to_do"):
+        typer.echo(
+            f"HEAL Mode A nothing_to_do catchup_count=0 "
+            f"pipeline={payload.get('pipeline')} lookback={payload.get('extract_lookback')}"
+        )
+        typer.echo(payload["next_steps"])
+        return
+    typer.echo(
+        f"HEAL Mode A catchup_count={payload.get('catchup_count')} "
+        f"manifest_id={payload.get('manifest_id')} "
+        f"content_digest={payload.get('content_digest')} "
+        f"lookback={payload.get('extract_lookback')}"
+    )
+    plan = payload.get("approval_plan") or {}
+    if plan.get("plan_digest"):
+        typer.echo(f"approval_plan digest={plan['plan_digest']}")
+    typer.echo(payload["next_steps"])
+    if payload.get("after_apply"):
+        typer.echo(payload["after_apply"])
 
 
 @catchup_app.command("apply")

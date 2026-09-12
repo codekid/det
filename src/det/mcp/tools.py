@@ -25,6 +25,7 @@ from det.mcp.dry_run import (
     scaffold_ops_dry_run,
     silver_catchup_cleanup_dry_run,
     silver_catchup_dry_run,
+    silver_catchup_heal_dry_run,
 )
 from det.mcp.ops_tools import (
     check,
@@ -563,6 +564,7 @@ __all__ = [
     "schema_from_sample_dry_run",
     "silver_catchup_cleanup_dry_run",
     "silver_catchup_dry_run",
+    "silver_catchup_heal_dry_run",
     "summarize_runs",
     "validate_sample",
 ]

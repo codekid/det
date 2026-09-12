@@ -51,8 +51,11 @@ def test_trajectory_fixtures_cover_plan_ids():
         "new_source_init_without_list",
         "dlt_pipeline_text",
         "silver_catchup_diff_dry_run_stop",
+        "silver_catchup_heal_dry_run_stop",
         "silver_catchup_chain_apply",
+        "silver_catchup_heal_chain_apply",
         "silver_catchup_chain_build",
+        "silver_catchup_mode_a_happy_path",
         "silver_catchup_full_refresh_invent",
         "silver_catchup_full_refresh_negated_ok",
         "silver_catchup_full_refresh_after_negation_sentence",
@@ -101,6 +104,10 @@ def test_writing_argv_classifier():
         ]
     )
     assert not is_writing_cli(["det", "silver-catchup", "plan", "-p", "x"])
+    assert not is_writing_cli(["det", "silver-catchup", "heal", "-p", "x"])
+    assert not is_writing_cli(
+        ["det", "silver-catchup", "heal", "--continue", "--manifest-id", "scm_ab"]
+    )
     assert not is_writing_cli(["det", "silver-catchup", "status", "-p", "x"])
     assert not is_writing_cli(["det", "silver-catchup", "verify", "-p", "x"])
     assert not is_writing_cli(["det", "silver-catchup", "cleanup", "--list"])

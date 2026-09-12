@@ -75,11 +75,12 @@ def dbt_dry_run(
             )
         else:
             write_hint = dbt_hint
+        out["ladder_rung"] = "build"
+        out["next_rung"] = "build"
         out["next_steps"] = (
             "Show approval_plan, then STOP — do not build/dbt write in this turn. "
-            "Apply and build stay separate approvals. After operator confirm: "
-            "det approve --plan <approval_plan> --approved-by <id>. Later turn "
-            f"only: {write_hint}."
+            "After operator confirm: det approve --plan <approval_plan> "
+            f"--approved-by <id>. Later turn only: {write_hint}."
         )
     return out
 

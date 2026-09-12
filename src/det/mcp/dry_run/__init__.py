@@ -6,6 +6,7 @@ from det.mcp.dry_run.catchup import (
     diff_bronze_silver,
     silver_catchup_cleanup_dry_run,
     silver_catchup_dry_run,
+    silver_catchup_heal_dry_run,
 )
 from det.mcp.dry_run.dbt_scaffold import (
     dbt_dry_run,
@@ -29,4 +30,5 @@ __all__ = [
     "scaffold_ops_dry_run",
     "silver_catchup_cleanup_dry_run",
     "silver_catchup_dry_run",
+    "silver_catchup_heal_dry_run",
 ]

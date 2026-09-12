@@ -1,0 +1,81 @@
+{
+  "id": "silver_catchup_mode_a_happy_path",
+  "scenario": "silver_catchup",
+  "expect": [],
+  "turns": [
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "diff_bronze_silver",
+          "arguments": {
+            "pipeline": "noaa.storm_events"
+          }
+        },
+        {
+          "type": "mcp",
+          "name": "silver_catchup_heal_dry_run",
+          "arguments": {
+            "pipeline": "noaa.storm_events"
+          }
+        }
+      ]
+    },
+    {
+      "events": [
+        {
+          "type": "user_approval"
+        },
+        {
+          "type": "cli",
+          "argv": [
+            "det",
+            "silver-catchup",
+            "apply",
+            "-p",
+            "noaa.storm_events",
+            "--extract-lookback",
+            "48h",
+            "--manifest-id",
+            "scm_abababababababab",
+            "--content-digest",
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "--approval",
+            "apr_apply"
+          ]
+        }
+      ]
+    },
+    {
+      "events": [
+        {
+          "type": "mcp",
+          "name": "dbt_dry_run",
+          "arguments": {
+            "catchup": true,
+            "catchup_manifest": "scm_abababababababab"
+          }
+        }
+      ]
+    },
+    {
+      "events": [
+        {
+          "type": "user_approval"
+        },
+        {
+          "type": "cli",
+          "argv": [
+            "det",
+            "silver-catchup",
+            "build",
+            "--manifest-id",
+            "scm_abababababababab",
+            "--approval",
+            "apr_build"
+          ]
+        }
+      ]
+    }
+  ]
+}

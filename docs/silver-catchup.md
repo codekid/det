@@ -67,8 +67,9 @@ default) or `--census`, so apply cannot silently change discovery scope.
 Preferred verbs (legacy aliases still work):
 
 ```text
+det silver-catchup heal     # Mode A boring route (preview only; default 48h)
 det silver-catchup status   # was silver-catchup-diff
-det silver-catchup plan     # dry-run only (+ approval_plan / next steps)
+det silver-catchup plan     # Advanced / census dry-run (+ approval_plan)
 det silver-catchup apply    # write scm_… (same digest as silver-catchup-plan --apply)
 det silver-catchup build    # det dbt --catchup --catchup-manifest …
 det silver-catchup verify   # status; exit 1 if catchup_count != 0
@@ -78,7 +79,32 @@ det silver-catchup cleanup  # BQ external tables; DuckDB → skipped=duckdb
 Aliases: `silver-catchup-diff`, `silver-catchup-plan`, `silver-catchup-cleanup`,
 and `det dbt --catchup`.
 
-## Flow
+## Mode A happy path (routine)
+
+Default heal for one pipeline after a recent load. Lookback is **`48h`** when
+omitted. Do **not** start with `--full-refresh` or `--census`. Prefer **`heal`**
+over bare `plan` for Mode A.
+
+1. **Heal (apply rung):** `det silver-catchup heal -p <pipeline>` → show
+   `approval_plan` / `next_rung=apply`, **stop** → `det approve` → **later**
+   `det silver-catchup apply -p <pipeline> --extract-lookback 48h --manifest-id <scm_…> --content-digest <sha256:…> --approval <id>`
+   (same scope flags as `approval_plan.argv`)
+2. **Heal continue (build rung):** after apply succeeds,
+   `det silver-catchup heal --continue --manifest-id <scm_…>` → show build
+   `approval_plan`, **stop** → `det approve` → **later**
+   `det silver-catchup build --manifest-id <scm_…> --approval <id>`
+3. **Verify:** `det silver-catchup verify -p <pipeline>` — expect
+   `catchup_count=0`.
+
+MCP: `diff_bronze_silver` → `silver_catchup_heal_dry_run` (apply rung only) →
+later apply → `heal --continue` or `dbt_dry_run(catchup=True, …)` (build rung
+only) → later build → verify. Never chain dry-run→write or apply+build in the
+same turn. Advanced census / fleet still uses `silver_catchup_dry_run` / `plan`.
+
+## Advanced / full ladder
+
+Use when Mode A is not enough: `--census` / `-s`/`-e`, fleet
+`--all-pipelines`, BigQuery cleanup, and failure detail.
 
 1. **Status (read-only):** `det silver-catchup status -p <pipeline>` (MCP:
    `diff_bronze_silver`). Default lookback `48h`. Use `--census` for a full
@@ -90,7 +116,9 @@ and `det dbt --catchup`.
 3. **Apply manifest:** show plan `approval_plan`, **stop** (do not apply in the
    same turn as the dry-run). After explicit operator confirmation:
    `det approve`, then a **later** turn
-   `det silver-catchup apply --manifest-id <scm_…> --content-digest <sha256:…> --approval <id>`
+   `det silver-catchup apply` with the **same** scope flags as plan
+   (`-p` / lookback / `--census` / `-s`/`-e`) plus
+   `--manifest-id <scm_…> --content-digest <sha256:…> --approval <id>`
    (or `det silver-catchup-plan --apply …`) writes create-once:
    - `{DET_LAKE_PATH}/ops/silver_catchup/<manifest_id>.json`
    - `{DET_LAKE_PATH}/ops/silver_catchup/<manifest_id>.runs.jsonl` (flat NDJSON for BigQuery)

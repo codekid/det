@@ -370,7 +370,7 @@ CatchupManifestOpt = Annotated[
     Field(
         description=(
             "Immutable catch-up manifest id (scm_ + 16 hex) from "
-            "silver_catchup_dry_run / silver-catchup-plan --apply; required when catchup=true"
+            "silver_catchup_heal_dry_run / silver_catchup_dry_run / silver-catchup-plan --apply; required when catchup=true"
         )
     ),
 ]
