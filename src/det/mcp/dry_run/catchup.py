@@ -171,7 +171,8 @@ def _mode_a_heal_preview(
         extract_lookback=effective,
         limit=limit,
     )
-    diff = planned.get("diff") if isinstance(planned.get("diff"), dict) else {}
+    raw_diff = planned.get("diff")
+    diff: dict[str, Any] = raw_diff if isinstance(raw_diff, dict) else {}
     catchup_count = int(diff.get("catchup_count") or 0)
     runs = list(diff.get("catchup_runs") or [])
     mid = str(planned["manifest_id"])
