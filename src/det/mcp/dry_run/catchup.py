@@ -124,13 +124,14 @@ def silver_catchup_dry_run(
             ),
         ),
         "next_steps": (
-            "Operator: det approve --plan <approval_plan> --approved-by <id>. "
-            "Agent (later turn): det silver-catchup apply "
+            "Show approval_plan, then STOP — do not apply in this turn. "
+            "After operator confirm: det approve --plan <approval_plan> "
+            "--approved-by <id>. Later turn only: det silver-catchup apply "
             f"--manifest-id {mid} --content-digest {digest} --approval <id> "
-            "(or det silver-catchup-plan --apply …). "
-            "Then MCP dbt_dry_run(catchup=True, catchup_manifest=…) → "
-            "show approval_plan, stop; after confirm: det approve; "
-            "later turn: "
+            "(or det silver-catchup-plan --apply …). Apply and build are "
+            "separate approvals: after apply succeeds, MCP "
+            f"dbt_dry_run(catchup=True, catchup_manifest={mid}) → show that "
+            "approval_plan, STOP again; separate approve; later turn: "
             f"det silver-catchup build --manifest-id {mid} --approval <dbt_id> "
             f"(or det dbt --catchup --catchup-manifest {mid} --approval <dbt_id>)."
         ),
@@ -171,8 +172,10 @@ def silver_catchup_cleanup_dry_run(
         "dry_run": True,
         "approval_plan": h.approval_plan("silver-catchup-cleanup", write_argv),
         "next_steps": (
-            "Operator: det approve --plan <approval_plan> --approved-by <id>. "
-            "Agent (later turn): det silver-catchup cleanup --apply "
-            f"{apply_hint} --approval <id>. Heal does not auto-drop these tables."
+            "Show approval_plan, then STOP — do not cleanup --apply in this turn. "
+            "After operator confirm: det approve --plan <approval_plan> "
+            "--approved-by <id>. Later turn only: det silver-catchup cleanup "
+            f"--apply {apply_hint} --approval <id>. Heal does not auto-drop "
+            "these tables."
         ),
     }

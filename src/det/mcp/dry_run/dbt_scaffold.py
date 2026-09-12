@@ -40,7 +40,8 @@ def dbt_dry_run(
     )
     from det.runtime.approval import dbt_write_argv
 
-    return {
+    mid = str(catchup_manifest).strip() if catchup_manifest else ""
+    out: dict[str, Any] = {
         "dry_run": True,
         "command": result.command,
         "select": list(result.select),
@@ -61,6 +62,16 @@ def dbt_dry_run(
             ),
         ),
     }
+    if catchup:
+        out["next_steps"] = (
+            "Show approval_plan, then STOP — do not build/dbt write in this turn. "
+            "Apply and build stay separate approvals. After operator confirm: "
+            "det approve --plan <approval_plan> --approved-by <id>. Later turn "
+            "only: "
+            f"det silver-catchup build --manifest-id {mid} --approval <id> "
+            f"(or det dbt --catchup --catchup-manifest {mid} --approval <id>)."
+        )
+    return out
 
 
 def scaffold_dbt_dry_run(

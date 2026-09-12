@@ -52,6 +52,7 @@ def test_trajectory_fixtures_cover_plan_ids():
         "dlt_pipeline_text",
         "silver_catchup_diff_dry_run_stop",
         "silver_catchup_chain_apply",
+        "silver_catchup_chain_build",
         "silver_catchup_full_refresh_invent",
         "silver_catchup_full_refresh_negated_ok",
         "silver_catchup_full_refresh_after_negation_sentence",

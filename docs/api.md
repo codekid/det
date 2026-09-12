@@ -135,6 +135,13 @@ boundary.** The same shell that runs `det extract --approval` can also run
 - Claiming is atomic (`claim_approval`), so two concurrent runs cannot both
   write against one approval.
 
+**Bound-param lockstep:** mutating Typer flags live in
+`det.runtime.approval_bound.APPROVAL_BOUND_PARAMS` (CLI `_BOUND_PARAMS` is that
+map). Each flag must also be encoded by the matching `*_write_argv` builder in
+`det.runtime.approval` (or listed as CLI-only in `CLI_ONLY_BOUND_PARAMS`).
+Harmless flags stay in CLI `_NEUTRAL_PARAMS`. Tests keep builder signatures,
+Typer params, and the bound map aligned.
+
 **Store:** default is the lake ops root `{ops}/approvals/apr_….json` (shared by
 local CLI and managed Airflow). Opt-in Postgres with `DET_APPROVAL_BACKEND=postgres`
 and `DET_APPROVAL_PG_DSN` (schema/table default `det_approval.approvals`). Legacy
