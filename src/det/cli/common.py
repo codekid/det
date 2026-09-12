@@ -8,7 +8,6 @@ import typer
 
 from det.cli.app import logger
 from det.runtime.approval_bound import APPROVAL_BOUND_PARAMS as _BOUND_PARAMS
-from det.runtime.approval_bound import LAKE_LAYER_PARAMS as _LAKE_LAYER_PARAMS
 
 _PIPELINE_HELP = (
     "Pipeline ref: canonical id (noaa.storm_events), slash form, or YAML path under the project"
