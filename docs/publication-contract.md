@@ -93,9 +93,20 @@ under a schema hash.
 - **Pre-publish fence:** extract (before raw manifest), load/migrate (before
   bronze write), and leased prune call `assert_lease_held`. Lost token /
   version / expired TTL (even with matching token) → `LeaseFencedError`
-  (receipt `lease_fenced`). This authorizes the
-  side effect at the publish boundary; it is not bound into the Iceberg
-  transaction itself, so a residual assert→commit race remains.
+  (receipt `lease_fenced`). This authorizes the side effect at the publish
+  boundary; it is **not** folded into the Iceberg (or object) transaction, so a
+  residual assert→commit window remains if a lease is stolen or force-released
+  between fence and visibility.
+- **Accepted (v1):** that residual window is **documented product doctrine**, not
+  a near-term hardening target. DET does not attempt cross-store XA (lease row +
+  lake object + Iceberg catalog). Close the gap operationally:
+  - Prefer **one writer per pipeline+interval** (e.g. Airflow pool).
+  - Treat the lease as identity mutex **plus** pre-publish fence.
+  - Never `--force` release a lock or approval while a worker may still be alive.
+  - Raise TTL for long extracts (`DET_LOCK_TTL_SEC` / `--lock-ttl-sec`).
+  Binding lease CAS into manifest publish or Iceberg snapshot requirements is a
+  possible future epic — out of scope for v1 unless concurrent writers become a
+  hard requirement.
 - `DET_LOCK=0` disables leases (tests / explicit local break-glass only).
 
 ### Bronze-dataset reader/writer lock
@@ -124,6 +135,8 @@ preconditions (fail closed otherwise). Prefer one writer per pipeline+interval
 (e.g. Airflow pool for capacity) and treat the lease as the identity mutex
 plus pre-publish fence. Do not `--force` release while a worker may still be
 alive. Postgres is the portable strong option when you already run a database.
+The residual fence→publish window under steal/`--force` is **accepted for v1**
+(see pre-publish fence above) — ops discipline is the control, not XA.
 
 ---
 

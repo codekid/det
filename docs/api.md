@@ -216,7 +216,10 @@ Catch `LeaseHeldError` (or `DetConflictError`) when another writer holds the loc
 on acquire; retry or wait — do not disable locks in production (`DET_LOCK=0` is
 for tests). Catch `LeaseFencedError` when a mid-run pre-publish fence fails after
 a steal or force-release (`assert_lease_held`). Soft refresh is best-effort only.
-Default backend is lake files with strong CAS on s3/gs; set
+The fence authorizes publish but is not atomic with Iceberg/object commit; that
+residual window is **accepted for v1** under one-writer-per-interval discipline
+(see [publication-contract.md](publication-contract.md)). Default backend is lake
+files with strong CAS on s3/gs; set
 `DET_LOCK_BACKEND=postgres` (or pipeline `lease.backend`) for an external store.
 Long extracts: raise TTL via `--lock-ttl-sec` / `DET_LOCK_TTL_SEC` / DagRun
 `lock_ttl_sec`. Exclusive recreate waits for shared bronze publishers to finish
