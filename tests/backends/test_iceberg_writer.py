@@ -461,6 +461,79 @@ def test_list_unpartitioned_mixed_bounds_samples_rows(
     assert runs[0][2] == run_a
 
 
+def test_read_planned_parquet_applies_residual_before_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Residual predicates must filter the full file before limit slicing."""
+    from datetime import UTC, datetime
+
+    from pyiceberg.expressions import AlwaysFalse, EqualTo
+    from pyiceberg.table import FileScanTask
+
+    import det.ingestion.iceberg_writer as iw
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    loc = lake / "bronze" / "example_api" / "events_v1"
+    write_iceberg_table(
+        _records(),
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_example_api",
+        table="events_v1",
+        json_schema=_json_schema(),
+        partition="none",
+    )
+    ice = load_iceberg_table(
+        lake=lake,
+        namespace="bronze_example_api",
+        table="events_v1",
+        table_location=loc,
+    )
+    assert ice is not None
+    planned = list(ice.scan().plan_files())
+    assert len(planned) == 1
+    base = planned[0]
+
+    class _Scan:
+        def __init__(self, tasks: list[FileScanTask]) -> None:
+            self._tasks = tasks
+
+        def plan_files(self) -> list[FileScanTask]:
+            return self._tasks
+
+    # AlwaysFalse residual → no rows counted toward limit.
+    false_task = FileScanTask(
+        data_file=base.file,
+        delete_files=set(base.delete_files),
+        residual=AlwaysFalse(),
+    )
+    monkeypatch.setattr(ice, "scan", lambda row_filter=None: _Scan([false_task]))
+    empty = iw._read_planned_parquet(ice, limit=10)
+    assert empty.num_rows == 0
+
+    # Residual that excludes the live extract_run → still empty after filter.
+    other_run = datetime(2026, 8, 6, 16, 0, 0, tzinfo=UTC)
+    mismatch = FileScanTask(
+        data_file=base.file,
+        delete_files=set(base.delete_files),
+        residual=EqualTo("__extract_run_datetime", other_run),
+    )
+    monkeypatch.setattr(ice, "scan", lambda row_filter=None: _Scan([mismatch]))
+    filtered = iw._read_planned_parquet(ice, limit=10)
+    assert filtered.num_rows == 0
+
+    # Matching residual keeps the row (limit still applies after filter).
+    want_run = datetime(2026, 8, 6, 15, 4, 5, tzinfo=UTC)
+    match = FileScanTask(
+        data_file=base.file,
+        delete_files=set(base.delete_files),
+        residual=EqualTo("__extract_run_datetime", want_run),
+    )
+    monkeypatch.setattr(ice, "scan", lambda row_filter=None: _Scan([match]))
+    kept = iw._read_planned_parquet(ice, limit=1)
+    assert kept.num_rows == 1
+
+
 def test_iceberg_partition_none_is_unpartitioned(tmp_path: Path):
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     loc = lake / "bronze" / "example_api" / "events_v1"

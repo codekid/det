@@ -652,6 +652,22 @@ def _scan_row_filter(
     return filt
 
 
+def _apply_residual_filter(piece: Any, residual: Any, iceberg_schema: Any) -> Any:
+    """Apply a scan-task residual predicate to an Arrow table (no-op if always true)."""
+    from pyiceberg.expressions import AlwaysFalse, AlwaysTrue
+    from pyiceberg.expressions.visitors import bind, rewrite_not
+    from pyiceberg.io.pyarrow import expression_to_pyarrow
+
+    if residual is None or residual == AlwaysTrue():
+        return piece
+    bound = bind(iceberg_schema, rewrite_not(residual), case_sensitive=True)
+    if bound == AlwaysTrue():
+        return piece
+    if bound == AlwaysFalse():
+        return piece.slice(0, 0)
+    return piece.filter(expression_to_pyarrow(bound, iceberg_schema))
+
+
 def _read_planned_parquet(
     ice_table: Any,
     *,
@@ -660,12 +676,14 @@ def _read_planned_parquet(
 ) -> Any:
     """Read planned parquet files without PyArrow dataset ``__filename`` collision.
 
-    Stops once ``limit`` rows are collected when set.
+    Applies each task's residual row filter to the full file before counting
+    rows toward ``limit``. Stops once ``limit`` matching rows are collected.
     """
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    target = ice_table.schema().as_arrow()
+    iceberg_schema = ice_table.schema()
+    target = iceberg_schema.as_arrow()
     scan = ice_table.scan(row_filter=row_filter) if row_filter is not None else ice_table.scan()
     tables: list[Any] = []
     total = 0
@@ -679,6 +697,9 @@ def _read_planned_parquet(
             else:
                 cols.append(pa.nulls(raw.num_rows, type=field.type))
         piece = pa.Table.from_arrays(cols, schema=target)
+        piece = _apply_residual_filter(piece, getattr(task, "residual", None), iceberg_schema)
+        if piece.num_rows == 0:
+            continue
         if limit is not None:
             remaining = limit - total
             if remaining <= 0:
