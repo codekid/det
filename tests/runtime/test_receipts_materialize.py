@@ -106,6 +106,46 @@ def test_materialize_replace_by_day_idempotent(tmp_path: Path):
     assert len(ids) == 2
 
 
+def test_materialize_unpartitioned_table_deletes_before_append(tmp_path: Path):
+    """Wrong/missing partition must not skip delete and duplicate rows."""
+    from pyiceberg.partitioning import UNPARTITIONED_PARTITION_SPEC
+
+    from det.ingestion.iceberg_catalog_factory import (
+        ensure_iceberg_namespace,
+        lake_ref_uri,
+        resolve_iceberg_catalog,
+    )
+    from det.ingestion.iceberg_writer import iceberg_schema_from_columns
+    from det.runtime.receipts_materialize import (
+        OPS_COLUMN_TYPES,
+        OPS_NAMESPACE,
+        OPS_TABLE,
+        _ops_partition_matches_attempt_date,
+        ops_run_receipts_location,
+    )
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    loc = ops_run_receipts_location(lake)
+    catalog = resolve_iceberg_catalog(lake)
+    schema = iceberg_schema_from_columns(OPS_COLUMN_TYPES)
+    ensure_iceberg_namespace(catalog, OPS_NAMESPACE, table_location=lake_ref_uri(loc))
+    catalog.create_table(
+        (OPS_NAMESPACE, OPS_TABLE),
+        schema=schema,
+        location=lake_ref_uri(loc),
+        partition_spec=UNPARTITIONED_PARTITION_SPEC,
+    )
+    ice = catalog.load_table((OPS_NAMESPACE, OPS_TABLE))
+    assert not _ops_partition_matches_attempt_date(ice)
+
+    day = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    _write_json_receipt(lake, attempt_id="dup00001", started_at=day)
+    materialize_receipts(lake, since="2026-08-16", until="2026-08-17", now=day)
+    materialize_receipts(lake, since="2026-08-16", until="2026-08-17", now=day)
+    rows = scan_ops_run_receipts(lake)
+    assert [r["attempt_id"] for r in rows] == ["dup00001"]
+
+
 def test_materialize_empty_day_clears_partition(tmp_path: Path):
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     day = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
