@@ -145,13 +145,22 @@ def _day_filter(day: date) -> Any:
 
 
 def _live_attempt_dates(ice_table: Any) -> set[date]:
-    from det.ingestion.iceberg_writer import _live_arrow
-
-    arrow = _live_arrow(ice_table)
-    if arrow.num_rows == 0 or _ATTEMPT_DATE not in arrow.column_names:
+    """Distinct attempt_date values from Iceberg partition metadata."""
+    if ice_table.metadata.current_snapshot() is None:
+        return set()
+    arrow = ice_table.inspect.partitions()
+    if arrow.num_rows == 0 or "partition" not in arrow.column_names:
         return set()
     out: set[date] = set()
-    for value in arrow.column(_ATTEMPT_DATE).to_pylist():
+    for partition in arrow.column("partition").to_pylist():
+        if partition is None:
+            continue
+        if hasattr(partition, "as_py"):
+            partition = partition.as_py()
+        if isinstance(partition, dict):
+            value = partition.get(_ATTEMPT_DATE)
+        else:
+            value = getattr(partition, _ATTEMPT_DATE, None)
         if value is None:
             continue
         if isinstance(value, datetime):
@@ -244,7 +253,11 @@ def scan_ops_run_receipts(
     limit: int = 100,
 ) -> list[dict[str, Any]]:
     """Test helper: read live ops.run_receipts rows."""
-    from det.ingestion.iceberg_writer import _jsonable_cell, _live_arrow, load_iceberg_table
+    from det.ingestion.iceberg_writer import (
+        _jsonable_cell,
+        _read_planned_parquet,
+        load_iceberg_table,
+    )
 
     ice = load_iceberg_table(
         lake=lake,
@@ -254,7 +267,8 @@ def scan_ops_run_receipts(
     )
     if ice is None:
         return []
-    rows = _live_arrow(ice).to_pylist()
+    # Read the full live set, then sort + slice so limit is deterministic.
+    rows = _read_planned_parquet(ice).to_pylist()
     out = [{k: _jsonable_cell(v) for k, v in row.items()} for row in rows]
     out.sort(
         key=lambda r: (str(r.get("attempt_date") or ""), str(r.get("attempt_id") or ""))

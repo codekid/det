@@ -15,7 +15,7 @@ import requests
 
 from det.logging import redact_uri_credentials
 from det.mcp.context import project_root
-from det.mcp.inspect import clamp_sample_limit
+from det.mcp.inspect import DEFAULT_SAMPLE_LIMIT, clamp_sample_limit
 
 DET_DAG_IDS = (
     "det_extract_bronze",
@@ -313,7 +313,7 @@ def list_airflow_dags(*, root: Path | None = None) -> dict[str, Any]:
 def list_airflow_dag_runs(
     dag_id: str,
     *,
-    limit: int = 10,
+    limit: int = DEFAULT_SAMPLE_LIMIT,
     root: Path | None = None,
 ) -> dict[str, Any]:
     settings, err = _resolve_settings(root)

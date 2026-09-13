@@ -24,7 +24,7 @@ def create_server():
             "DET (Data Extract Tool) MCP v1: read-only inspect and dry-run tools. "
             "Inspect: check, diff_partitions, diff_bronze_silver, sample_raw, validate_sample, "
             "sample_bronze, diagnose_pipeline (sample size via limit/sample_limit, "
-            "default 5, max 50). "
+            "default 200, max 1000). "
             "Generate (dry-run): schema_from_sample_dry_run, mapper_from_diff_dry_run. "
             "scaffold_ops_dry_run previews ops dbt models (never writes). "
             "silver_catchup_heal_dry_run is the Mode A (48h) boring-route preview "
@@ -253,7 +253,7 @@ def create_server():
         interval_end: p.IntervalEndOpt = None,
         extract_run_datetime: p.ExtractRunOpt = None,
     ) -> dict[str, Any]:
-        """Sample raw at stage wire|rows|named|coerced (limit default 5, max 50)."""
+        """Sample raw at stage wire|rows|named|coerced (limit default 200, max 1000)."""
         return t.sample_raw(
             pipeline,
             stage=stage,
@@ -278,7 +278,7 @@ def create_server():
         Coerce + JSON Schema validate a capped raw sample; errors returned as data.
 
         Use when load failed with schema_invalid or diagnose_pipeline flagged drift.
-        Raise limit toward 50 for nested APIs so rare extra fields show up.
+        Raise limit toward 1000 for nested APIs so rare extra fields show up.
         """
         return t.validate_sample(
             pipeline,
@@ -299,7 +299,7 @@ def create_server():
         interval_end: p.IntervalEndOpt = None,
         extract_run_datetime: p.ExtractRunOpt = None,
     ) -> dict[str, Any]:
-        """Sample bronze rows (filesystem JSONL or DuckDB/Postgres LIMIT). Inspection only."""
+        """Sample bronze rows (filesystem JSONL, DuckDB/Postgres LIMIT, or Iceberg via DuckDB iceberg_scan). Inspection only."""
         return t.sample_bronze(
             pipeline,
             limit=limit,
@@ -372,8 +372,8 @@ def create_server():
         return t.list_airflow_dags()
 
     @mcp.tool()
-    def list_airflow_dag_runs(dag_id: p.DagId, limit: p.DagRunLimit = 10) -> dict[str, Any]:
-        """Recent DagRuns for one DAG (limit default 10, max 50). Read-only."""
+    def list_airflow_dag_runs(dag_id: p.DagId, limit: p.DagRunLimit = t.DEFAULT_SAMPLE_LIMIT) -> dict[str, Any]:
+        """Recent DagRuns for one DAG (limit default 200, max 1000). Read-only."""
         return t.list_airflow_dag_runs(dag_id, limit=limit)
 
     @mcp.tool()

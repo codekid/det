@@ -9,7 +9,7 @@ contract documented here.
 | **`wire_version`** | Dataset era for one pipeline (`{name}_vN`) | True wire/parse breaks; rebuild raw with `det migrate` | Pipeline YAML, manifest, receipt |
 | **`receipt_version`** | JSON shape under `{ops}/runs/` | Receipt schema breaking changes | Run receipt JSON only |
 
-Package semver (`det` `0.10.2` in `pyproject.toml`) is **not** lake layout. A DET
+Package semver (`det` `0.10.3` in `pyproject.toml`) is **not** lake layout. A DET
 release can ship without changing `LAKE_LAYOUT`.
 
 Code constant: `det.runtime.layout.LAKE_LAYOUT` (currently **2**). Writers stamp
@@ -145,7 +145,9 @@ do **not** require a layout bump.
   location under the bronze root stays layout 2. See
   [iceberg-catalog.md](iceberg-catalog.md) for `DET_ICEBERG_CATALOG`.
 - Iceberg **partition spec** (`destination.partition: extract_run` \| `none`) —
-  create-time table property, not hive path keys. Changing it does not rename
+  create-time table property, not hive path keys. `extract_run` means identity
+  on `__interval_start_datetime`, `__interval_end_datetime`, then
+  `__extract_run_datetime` (same grain as raw hive). Changing it does not rename
   raw/bronze directories. Live mismatch **hard-fails** load/migrate until
   `det migrate … --recreate-iceberg` (purges the bronze table, then rewrites
   latest raw per interval in `-s`/`-e`, or `--all-raw` for every interval) or a

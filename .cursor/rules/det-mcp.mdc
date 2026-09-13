@@ -40,7 +40,7 @@ YAML path) and the interval form (`2026-08-06` vs `2026-08-06T00:00:00+00:00`)
 do not affect the digest.
 
 Sample size for `sample_*` / `validate_sample` / `schema_from_sample_dry_run` is
-`limit` (default **5** for sample/validate, up to **50**). `diagnose_pipeline`
+`limit` (default **200** for sample/validate, up to **1000**). `diagnose_pipeline`
 uses `sample_limit` the same way.
 
 **Not in MCP v1 — use CLI deliberately:** `det extract` / `load` / `run`,

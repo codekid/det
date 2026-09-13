@@ -162,7 +162,8 @@ There is **no** `destination.type: bigquery`. On `gs://`, bronze stays Iceberg;
 BQ is a reader (BigLake), not a DET lander.
 
 Iceberg-only: `destination.partition` is `extract_run` (default — identity on
-`__extract_run_datetime` for load replace / silver watermark) or `none`
+`__interval_start_datetime`, `__interval_end_datetime`, and
+`__extract_run_datetime`, same grain as raw hive) or `none`
 (unpartitioned; use for small tables). Spec applies on **create** only. Live
 mismatch **hard-fails** until `det migrate … --recreate-iceberg` (full table
 purge, then rewrite `-s`/`-e` or `--all-raw`; latest raw per interval unless

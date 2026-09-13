@@ -19,13 +19,13 @@ Install: `uv pip install -e ".[mcp]"`.
 
 1. `list_pipelines` (MCP) or `det list-pipelines` → pick a canonical id (`noaa.storm_events`).
 2. Prefer `diagnose_pipeline` with optional `interval_start` / `interval_end` and
-   `sample_limit` (default 5, max 50).
+   `sample_limit` (default 200, max 1000).
 3. Read `findings` codes (`empty_lake`, `raw_without_bronze`, `bronze_without_raw`,
    `schema_invalid`, `ok`) and `suggested_commands` (do not run until user confirms).
 4. Dig deeper if needed:
    - `diff_partitions` — raw vs bronze extract-run coverage
    - `sample_raw` (`stage`: wire|rows|named|coerced) — adjust `limit` up/down
-   - `validate_sample` — coerce/schema errors as data (raise `limit` toward 50 for
+   - `validate_sample` — coerce/schema errors as data (raise `limit` toward 1000 for
      nested/noisy APIs so rare extra fields show up)
    - `sample_bronze` — landed rows (FS / Iceberg / DuckDB / Postgres); inspection only
    - `read_manifest` on a raw run path
@@ -148,14 +148,14 @@ A paused extract DAG cannot self-check; `det_ops_receipts` is the walk-through.
 ### Validation ladder
 
 `validate_sample` runs the **same coerce + JSON Schema path as load** (no writes).
-A 50-row cap is a **sample**, not proof the partition is clean. Load stays
+A capped sample is **not** proof the partition is clean. Load stays
 **fail-closed** — there is no quarantine; fix wire/schema/mapper.
 
 | Step | Action | Gate |
 | --- | --- | --- |
-| 1 | `diagnose_pipeline` + `validate_sample` **`limit=50`** | — |
+| 1 | `diagnose_pipeline` + `validate_sample` **`limit=200`** (default) | — |
 | 2 | `validate_sample` on other runs from `diff_partitions` | — |
-| 3 | `migrate_dry_run` **`validate_limit=50`** (default) | — |
+| 3 | `migrate_dry_run` **`validate_limit=1000`** (default) | — |
 | 4 | User confirms; set **`DET_ALLOW_FULL_VALIDATE=1`**; `migrate_dry_run` **`validate_limit=0`** + **`confirm_full_validate=true`** | **Required** |
 | 4b | Operator alternative: CLI `det migrate --dry-run` without `--validate-limit` | No MCP env gate |
 | 5 | Fix schema / `@mapper`; repeat 3–4 until `ok=true` | — |
@@ -171,7 +171,7 @@ Notes:
 - Full validate cannot run quietly: missing `confirm_full_validate` or env → hard error.
 
 1. Read the validation errors (unexpected property, type, required). Prefer a
-   **representative** sample — bump `limit` / `sample_limit` (max 50); a 5-row
+   **representative** sample — bump `limit` / `sample_limit` (max 1000); a small
    peek often misses nested extras (e.g. `availability.*`).
 2. Inspect with `sample_raw` (`stage`: `rows` or `coerced`) on the same interval.
 3. Decide with the user: add properties to `schemas/…/*.schema.yaml`, or

@@ -317,7 +317,7 @@ def test_version_hint_is_duckdb_stem_not_file_uri(tmp_path: Path):
     assert n >= 1
 
 
-def test_iceberg_partition_extract_run_is_single_identity(tmp_path: Path):
+def test_iceberg_partition_extract_run_is_triple_identity(tmp_path: Path):
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     loc = lake / "bronze" / "noaa" / "storm_events_v1"
     write_iceberg_table(
@@ -334,10 +334,45 @@ def test_iceberg_partition_extract_run_is_single_identity(tmp_path: Path):
     )
     assert ice is not None
     fields = list(ice.spec().fields)
-    assert len(fields) == 1
-    src = ice.schema().find_field(fields[0].source_id)
-    assert src.name == "__extract_run_datetime"
-    assert str(fields[0].transform) == "identity"
+    assert len(fields) == 3
+    names = [ice.schema().find_field(f.source_id).name for f in fields]
+    assert names == [
+        "__interval_start_datetime",
+        "__interval_end_datetime",
+        "__extract_run_datetime",
+    ]
+    assert all(str(f.transform) == "identity" for f in fields)
+
+
+def test_list_iceberg_extract_runs_uses_partitions_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Listing must not open data files when the table is partitioned."""
+    import det.ingestion.iceberg_writer as iw
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    loc = lake / "bronze" / "noaa" / "storm_events_v1"
+    write_iceberg_table(
+        _records(),
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_noaa",
+        table="storm_events_v1",
+        json_schema=_json_schema(),
+        partition="extract_run",
+    )
+    ice = load_iceberg_table(
+        lake=lake, namespace="bronze_noaa", table="storm_events_v1", table_location=loc
+    )
+    assert ice is not None
+
+    def _boom(*_a, **_k):
+        raise AssertionError("list must not read planned parquet files")
+
+    monkeypatch.setattr(iw, "_read_planned_parquet", _boom)
+    runs = list_iceberg_extract_runs(ice)
+    assert len(runs) == 1
+    assert runs[0][2] == "2026-08-06T15:04:05+00:00"
 
 
 def test_iceberg_partition_none_is_unpartitioned(tmp_path: Path):
@@ -425,7 +460,7 @@ def test_iceberg_hard_fails_when_yaml_partition_mismatches(tmp_path: Path):
         lake=lake, namespace="bronze_noaa", table="storm_events_v1", table_location=loc
     )
     assert ice is not None
-    assert len(list(ice.spec().fields)) == 1
+    assert len(list(ice.spec().fields)) == 3
 
 
 def test_purge_and_recreate_applies_yaml_partition(tmp_path: Path):

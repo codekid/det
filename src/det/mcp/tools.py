@@ -410,7 +410,7 @@ def sample_bronze(
     extract_run_datetime: str | None = None,
     root: Path | None = None,
 ) -> dict[str, Any]:
-    """Sample landed bronze rows (filesystem JSONL or SQL LIMIT). Inspection only."""
+    """Sample landed bronze rows (filesystem JSONL, SQL LIMIT, or Iceberg iceberg_scan). Inspection only."""
     h.prepare_tool()
     return h.insp.sample_bronze(
         pipeline,
@@ -499,10 +499,10 @@ def list_airflow_dags(*, root: Path | None = None) -> dict[str, Any]:
 def list_airflow_dag_runs(
     dag_id: str,
     *,
-    limit: int = 10,
+    limit: int = DEFAULT_SAMPLE_LIMIT,
     root: Path | None = None,
 ) -> dict[str, Any]:
-    """List recent DagRuns for one DAG (read-only)."""
+    """List recent DagRuns for one DAG (read-only; default 200, max 1000)."""
     return af.list_airflow_dag_runs(dag_id, limit=limit, root=root)
 
 

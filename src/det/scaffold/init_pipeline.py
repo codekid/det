@@ -120,7 +120,7 @@ def init_pipeline(
 
     dest: dict = {"type": destination_type}
     if destination_type == "iceberg":
-        # Default extract_run (identity on __extract_run_datetime). Small /
+        # Default extract_run = identity(start, end, extract_run). Small /
         # reference sources should set partition: none.
         dest["partition"] = "extract_run"
     if destination_type in {"duckdb", "postgres"}:

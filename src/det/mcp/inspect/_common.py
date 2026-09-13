@@ -44,8 +44,8 @@ __all__ = [
     "walk_hive_runs",
 ]
 
-DEFAULT_SAMPLE_LIMIT = 5
-MAX_SAMPLE_LIMIT = 50
+DEFAULT_SAMPLE_LIMIT = 200
+MAX_SAMPLE_LIMIT = 1000
 MAX_WIRE_CHARS = 4000
 
 SampleStage = Literal["wire", "rows", "named", "coerced"]
@@ -53,14 +53,14 @@ RUN_KEY_FIELDS = ("interval_start", "interval_end", "extract_run_datetime")
 
 
 def clamp_sample_limit(limit: int | None = None) -> int:
-    """Caller-controlled sample size; default 5, clamped to 1..50."""
+    """Caller-controlled sample size; default 200, clamped to 1..1000."""
     if limit is None:
         return DEFAULT_SAMPLE_LIMIT
     return max(1, min(int(limit), MAX_SAMPLE_LIMIT))
 
 
 def resolve_migrate_validate_limit(limit: int) -> int | None:
-    """Map MCP migrate_dry_run validate_limit: 0 → full partition, 1–50 → clamp."""
+    """Map MCP migrate_dry_run validate_limit: 0 → full partition, 1–1000 → clamp."""
     value = int(limit)
     if value == 0:
         return None

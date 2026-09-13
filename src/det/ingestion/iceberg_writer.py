@@ -143,7 +143,8 @@ def iceberg_schema_from_columns(columns: list[tuple[str, str]]):
 def partition_spec_for(mode: IcebergPartition, schema):
     """Build Iceberg PartitionSpec for YAML ``destination.partition``.
 
-    ``extract_run`` — identity on ``__extract_run_datetime`` only (ETL prune).
+    ``extract_run`` — identity on interval start, interval end, then extract run
+    (same grain as raw hive; inspect/prune keys).
     ``none`` — unpartitioned.
     """
     from pyiceberg.partitioning import (
@@ -155,15 +156,18 @@ def partition_spec_for(mode: IcebergPartition, schema):
 
     if mode == "none":
         return UNPARTITIONED_PARTITION_SPEC
-    src = schema.find_field(_RUN)
-    return PartitionSpec(
-        PartitionField(
-            source_id=src.field_id,
-            field_id=1000,
-            transform=IdentityTransform(),
-            name=_RUN,
+    fields = []
+    for i, col in enumerate((_START, _END, _RUN), start=1000):
+        src = schema.find_field(col)
+        fields.append(
+            PartitionField(
+                source_id=src.field_id,
+                field_id=i,
+                transform=IdentityTransform(),
+                name=col,
+            )
         )
-    )
+    return PartitionSpec(*fields)
 
 
 def _live_partition_summary(table: Any) -> str:
@@ -182,7 +186,7 @@ def _live_partition_summary(table: Any) -> str:
 def _expected_partition_summary(mode: IcebergPartition) -> str:
     if mode == "none":
         return "none"
-    return f"identity({_RUN})"
+    return ",".join(f"identity({c})" for c in (_START, _END, _RUN))
 
 
 def purge_iceberg_table(
@@ -460,27 +464,86 @@ def write_iceberg_table(
     return table_location
 
 
-def _live_arrow(ice_table: Any):
-    """Read live snapshot parquet without PyArrow dataset ``__filename`` collision."""
-    import pyarrow as pa
-    import pyarrow.parquet as pq
+def _partition_value_iso(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return identity_iso(value)
+    if isinstance(value, date):
+        return value.isoformat()
+    text = str(value).strip()
+    return identity_iso(text) if text else None
 
-    target = ice_table.schema().as_arrow()
-    tables = []
-    for task in ice_table.scan().plan_files():
-        with ice_table.io.new_input(task.file.file_path).open() as fh:
-            raw = pq.ParquetFile(fh).read()
-        cols = []
-        for field in target:
-            if field.name in raw.column_names:
-                cols.append(raw.column(field.name).cast(field.type))
-            else:
-                cols.append(pa.nulls(raw.num_rows, type=field.type))
-        tables.append(pa.Table.from_arrays(cols, schema=target))
-    if not tables:
-        names = [f.name for f in ice_table.schema().fields]
-        return pa.table({n: [] for n in names})
-    return pa.concat_tables(tables)
+
+def _identity_from_partition_struct(partition: Any) -> tuple[str, str, str] | None:
+    """Map Iceberg partition struct / dict to DET run identity."""
+    if partition is None:
+        return None
+    if hasattr(partition, "as_py"):
+        partition = partition.as_py()
+    if isinstance(partition, dict):
+        start = _partition_value_iso(partition.get(_START))
+        end = _partition_value_iso(partition.get(_END))
+        run = _partition_value_iso(partition.get(_RUN))
+    else:
+        # Named tuple / Record-like: attribute access by field name.
+        start = _partition_value_iso(getattr(partition, _START, None))
+        end = _partition_value_iso(getattr(partition, _END, None))
+        run = _partition_value_iso(getattr(partition, _RUN, None))
+    if start is None or end is None or run is None:
+        return None
+    return (start, end, run)
+
+
+def _identities_from_partitions_table(ice_table: Any) -> list[tuple[str, str, str]]:
+    """List run identities from ``inspect.partitions()`` (metadata only)."""
+    arrow = ice_table.inspect.partitions()
+    if arrow.num_rows == 0 or "partition" not in arrow.column_names:
+        return []
+    seen: set[tuple[str, str, str]] = set()
+    out: list[tuple[str, str, str]] = []
+    for partition in arrow.column("partition").to_pylist():
+        ident = _identity_from_partition_struct(partition)
+        if ident is None or ident in seen:
+            continue
+        seen.add(ident)
+        out.append(ident)
+    return out
+
+
+def _identities_from_file_bounds(ice_table: Any) -> list[tuple[str, str, str]]:
+    """Unpartitioned fallback: distinct identities from file column bounds.
+
+    DET writes one identity per file, so lower_bound == upper_bound for the
+    three identity columns. Mixed-bound files (compaction) are skipped here;
+    callers that need those rows should use a bounded scan.
+    """
+    arrow = ice_table.inspect.files()
+    if arrow.num_rows == 0 or "readable_metrics" not in arrow.column_names:
+        return []
+    seen: set[tuple[str, str, str]] = set()
+    out: list[tuple[str, str, str]] = []
+    for metrics in arrow.column("readable_metrics").to_pylist():
+        if not isinstance(metrics, dict):
+            continue
+        vals: list[str] = []
+        mixed = False
+        for col in (_START, _END, _RUN):
+            cell = metrics.get(col) or {}
+            lo = _partition_value_iso(cell.get("lower_bound"))
+            hi = _partition_value_iso(cell.get("upper_bound"))
+            if lo is None or hi is None or lo != hi:
+                mixed = True
+                break
+            vals.append(lo)
+        if mixed:
+            continue
+        ident = (vals[0], vals[1], vals[2])
+        if ident in seen:
+            continue
+        seen.add(ident)
+        out.append(ident)
+    return out
 
 
 def list_iceberg_extract_runs(
@@ -491,28 +554,23 @@ def list_iceberg_extract_runs(
     extract_run_since: str | None = None,
     limit: int | None = None,
 ) -> list[tuple[str, str, str]]:
-    cols = (_START, _END, _RUN)
-    arrow = _live_arrow(ice_table)
-    seen: set[tuple[str, str, str]] = set()
-    out: list[tuple[str, str, str]] = []
-    as_dict = arrow.to_pydict()
-    n = arrow.num_rows
+    """List distinct extract-run identities from Iceberg metadata (not Parquet)."""
+    if ice_table.metadata.current_snapshot() is None:
+        return []
+    if list(ice_table.spec().fields):
+        candidates = _identities_from_partitions_table(ice_table)
+    else:
+        candidates = _identities_from_file_bounds(ice_table)
+
     since = identity_iso(extract_run_since) if extract_run_since else None
-    for i in range(n):
-        ident = (
-            identity_iso(as_dict[cols[0]][i]),
-            identity_iso(as_dict[cols[1]][i]),
-            identity_iso(as_dict[cols[2]][i]),
-        )
-        if ident in seen:
-            continue
+    out: list[tuple[str, str, str]] = []
+    for ident in candidates:
         if window_start is not None:
             end = window_end if window_end is not None else ident[0] + "\uffff"
             if not (window_start <= ident[0] < end):
                 continue
         if since is not None and ident[2] < since:
             continue
-        seen.add(ident)
         out.append(ident)
     out.sort()
     if limit is not None:
@@ -524,6 +582,81 @@ def delete_iceberg_extract_run(ice_table: Any, identity: tuple[str, str, str]) -
     ice_table.delete(delete_filter=_run_filter(identity))
 
 
+def _scan_row_filter(
+    *,
+    interval_start: str | None,
+    interval_end: str | None,
+    extract_run_datetime: str | None,
+    extract_run_since: str | None = None,
+) -> Any:
+    """Build a PyIceberg BooleanExpression, or None for an unfiltered scan."""
+    from pyiceberg.expressions import And, EqualTo, GreaterThanOrEqual, LessThan
+
+    from det.runtime.meta import resolve_interval, to_interval_datetime
+
+    parts: list[Any] = []
+    if interval_start is not None:
+        window = resolve_interval(interval_start, interval_end)
+        parts.append(GreaterThanOrEqual(_START, _as_utc_datetime(window[0])))  # type: ignore[call-arg]
+        parts.append(LessThan(_START, _as_utc_datetime(window[1])))  # type: ignore[call-arg]
+    if extract_run_datetime is not None:
+        want = to_interval_datetime(extract_run_datetime)
+        parts.append(EqualTo(_RUN, _as_utc_datetime(want)))  # type: ignore[call-arg]
+    elif extract_run_since is not None:
+        parts.append(
+            GreaterThanOrEqual(_RUN, _as_utc_datetime(extract_run_since))  # type: ignore[call-arg]
+        )
+    if not parts:
+        return None
+    filt: Any = parts[0]
+    for part in parts[1:]:
+        filt = And(filt, part)  # type: ignore[call-arg]
+    return filt
+
+
+def _read_planned_parquet(
+    ice_table: Any,
+    *,
+    row_filter: Any = None,
+    limit: int | None = None,
+) -> Any:
+    """Read planned parquet files without PyArrow dataset ``__filename`` collision.
+
+    Stops once ``limit`` rows are collected when set.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    target = ice_table.schema().as_arrow()
+    scan = ice_table.scan(row_filter=row_filter) if row_filter is not None else ice_table.scan()
+    tables: list[Any] = []
+    total = 0
+    for task in scan.plan_files():
+        with ice_table.io.new_input(task.file.file_path).open() as fh:
+            raw = pq.ParquetFile(fh).read()
+        cols = []
+        for field in target:
+            if field.name in raw.column_names:
+                cols.append(raw.column(field.name).cast(field.type))
+            else:
+                cols.append(pa.nulls(raw.num_rows, type=field.type))
+        piece = pa.Table.from_arrays(cols, schema=target)
+        if limit is not None:
+            remaining = limit - total
+            if remaining <= 0:
+                break
+            if piece.num_rows > remaining:
+                piece = piece.slice(0, remaining)
+        tables.append(piece)
+        total += piece.num_rows
+        if limit is not None and total >= limit:
+            break
+    if not tables:
+        names = [f.name for f in ice_table.schema().fields]
+        return pa.table({n: [] for n in names})
+    return pa.concat_tables(tables)
+
+
 def scan_iceberg_rows(
     ice_table: Any,
     *,
@@ -531,10 +664,24 @@ def scan_iceberg_rows(
     interval_start: str | None = None,
     interval_end: str | None = None,
     extract_run_datetime: str | None = None,
+    extract_run_since: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Bounded row sample: push filters into Iceberg scan, stop at ``limit``."""
     from det.runtime.meta import resolve_interval, to_interval_datetime
 
-    arrow = _live_arrow(ice_table)
+    row_filter = _scan_row_filter(
+        interval_start=interval_start,
+        interval_end=interval_end,
+        extract_run_datetime=extract_run_datetime,
+        extract_run_since=extract_run_since,
+    )
+    # Filtered: hard-stop while reading. Unfiltered (soaks): read planned files,
+    # then sort + slice — tables are tiny in tests.
+    arrow = _read_planned_parquet(
+        ice_table,
+        row_filter=row_filter,
+        limit=limit if row_filter is not None else None,
+    )
     rows = arrow.to_pylist()
     window: tuple[str, str] | None = None
     if interval_start is not None:
@@ -542,12 +689,16 @@ def scan_iceberg_rows(
     want_run = (
         to_interval_datetime(extract_run_datetime) if extract_run_datetime else None
     )
+    since = identity_iso(extract_run_since) if extract_run_since else None
     matched: list[dict[str, Any]] = []
     for row in rows:
         start = identity_iso(row.get(_START))
         if window is not None and not (window[0] <= start < window[1]):
             continue
-        if want_run is not None and identity_iso(row.get(_RUN)) != want_run:
+        run = identity_iso(row.get(_RUN))
+        if want_run is not None and run != want_run:
+            continue
+        if since is not None and run < since:
             continue
         matched.append({k: _jsonable_cell(v) for k, v in row.items()})
     matched.sort(

@@ -123,9 +123,9 @@ def _write_example_raw(
 
 
 def test_clamp_sample_limit():
-    assert clamp_sample_limit(None) == 5
+    assert clamp_sample_limit(None) == 200
     assert clamp_sample_limit(0) == 1
-    assert clamp_sample_limit(999) == MAX_SAMPLE_LIMIT
+    assert clamp_sample_limit(9999) == MAX_SAMPLE_LIMIT
     assert clamp_sample_limit(10) == 10
 
 
@@ -555,6 +555,7 @@ def test_sample_bronze_postgres_reports_an_unset_secret(monkeypatch, tmp_path: P
 def test_sample_bronze_iceberg(tmp_path: Path):
     pytest.importorskip("pyiceberg")
     pytest.importorskip("pyarrow")
+    pytest.importorskip("duckdb")
     from det.destinations.models import bronze_dataset_dir, lake_root
     from det.ingestion.iceberg_writer import write_iceberg_table
     from det.mcp.inspect import list_bronze_runs
@@ -602,15 +603,29 @@ def test_sample_bronze_iceberg(tmp_path: Path):
             },
         },
     )
+    # Fixture run is older than the default 7d lookback → latest-partition fallback.
     sample = sample_bronze("example_api.events", limit=1, root=tmp_path)
     assert sample["destination_type"] == "iceberg"
+    assert sample.get("errors") == []
     assert len(sample["rows"]) == 1
     assert sample["truncated"] is True
-    assert sample["rows"][0]["data"]["id"] == 1
+    assert sample["rows"][0]["data"]["id"] in {1, 2}
+    assert "latest extract_run=" in (sample.get("note") or "")
     runs, note = list_bronze_runs(config, root=tmp_path, limit=10)
     assert note is None
     assert len(runs) == 1
     assert runs[0]["extract_run_datetime"] == "2026-08-06T10:00:00+00:00"
+
+    filtered = sample_bronze(
+        "example_api.events",
+        limit=5,
+        interval_start=start,
+        interval_end=end,
+        root=tmp_path,
+    )
+    assert filtered.get("errors") == []
+    assert len(filtered["rows"]) == 2
+    assert filtered["truncated"] is False
 
 
 def test_diagnose_raw_ahead(tmp_path: Path):

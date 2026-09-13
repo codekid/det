@@ -157,7 +157,7 @@ def schema_from_sample_dry_run(
     interval_end: str | None = None,
     extract_run_datetime: str | None = None,
     records: list[dict[str, Any]] | None = None,
-    limit: int = 50,
+    limit: int = 1000,
     schema_out: str | None = None,
     root: Path | None = None,
 ) -> dict[str, Any]:
@@ -166,8 +166,10 @@ def schema_from_sample_dry_run(
 
     Dry-run only — never writes ``schema_out``.
     """
+    from det.mcp.inspect import MAX_SAMPLE_LIMIT
+
     base = _root(root)
-    capped = clamp_sample_limit(limit)
+    capped = clamp_sample_limit(limit if limit is not None else MAX_SAMPLE_LIMIT)
     title: str | None = None
     would_write: str
 

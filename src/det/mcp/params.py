@@ -106,7 +106,7 @@ RunPathOpt = Annotated[
 ]
 SampleLimit = Annotated[
     int,
-    Field(description="Row sample size (max 50)", ge=1),
+    Field(description="Row sample size (default 200, max 1000)", ge=1),
 ]
 ListLimit = Annotated[
     int,
@@ -204,7 +204,7 @@ ValidateLimit = Annotated[
     Field(
         description=(
             "Max rows to coerce+validate per partition in the migrate preview. "
-            "Default 50; use 0 for full-partition (requires confirm_full_validate "
+            "Default 1000; use 0 for full-partition (requires confirm_full_validate "
             "and DET_ALLOW_FULL_VALIDATE=1; capped at 100k rows per partition)"
         )
     ),
@@ -214,7 +214,7 @@ ConfirmFullValidate = Annotated[
     Field(
         description=(
             "Required with validate_limit=0 after validate_sample / "
-            "validate_limit=50 and user confirmation"
+            "validate_limit=1000 and user confirmation"
         )
     ),
 ]
@@ -263,7 +263,7 @@ DagId = Annotated[
 ]
 DagRunLimit = Annotated[
     int,
-    Field(description="Max DagRuns to return (default 10, max 50)", ge=1),
+    Field(description="Max DagRuns to return (default 200, max 1000)", ge=1),
 ]
 ReceiptSinceOpt = Annotated[
     str | None,
