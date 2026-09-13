@@ -511,18 +511,47 @@ def _identities_from_partitions_table(ice_table: Any) -> list[tuple[str, str, st
     return out
 
 
+# Cap row reads when file bounds mix identities (e.g. after compaction).
+_MIXED_BOUNDS_SAMPLE_ROWS = 2000
+
+
+def _identities_from_bounded_row_sample(
+    ice_table: Any, *, limit: int
+) -> list[tuple[str, str, str]]:
+    """Distinct run identities from a bounded parquet sample (not full table)."""
+    arrow = _read_planned_parquet(ice_table, limit=limit)
+    if arrow.num_rows == 0:
+        return []
+    seen: set[tuple[str, str, str]] = set()
+    out: list[tuple[str, str, str]] = []
+    as_dict = arrow.to_pydict()
+    for i in range(arrow.num_rows):
+        start = _partition_value_iso(as_dict[_START][i])
+        end = _partition_value_iso(as_dict[_END][i])
+        run = _partition_value_iso(as_dict[_RUN][i])
+        if start is None or end is None or run is None:
+            continue
+        ident = (start, end, run)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        out.append(ident)
+    return out
+
+
 def _identities_from_file_bounds(ice_table: Any) -> list[tuple[str, str, str]]:
     """Unpartitioned fallback: distinct identities from file column bounds.
 
     DET writes one identity per file, so lower_bound == upper_bound for the
-    three identity columns. Mixed-bound files (compaction) are skipped here;
-    callers that need those rows should use a bounded scan.
+    three identity columns. Mixed-bound files (compaction) fall back to a
+    bounded row sample so listing stays non-empty after rewrite.
     """
     arrow = ice_table.inspect.files()
     if arrow.num_rows == 0 or "readable_metrics" not in arrow.column_names:
         return []
     seen: set[tuple[str, str, str]] = set()
     out: list[tuple[str, str, str]] = []
+    saw_mixed = False
     for metrics in arrow.column("readable_metrics").to_pylist():
         if not isinstance(metrics, dict):
             continue
@@ -537,12 +566,21 @@ def _identities_from_file_bounds(ice_table: Any) -> list[tuple[str, str, str]]:
                 break
             vals.append(lo)
         if mixed:
+            saw_mixed = True
             continue
         ident = (vals[0], vals[1], vals[2])
         if ident in seen:
             continue
         seen.add(ident)
         out.append(ident)
+    if saw_mixed:
+        for ident in _identities_from_bounded_row_sample(
+            ice_table, limit=_MIXED_BOUNDS_SAMPLE_ROWS
+        ):
+            if ident in seen:
+                continue
+            seen.add(ident)
+            out.append(ident)
     return out
 
 

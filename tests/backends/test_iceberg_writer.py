@@ -375,6 +375,92 @@ def test_list_iceberg_extract_runs_uses_partitions_metadata(
     assert runs[0][2] == "2026-08-06T15:04:05+00:00"
 
 
+def test_list_unpartitioned_mixed_bounds_samples_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Compaction-style mixed file bounds must not hide extract runs."""
+    import pyarrow as pa
+
+    import det.ingestion.iceberg_writer as iw
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    loc = lake / "bronze" / "example_api" / "events_v1"
+    write_iceberg_table(
+        _records(),
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_example_api",
+        table="events_v1",
+        json_schema=_json_schema(),
+        partition="none",
+    )
+    ice = load_iceberg_table(
+        lake=lake,
+        namespace="bronze_example_api",
+        table="events_v1",
+        table_location=loc,
+    )
+    assert ice is not None
+
+    start = "2026-08-06T00:00:00+00:00"
+    end = "2026-08-07T00:00:00+00:00"
+    run_a = "2026-08-06T15:04:05+00:00"
+    run_b = "2026-08-06T16:00:00+00:00"
+
+    def _mixed_files():
+        return pa.table(
+            {
+                "readable_metrics": [
+                    {
+                        "__interval_start_datetime": {
+                            "lower_bound": start,
+                            "upper_bound": start,
+                        },
+                        "__interval_end_datetime": {
+                            "lower_bound": end,
+                            "upper_bound": end,
+                        },
+                        # Mixed extract-run bounds (as after compaction).
+                        "__extract_run_datetime": {
+                            "lower_bound": run_a,
+                            "upper_bound": run_b,
+                        },
+                    }
+                ]
+            }
+        )
+
+    sample_calls = {"n": 0}
+    real_read = iw._read_planned_parquet
+
+    def _tracking_read(ice_table, *args, **kwargs):
+        sample_calls["n"] += 1
+        # Unwrap proxy so parquet IO uses the real table.
+        inner = getattr(ice_table, "_inner", ice_table)
+        return real_read(inner, *args, **kwargs)
+
+    class _MixedInspect:
+        def files(self):
+            return _mixed_files()
+
+    class _TableProxy:
+        def __init__(self, inner: object) -> None:
+            object.__setattr__(self, "_inner", inner)
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+        @property
+        def inspect(self) -> _MixedInspect:
+            return _MixedInspect()
+
+    monkeypatch.setattr(iw, "_read_planned_parquet", _tracking_read)
+    runs = list_iceberg_extract_runs(_TableProxy(ice))
+    assert sample_calls["n"] == 1
+    assert len(runs) >= 1
+    assert runs[0][2] == run_a
+
+
 def test_iceberg_partition_none_is_unpartitioned(tmp_path: Path):
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     loc = lake / "bronze" / "example_api" / "events_v1"
