@@ -494,8 +494,9 @@ def _score_full_validate_gating(trace: Trace) -> list[Violation]:
         args = event.arguments or {}
         raw_limit = args.get("validate_limit", MAX_SAMPLE_LIMIT)
         if raw_limit != 0:
-            # Any capped migrate validate counts as the sample ladder.
-            if isinstance(raw_limit, int) and 1 <= raw_limit <= MAX_SAMPLE_LIMIT:
+            # Only the max capped migrate validate counts as the sample ladder
+            # (not a tiny probe like validate_limit=1).
+            if raw_limit == MAX_SAMPLE_LIMIT:
                 had_ladder = True
             continue
         if not args.get("confirm_full_validate"):
@@ -517,7 +518,8 @@ def _score_full_validate_gating(trace: Trace) -> list[Violation]:
                     turn=turn_i,
                     detail=(
                         "migrate_dry_run validate_limit=0 without prior "
-                        f"validate_sample or migrate_dry_run validate_limit=1..{MAX_SAMPLE_LIMIT}"
+                        "validate_sample or migrate_dry_run "
+                        f"validate_limit={MAX_SAMPLE_LIMIT}"
                     ),
                 )
             )
