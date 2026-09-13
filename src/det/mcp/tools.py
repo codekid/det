@@ -410,7 +410,7 @@ def sample_bronze(
     extract_run_datetime: str | None = None,
     root: Path | None = None,
 ) -> dict[str, Any]:
-    """Sample landed bronze rows (filesystem JSONL, SQL LIMIT, or Iceberg iceberg_scan). Inspection only."""
+    """Sample landed bronze rows (JSONL, SQL LIMIT, or Iceberg). Inspection only."""
     h.prepare_tool()
     return h.insp.sample_bronze(
         pipeline,

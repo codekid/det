@@ -299,7 +299,7 @@ def create_server():
         interval_end: p.IntervalEndOpt = None,
         extract_run_datetime: p.ExtractRunOpt = None,
     ) -> dict[str, Any]:
-        """Sample bronze rows (filesystem JSONL, DuckDB/Postgres LIMIT, or Iceberg via DuckDB iceberg_scan). Inspection only."""
+        """Sample bronze rows (JSONL, SQL LIMIT, or Iceberg). Inspection only."""
         return t.sample_bronze(
             pipeline,
             limit=limit,
@@ -372,7 +372,10 @@ def create_server():
         return t.list_airflow_dags()
 
     @mcp.tool()
-    def list_airflow_dag_runs(dag_id: p.DagId, limit: p.DagRunLimit = t.DEFAULT_SAMPLE_LIMIT) -> dict[str, Any]:
+    def list_airflow_dag_runs(
+        dag_id: p.DagId,
+        limit: p.DagRunLimit = t.DEFAULT_SAMPLE_LIMIT,
+    ) -> dict[str, Any]:
         """Recent DagRuns for one DAG (limit default 200, max 1000). Read-only."""
         return t.list_airflow_dag_runs(dag_id, limit=limit)
 

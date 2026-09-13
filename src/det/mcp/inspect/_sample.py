@@ -709,7 +709,7 @@ def _sample_bronze_iceberg(
     extract_run_datetime: str | None,
 ) -> dict[str, Any]:
     """Sample Iceberg bronze via DuckDB ``iceberg_scan`` (PyIceberg on gs://)."""
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
 
     from det.destinations.models import lake_root
     from det.ingestion.iceberg_writer import list_iceberg_extract_runs, load_iceberg_table
@@ -735,9 +735,10 @@ def _sample_bronze_iceberg(
         lookback = parse_duration(
             _DEFAULT_ICEBERG_SAMPLE_LOOKBACK, what="iceberg sample lookback"
         )
-        since_dt = datetime.now(timezone.utc) - lookback
+        since_dt = datetime.now(UTC) - lookback
         extract_run_since = identity_iso(since_dt)
-        bound = f"extract_run_since={extract_run_since} (default {_DEFAULT_ICEBERG_SAMPLE_LOOKBACK})"
+        lookback_label = _DEFAULT_ICEBERG_SAMPLE_LOOKBACK
+        bound = f"extract_run_since={extract_run_since} (default {lookback_label})"
     bound_note = _iceberg_sample_bound_note(bound)
 
     loc_uri = str(location)
