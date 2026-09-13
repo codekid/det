@@ -17,11 +17,12 @@ def test_resolve_migrate_validate_limit_zero_is_full():
 def test_resolve_migrate_validate_limit_clamps_sample():
     assert resolve_migrate_validate_limit(50) == 50
     assert resolve_migrate_validate_limit(10) == 10
+    assert resolve_migrate_validate_limit(1000) == 1000
 
 
 def test_resolve_migrate_validate_limit_rejects_out_of_range():
     with pytest.raises(ValueError, match="validate_limit must be"):
-        resolve_migrate_validate_limit(51)
+        resolve_migrate_validate_limit(1001)
 
 
 def test_full_validate_allowed_truthy_values():

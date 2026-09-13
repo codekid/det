@@ -24,7 +24,7 @@ def assert_full_validate_allowed(
     if not confirm:
         raise ValueError(
             "validate_limit=0 requires confirm_full_validate=true after running "
-            "validate_sample and/or migrate_dry_run with validate_limit=50; "
+            "validate_sample and/or migrate_dry_run with validate_limit=1000; "
             "get user confirmation first"
         )
     if not full_validate_allowed(env=env):

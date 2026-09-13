@@ -111,9 +111,10 @@ class DestinationConfig(BaseModel):
     # postgres only: name of the env var holding the DSN, mirroring auth_env on a
     # source. Preferred over connection so credentials never live in committed YAML.
     connection_env: str | None = None
-    # Iceberg only: identity on ``__extract_run_datetime`` (ETL default) or
-    # unpartitioned. Applied on create_table; live mismatch hard-fails until
-    # ``det migrate --recreate-iceberg`` or a manual wipe. Forbidden on other types.
+    # Iceberg only: ``extract_run`` = identity on interval start/end + extract run
+    # (hive grain; default) or ``none`` (unpartitioned). Applied on create_table;
+    # live mismatch hard-fails until ``det migrate --recreate-iceberg`` or a
+    # manual wipe. Forbidden on other types.
     partition: IcebergPartition | None = None
     # Iceberg only: create-time table props + maintain plan knobs for external runners.
     iceberg: IcebergDestinationConfig | None = None

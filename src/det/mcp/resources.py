@@ -20,7 +20,7 @@ _README_POINTER = """\
 - Run receipts: `list_runs` / `summarize_runs` (this run); fleet: Cube `run_daily`
   or `query_analytics` warehouse=ops
 - Structure: `check` (same payload as `det check --json`; never writes)
-- Sample size: `limit` / `sample_limit` (default 5, max 50)
+- Sample size: `limit` / `sample_limit` (default 200, max 1000)
 - Prompts: `det_ops` / `det_new_source` / `det_migrate` / `det_dbt` / `det_airflow`
 - Generate tools never write files — review drafts, then CLI/manual apply
 - Airflow: DET_AIRFLOW_* (Compose defaults); never trigger DagRuns via MCP

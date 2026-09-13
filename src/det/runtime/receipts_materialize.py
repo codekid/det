@@ -96,6 +96,26 @@ def _attempt_date_partition_spec(schema: Any) -> Any:
     )
 
 
+def _ops_partition_matches_attempt_date(table: Any) -> bool:
+    """True when live spec is identity(attempt_date) as created by ensure."""
+    expected = _attempt_date_partition_spec(table.schema())
+    live_fields = list(table.spec().fields)
+    exp_fields = list(expected.fields)
+    if len(live_fields) != len(exp_fields):
+        return False
+    schema = table.schema()
+    for live, exp in zip(live_fields, exp_fields, strict=True):
+        live_src = schema.find_field(live.source_id)
+        exp_src = schema.find_field(exp.source_id)
+        if live_src is None or exp_src is None:
+            return False
+        if live_src.name != exp_src.name or live_src.name != _ATTEMPT_DATE:
+            return False
+        if str(live.transform) != str(exp.transform):
+            return False
+    return True
+
+
 def ensure_ops_run_receipts_table(*, catalog: Any, location: str) -> Any:
     """Create or evolve ``ops.run_receipts`` partitioned by ``attempt_date``."""
     from pyiceberg.exceptions import NoSuchTableError
@@ -135,6 +155,18 @@ def ensure_ops_run_receipts_table(*, catalog: Any, location: str) -> Any:
             for name, expected in to_add:
                 update.add_column(name, _pyiceberg_type(expected))
         table = catalog.load_table(identifier)
+    if not _ops_partition_matches_attempt_date(table):
+        # Spec apply is create-time only; keep the table but warn so materialize
+        # uses row-filter deletes instead of partition-index short-circuits.
+        from det.ingestion.iceberg_writer import _live_partition_summary
+
+        logger.warning(
+            "ops.run_receipts partition does not match identity(attempt_date); "
+            "materialize will delete by attempt_date row filter to avoid duplicates",
+            live_partition=_live_partition_summary(table),
+            expected="identity(attempt_date)",
+            location=location,
+        )
     return table
 
 
@@ -145,13 +177,22 @@ def _day_filter(day: date) -> Any:
 
 
 def _live_attempt_dates(ice_table: Any) -> set[date]:
-    from det.ingestion.iceberg_writer import _live_arrow
-
-    arrow = _live_arrow(ice_table)
-    if arrow.num_rows == 0 or _ATTEMPT_DATE not in arrow.column_names:
+    """Distinct attempt_date values from Iceberg partition metadata."""
+    if ice_table.metadata.current_snapshot() is None:
+        return set()
+    arrow = ice_table.inspect.partitions()
+    if arrow.num_rows == 0 or "partition" not in arrow.column_names:
         return set()
     out: set[date] = set()
-    for value in arrow.column(_ATTEMPT_DATE).to_pylist():
+    for partition in arrow.column("partition").to_pylist():
+        if partition is None:
+            continue
+        if hasattr(partition, "as_py"):
+            partition = partition.as_py()
+        if isinstance(partition, dict):
+            value = partition.get(_ATTEMPT_DATE)
+        else:
+            value = getattr(partition, _ATTEMPT_DATE, None)
         if value is None:
             continue
         if isinstance(value, datetime):
@@ -197,7 +238,9 @@ def materialize_receipts(
     catalog = resolve_iceberg_catalog(lake)
     ice_table = ensure_ops_run_receipts_table(catalog=catalog, location=location)
     pa_schema = ice_table.schema().as_arrow()
-    live_days = _live_attempt_dates(ice_table)
+    partition_ok = _ops_partition_matches_attempt_date(ice_table)
+    # Partition metadata listing is only trustworthy for identity(attempt_date).
+    live_days = _live_attempt_dates(ice_table) if partition_ok else set()
 
     days = [date.fromisoformat(key) for key in _dt_keys(start, end)]
     rows_written = 0
@@ -205,10 +248,18 @@ def materialize_receipts(
     for day in days:
         rows = by_day.get(day, [])
         days_touched += 1
-        if not rows and day not in live_days:
-            continue
+        if partition_ok:
+            if not rows and day not in live_days:
+                continue
+            should_delete = day in live_days
+        else:
+            # Unpartitioned / wrong spec: delete-by-day whenever the table has
+            # data so rematerialize cannot skip delete and append duplicates.
+            should_delete = ice_table.metadata.current_snapshot() is not None
+            if not rows and not should_delete:
+                continue
         txn = ice_table.transaction()
-        if day in live_days:
+        if should_delete:
             txn.delete(delete_filter=_day_filter(day))
         if rows:
             rows.sort(key=lambda r: str(r.get("attempt_id") or ""))
@@ -217,7 +268,8 @@ def materialize_receipts(
             rows_written += len(rows)
         txn.commit_transaction()
         ice_table = catalog.load_table((OPS_NAMESPACE, OPS_TABLE))
-        live_days = _live_attempt_dates(ice_table)
+        if partition_ok:
+            live_days = _live_attempt_dates(ice_table)
 
     logger.info(
         "ops run_receipts materialize finished",
@@ -244,7 +296,11 @@ def scan_ops_run_receipts(
     limit: int = 100,
 ) -> list[dict[str, Any]]:
     """Test helper: read live ops.run_receipts rows."""
-    from det.ingestion.iceberg_writer import _jsonable_cell, _live_arrow, load_iceberg_table
+    from det.ingestion.iceberg_writer import (
+        _jsonable_cell,
+        _read_planned_parquet,
+        load_iceberg_table,
+    )
 
     ice = load_iceberg_table(
         lake=lake,
@@ -254,7 +310,8 @@ def scan_ops_run_receipts(
     )
     if ice is None:
         return []
-    rows = _live_arrow(ice).to_pylist()
+    # Read the full live set, then sort + slice so limit is deterministic.
+    rows = _read_planned_parquet(ice).to_pylist()
     out = [{k: _jsonable_cell(v) for k, v in row.items()} for row in rows]
     out.sort(
         key=lambda r: (str(r.get("attempt_date") or ""), str(r.get("attempt_id") or ""))

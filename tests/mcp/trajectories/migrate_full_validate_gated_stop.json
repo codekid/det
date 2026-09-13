@@ -11,7 +11,7 @@
           "arguments": {
             "pipeline": "example_api.events",
             "interval_start": "2026-08-06",
-            "limit": 50
+            "limit": 200
           }
         }
       ]
@@ -27,7 +27,7 @@
             "schema": "schemas/example_api/events/events.schema.yaml",
             "mapper": "identity",
             "interval_start": "2026-08-06",
-            "validate_limit": 50
+            "validate_limit": 1000
           }
         }
       ]

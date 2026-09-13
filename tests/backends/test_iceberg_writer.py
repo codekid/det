@@ -317,7 +317,7 @@ def test_version_hint_is_duckdb_stem_not_file_uri(tmp_path: Path):
     assert n >= 1
 
 
-def test_iceberg_partition_extract_run_is_single_identity(tmp_path: Path):
+def test_iceberg_partition_extract_run_is_triple_identity(tmp_path: Path):
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     loc = lake / "bronze" / "noaa" / "storm_events_v1"
     write_iceberg_table(
@@ -334,10 +334,204 @@ def test_iceberg_partition_extract_run_is_single_identity(tmp_path: Path):
     )
     assert ice is not None
     fields = list(ice.spec().fields)
-    assert len(fields) == 1
-    src = ice.schema().find_field(fields[0].source_id)
-    assert src.name == "__extract_run_datetime"
-    assert str(fields[0].transform) == "identity"
+    assert len(fields) == 3
+    names = [ice.schema().find_field(f.source_id).name for f in fields]
+    assert names == [
+        "__interval_start_datetime",
+        "__interval_end_datetime",
+        "__extract_run_datetime",
+    ]
+    assert all(str(f.transform) == "identity" for f in fields)
+
+
+def test_list_iceberg_extract_runs_uses_partitions_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Listing must not open data files when the table is partitioned."""
+    import det.ingestion.iceberg_writer as iw
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    loc = lake / "bronze" / "noaa" / "storm_events_v1"
+    write_iceberg_table(
+        _records(),
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_noaa",
+        table="storm_events_v1",
+        json_schema=_json_schema(),
+        partition="extract_run",
+    )
+    ice = load_iceberg_table(
+        lake=lake, namespace="bronze_noaa", table="storm_events_v1", table_location=loc
+    )
+    assert ice is not None
+
+    def _boom(*_a, **_k):
+        raise AssertionError("list must not read planned parquet files")
+
+    monkeypatch.setattr(iw, "_read_planned_parquet", _boom)
+    runs = list_iceberg_extract_runs(ice)
+    assert len(runs) == 1
+    assert runs[0][2] == "2026-08-06T15:04:05+00:00"
+
+
+def test_list_unpartitioned_mixed_bounds_samples_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Compaction-style mixed file bounds must not hide extract runs."""
+    import pyarrow as pa
+
+    import det.ingestion.iceberg_writer as iw
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    loc = lake / "bronze" / "example_api" / "events_v1"
+    write_iceberg_table(
+        _records(),
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_example_api",
+        table="events_v1",
+        json_schema=_json_schema(),
+        partition="none",
+    )
+    ice = load_iceberg_table(
+        lake=lake,
+        namespace="bronze_example_api",
+        table="events_v1",
+        table_location=loc,
+    )
+    assert ice is not None
+
+    start = "2026-08-06T00:00:00+00:00"
+    end = "2026-08-07T00:00:00+00:00"
+    run_a = "2026-08-06T15:04:05+00:00"
+    run_b = "2026-08-06T16:00:00+00:00"
+
+    def _mixed_files():
+        return pa.table(
+            {
+                "readable_metrics": [
+                    {
+                        "__interval_start_datetime": {
+                            "lower_bound": start,
+                            "upper_bound": start,
+                        },
+                        "__interval_end_datetime": {
+                            "lower_bound": end,
+                            "upper_bound": end,
+                        },
+                        # Mixed extract-run bounds (as after compaction).
+                        "__extract_run_datetime": {
+                            "lower_bound": run_a,
+                            "upper_bound": run_b,
+                        },
+                    }
+                ]
+            }
+        )
+
+    sample_calls = {"n": 0}
+    real_read = iw._read_planned_parquet
+
+    def _tracking_read(ice_table, *args, **kwargs):
+        sample_calls["n"] += 1
+        # Unwrap proxy so parquet IO uses the real table.
+        inner = getattr(ice_table, "_inner", ice_table)
+        return real_read(inner, *args, **kwargs)
+
+    class _MixedInspect:
+        def files(self):
+            return _mixed_files()
+
+    class _TableProxy:
+        def __init__(self, inner: object) -> None:
+            object.__setattr__(self, "_inner", inner)
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+        @property
+        def inspect(self) -> _MixedInspect:
+            return _MixedInspect()
+
+    monkeypatch.setattr(iw, "_read_planned_parquet", _tracking_read)
+    runs = list_iceberg_extract_runs(_TableProxy(ice))
+    assert sample_calls["n"] == 1
+    assert len(runs) >= 1
+    assert runs[0][2] == run_a
+
+
+def test_read_planned_parquet_applies_residual_before_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Residual predicates must filter the full file before limit slicing."""
+    from datetime import UTC, datetime
+
+    from pyiceberg.expressions import AlwaysFalse, EqualTo
+    from pyiceberg.table import FileScanTask
+
+    import det.ingestion.iceberg_writer as iw
+
+    lake = open_lake(str(tmp_path / "lake"), tmp_path)
+    loc = lake / "bronze" / "example_api" / "events_v1"
+    write_iceberg_table(
+        _records(),
+        lake=lake,
+        table_location=loc,
+        namespace="bronze_example_api",
+        table="events_v1",
+        json_schema=_json_schema(),
+        partition="none",
+    )
+    ice = load_iceberg_table(
+        lake=lake,
+        namespace="bronze_example_api",
+        table="events_v1",
+        table_location=loc,
+    )
+    assert ice is not None
+    planned = list(ice.scan().plan_files())
+    assert len(planned) == 1
+    base = planned[0]
+
+    class _Scan:
+        def __init__(self, tasks: list[FileScanTask]) -> None:
+            self._tasks = tasks
+
+        def plan_files(self) -> list[FileScanTask]:
+            return self._tasks
+
+    # AlwaysFalse residual → no rows counted toward limit.
+    false_task = FileScanTask(
+        data_file=base.file,
+        delete_files=set(base.delete_files),
+        residual=AlwaysFalse(),
+    )
+    monkeypatch.setattr(ice, "scan", lambda row_filter=None: _Scan([false_task]))
+    empty = iw._read_planned_parquet(ice, limit=10)
+    assert empty.num_rows == 0
+
+    # Residual that excludes the live extract_run → still empty after filter.
+    other_run = datetime(2026, 8, 6, 16, 0, 0, tzinfo=UTC)
+    mismatch = FileScanTask(
+        data_file=base.file,
+        delete_files=set(base.delete_files),
+        residual=EqualTo("__extract_run_datetime", other_run),
+    )
+    monkeypatch.setattr(ice, "scan", lambda row_filter=None: _Scan([mismatch]))
+    filtered = iw._read_planned_parquet(ice, limit=10)
+    assert filtered.num_rows == 0
+
+    # Matching residual keeps the row (limit still applies after filter).
+    want_run = datetime(2026, 8, 6, 15, 4, 5, tzinfo=UTC)
+    match = FileScanTask(
+        data_file=base.file,
+        delete_files=set(base.delete_files),
+        residual=EqualTo("__extract_run_datetime", want_run),
+    )
+    monkeypatch.setattr(ice, "scan", lambda row_filter=None: _Scan([match]))
+    kept = iw._read_planned_parquet(ice, limit=1)
+    assert kept.num_rows == 1
 
 
 def test_iceberg_partition_none_is_unpartitioned(tmp_path: Path):
@@ -425,7 +619,7 @@ def test_iceberg_hard_fails_when_yaml_partition_mismatches(tmp_path: Path):
         lake=lake, namespace="bronze_noaa", table="storm_events_v1", table_location=loc
     )
     assert ice is not None
-    assert len(list(ice.spec().fields)) == 1
+    assert len(list(ice.spec().fields)) == 3
 
 
 def test_purge_and_recreate_applies_yaml_partition(tmp_path: Path):

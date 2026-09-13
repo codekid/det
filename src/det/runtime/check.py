@@ -579,7 +579,7 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
                 detail=(
                     "MCP full-partition migrate dry-run (validate_limit=0) is "
                     "disabled until DET_ALLOW_FULL_VALIDATE=1. Use validate_sample "
-                    "and migrate_dry_run with validate_limit=50 first."
+                    "and migrate_dry_run with validate_limit=1000 first."
                 ),
             )
         )

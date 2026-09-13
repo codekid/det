@@ -53,8 +53,8 @@ CLI after the user confirms. Install: `uv pip install -e ".[mcp]"`.
 5. New target schema file: write under `schemas/…` (from
    `schema_from_sample_dry_run` or hand-authored), point pipeline / `--schema` at it.
 6. Preview loadability — follow the **validation ladder** (det-ops):
-   - `validate_sample` **`limit=50`** on representative raw runs
-   - **`migrate_dry_run`** with `validate_limit=50` (default) — partition plan,
+   - `validate_sample` **`limit=200`** (default) on representative raw runs
+   - **`migrate_dry_run`** with `validate_limit=1000` (default) — partition plan,
      `ok`, errors; no bronze written
    - Full-partition MCP validate only after user confirm:
      `DET_ALLOW_FULL_VALIDATE=1`, `validate_limit=0`, `confirm_full_validate=true`

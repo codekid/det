@@ -154,6 +154,7 @@ Closed block (`extra=forbid`); only valid when `destination.type: iceberg`.
 ```yaml
 destination:
   type: iceberg
+  # extract_run = identity(start, end, extract_run); none = unpartitioned
   partition: extract_run
   iceberg:
     table_properties:

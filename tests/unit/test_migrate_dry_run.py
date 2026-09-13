@@ -173,7 +173,7 @@ def test_mcp_migrate_dry_run_tool(project_root: Path, tmp_path: Path, monkeypatc
     assert out["dry_run"] is True
     assert out["ok"] is True
     assert out["rows_checked"] == 1
-    assert out["validate_limit"] == 50
+    assert out["validate_limit"] == 1000
     ap = out["approval_plan"]
     assert ap["command"] == "migrate"
     assert "--to-bronze" in ap["argv"]

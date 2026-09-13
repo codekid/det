@@ -411,6 +411,7 @@ def _sql_sample_filters(
     interval_start: str | None,
     interval_end: str | None,
     extract_run_datetime: str | None,
+    extract_run_since: str | None = None,
 ) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
@@ -423,8 +424,36 @@ def _sql_sample_filters(
     if extract_run_datetime is not None:
         clauses.append("__extract_run_datetime = ?")
         params.append(to_interval_or_partition(extract_run_datetime))
+    elif extract_run_since is not None:
+        clauses.append("__extract_run_datetime >= ?")
+        params.append(to_interval_or_partition(extract_run_since))
     where = (" where " + " and ".join(clauses)) if clauses else ""
     return where, params
+
+
+_DEFAULT_ICEBERG_SAMPLE_LOOKBACK = "7d"
+
+
+def _iceberg_sample_scan_uri(location: LakeRef) -> str:
+    """Path/URI DuckDB ``iceberg_scan`` accepts (local path or s3://)."""
+    from det.ingestion.iceberg_catalog_factory import lake_ref_uri
+
+    if location.is_local:
+        return str(location.to_path().resolve())
+    return lake_ref_uri(location)
+
+
+def _iceberg_sample_bound_note(bound: str) -> str:
+    return (
+        "Bronze samples are for inspection only; rebuild via det migrate from raw. "
+        f"Iceberg sample bound: {bound}."
+    )
+
+
+def _jsonable_sample_row(row: dict[str, Any]) -> dict[str, Any]:
+    from det.ingestion.iceberg_writer import _jsonable_cell
+
+    return {k: _jsonable_cell(v) for k, v in row.items()}
 
 
 def _sample_bronze_duckdb(
@@ -464,7 +493,6 @@ def _sample_bronze_duckdb(
         interval_end=interval_end,
         extract_run_datetime=extract_run_datetime,
     )
-    # DuckDB uses ? placeholders; rebuild where for duckdb (already ?).
     duckdb = require_duckdb()
     con = duckdb.connect(str(db_path), read_only=True)
     try:
@@ -591,7 +619,7 @@ def _sample_bronze_postgres(
     return {**base_out, "rows": rows, "errors": [], "truncated": truncated}
 
 
-def _sample_bronze_iceberg(
+def _sample_bronze_iceberg_pyiceberg(
     config: PipelineConfig,
     *,
     root: Path,
@@ -599,23 +627,21 @@ def _sample_bronze_iceberg(
     interval_start: str | None,
     interval_end: str | None,
     extract_run_datetime: str | None,
+    extract_run_since: str | None,
+    bound_note: str,
+    base_out: dict[str, Any],
 ) -> dict[str, Any]:
+    """gs:// fallback: bounded PyIceberg parquet read (no DuckDB iceberg_scan)."""
     from det.destinations.models import lake_root
-    from det.ingestion.iceberg_writer import load_iceberg_table, scan_iceberg_rows
+    from det.ingestion.iceberg_writer import (
+        list_iceberg_extract_runs,
+        load_iceberg_table,
+        scan_iceberg_rows,
+    )
     from det.runtime.ids import sql_names_for_config
 
     schema, table = sql_names_for_config(config)
     location = bronze_dataset_dir(config, root)
-    note = "Bronze samples are for inspection only; rebuild via det migrate from raw."
-    base_out: dict[str, Any] = {
-        "pipeline": config.name,
-        "destination_type": "iceberg",
-        "limit": limit,
-        "schema": schema,
-        "table": table,
-        "location": _rel(location, root),
-        "note": note,
-    }
     try:
         ice = load_iceberg_table(
             lake=lake_root(config.destination, root),
@@ -629,6 +655,7 @@ def _sample_bronze_iceberg(
             "rows": [],
             "errors": [{"message": str(exc)}],
             "truncated": False,
+            "note": bound_note,
         }
     if ice is None:
         return {
@@ -636,17 +663,222 @@ def _sample_bronze_iceberg(
             "rows": [],
             "errors": [{"message": f"Iceberg table not found: {schema}.{table}"}],
             "truncated": False,
+            "note": bound_note,
         }
+
+    note = bound_note
     fetched = scan_iceberg_rows(
         ice,
         limit=limit + 1,
         interval_start=interval_start,
         interval_end=interval_end,
         extract_run_datetime=extract_run_datetime,
+        extract_run_since=extract_run_since,
     )
+    if (
+        not fetched
+        and extract_run_datetime is None
+        and interval_start is None
+        and extract_run_since is not None
+    ):
+        runs = list_iceberg_extract_runs(ice)
+        if runs:
+            latest = max(runs, key=lambda r: r[2])
+            note = _iceberg_sample_bound_note(
+                f"latest extract_run={latest[2]} (no rows in lookback)"
+            )
+            fetched = scan_iceberg_rows(
+                ice,
+                limit=limit + 1,
+                interval_start=latest[0],
+                interval_end=latest[1],
+                extract_run_datetime=latest[2],
+            )
     truncated = len(fetched) > limit
     rows = [{"index": i, "data": row} for i, row in enumerate(fetched[:limit])]
-    return {**base_out, "rows": rows, "errors": [], "truncated": truncated}
+    return {**base_out, "rows": rows, "errors": [], "truncated": truncated, "note": note}
+
+
+def _sample_bronze_iceberg(
+    config: PipelineConfig,
+    *,
+    root: Path,
+    limit: int,
+    interval_start: str | None,
+    interval_end: str | None,
+    extract_run_datetime: str | None,
+) -> dict[str, Any]:
+    """Sample Iceberg bronze via DuckDB ``iceberg_scan`` (PyIceberg on gs://)."""
+    from datetime import UTC, datetime
+
+    from det.destinations.models import lake_root
+    from det.ingestion.iceberg_writer import list_iceberg_extract_runs, load_iceberg_table
+    from det.runtime.ids import sql_names_for_config
+    from det.runtime.meta import identity_iso
+    from det.runtime.silver_catchup.ids import parse_duration
+
+    schema, table = sql_names_for_config(config)
+    location = bronze_dataset_dir(config, root)
+    base_out: dict[str, Any] = {
+        "pipeline": config.name,
+        "destination_type": "iceberg",
+        "limit": limit,
+        "schema": schema,
+        "table": table,
+        "location": _rel(location, root),
+    }
+
+    caller_filtered = interval_start is not None or extract_run_datetime is not None
+    extract_run_since: str | None = None
+    bound = "caller filters"
+    if not caller_filtered:
+        lookback = parse_duration(
+            _DEFAULT_ICEBERG_SAMPLE_LOOKBACK, what="iceberg sample lookback"
+        )
+        since_dt = datetime.now(UTC) - lookback
+        extract_run_since = identity_iso(since_dt)
+        lookback_label = _DEFAULT_ICEBERG_SAMPLE_LOOKBACK
+        bound = f"extract_run_since={extract_run_since} (default {lookback_label})"
+    bound_note = _iceberg_sample_bound_note(bound)
+
+    loc_uri = str(location)
+    use_gs = loc_uri.startswith("gs://") or loc_uri.startswith("gcs://")
+
+    if use_gs:
+        return _sample_bronze_iceberg_pyiceberg(
+            config,
+            root=root,
+            limit=limit,
+            interval_start=interval_start,
+            interval_end=interval_end,
+            extract_run_datetime=extract_run_datetime,
+            extract_run_since=extract_run_since,
+            bound_note=bound_note,
+            base_out=base_out,
+        )
+
+    try:
+        duckdb = require_duckdb()
+    except ImportError as exc:
+        return {
+            **base_out,
+            "rows": [],
+            "errors": [{"message": str(exc)}],
+            "truncated": False,
+            "note": bound_note,
+        }
+
+    try:
+        ice = load_iceberg_table(
+            lake=lake_root(config.destination, root),
+            namespace=schema,
+            table=table,
+            table_location=location,
+        )
+    except ImportError as exc:
+        return {
+            **base_out,
+            "rows": [],
+            "errors": [{"message": str(exc)}],
+            "truncated": False,
+            "note": bound_note,
+        }
+    if ice is None:
+        return {
+            **base_out,
+            "rows": [],
+            "errors": [{"message": f"Iceberg table not found: {schema}.{table}"}],
+            "truncated": False,
+            "note": bound_note,
+        }
+
+    scan_uri = _iceberg_sample_scan_uri(location)
+    # Escape single quotes for literal embedding in iceberg_scan('…').
+    scan_sql = scan_uri.replace("'", "''")
+
+    def _run_query(
+        *,
+        interval_start: str | None,
+        interval_end: str | None,
+        extract_run_datetime: str | None,
+        extract_run_since: str | None,
+        order: bool,
+    ) -> list[dict[str, Any]]:
+        where, params = _sql_sample_filters(
+            interval_start=interval_start,
+            interval_end=interval_end,
+            extract_run_datetime=extract_run_datetime,
+            extract_run_since=extract_run_since,
+        )
+        order_sql = " order by __extract_run_datetime" if order else ""
+        sql = (
+            f"select * from iceberg_scan('{scan_sql}'){where}{order_sql} limit ?"
+        )
+        con = duckdb.connect()
+        try:
+            if scan_uri.startswith("s3://"):
+                from det.runtime.object_store import configure_duckdb_s3
+
+                configure_duckdb_s3(con)
+            else:
+                con.execute("INSTALL iceberg")
+                con.execute("LOAD iceberg")
+            result = con.execute(sql, [*params, limit + 1])
+            cols = [d[0] for d in result.description]
+            fetched = result.fetchall()
+        finally:
+            con.close()
+        return [
+            _jsonable_sample_row(dict(zip(cols, row, strict=True))) for row in fetched
+        ]
+
+    # Prefer equality / interval filters with ORDER BY; lookback alone skips ORDER BY.
+    order = caller_filtered
+    try:
+        fetched = _run_query(
+            interval_start=interval_start,
+            interval_end=interval_end,
+            extract_run_datetime=extract_run_datetime,
+            extract_run_since=extract_run_since if not caller_filtered else None,
+            order=order,
+        )
+    except Exception as exc:
+        return {
+            **base_out,
+            "rows": [],
+            "errors": [{"message": sanitize_detail(exc)}],
+            "truncated": False,
+            "note": bound_note,
+        }
+
+    note = bound_note
+    if not fetched and not caller_filtered:
+        runs = list_iceberg_extract_runs(ice)
+        if runs:
+            latest = max(runs, key=lambda r: r[2])
+            note = _iceberg_sample_bound_note(
+                f"latest extract_run={latest[2]} (no rows in lookback)"
+            )
+            try:
+                fetched = _run_query(
+                    interval_start=latest[0],
+                    interval_end=latest[1],
+                    extract_run_datetime=latest[2],
+                    extract_run_since=None,
+                    order=True,
+                )
+            except Exception as exc:
+                return {
+                    **base_out,
+                    "rows": [],
+                    "errors": [{"message": sanitize_detail(exc)}],
+                    "truncated": False,
+                    "note": note,
+                }
+
+    truncated = len(fetched) > limit
+    rows = [{"index": i, "data": row} for i, row in enumerate(fetched[:limit])]
+    return {**base_out, "rows": rows, "errors": [], "truncated": truncated, "note": note}
 
 
 def sample_bronze(
@@ -659,7 +891,11 @@ def sample_bronze(
     extract_run_datetime: str | None = None,
     root: Path | None = None,
 ) -> dict[str, Any]:
-    """Sample landed bronze rows. Inspection only — rebuild from raw via migrate."""
+    """Sample landed bronze rows. Inspection only — rebuild from raw via migrate.
+
+    Iceberg uses DuckDB ``iceberg_scan`` with a default extract-run lookback
+    (local/s3); ``gs://`` uses a bounded PyIceberg read.
+    """
     base = _root(root)
     config, _ = _load_pipeline(pipeline, base)
     capped = clamp_sample_limit(limit)

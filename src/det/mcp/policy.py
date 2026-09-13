@@ -479,6 +479,8 @@ def _score_silver_catchup_full_refresh(trace: Trace) -> list[Violation]:
 
 def _score_full_validate_gating(trace: Trace) -> list[Violation]:
     """Full-partition migrate dry-run must follow the sample ladder and confirm flag."""
+    from det.mcp.inspect import MAX_SAMPLE_LIMIT
+
     found: list[Violation] = []
     had_ladder = False
     for turn_i, _ev_i, event in _iter_events(trace):
@@ -490,9 +492,11 @@ def _score_full_validate_gating(trace: Trace) -> list[Violation]:
         if event.name != "migrate_dry_run":
             continue
         args = event.arguments or {}
-        raw_limit = args.get("validate_limit", 50)
+        raw_limit = args.get("validate_limit", MAX_SAMPLE_LIMIT)
         if raw_limit != 0:
-            if raw_limit == 50:
+            # Only the max capped migrate validate counts as the sample ladder
+            # (not a tiny probe like validate_limit=1).
+            if raw_limit == MAX_SAMPLE_LIMIT:
                 had_ladder = True
             continue
         if not args.get("confirm_full_validate"):
@@ -514,7 +518,8 @@ def _score_full_validate_gating(trace: Trace) -> list[Violation]:
                     turn=turn_i,
                     detail=(
                         "migrate_dry_run validate_limit=0 without prior "
-                        "validate_sample or migrate_dry_run validate_limit=50"
+                        "validate_sample or migrate_dry_run "
+                        f"validate_limit={MAX_SAMPLE_LIMIT}"
                     ),
                 )
             )
