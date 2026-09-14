@@ -233,6 +233,26 @@ Operator reference DAG (example only — not scaffolded into embedder trees):
 `DET_ICEBERG_MAINTAIN_MAX_ACTIVE` (default 4). Hook signature:
 `module:function(plan: dict)`.
 
+### Silver catch-up Mode A (external Airflow)
+
+Detect bronze↔silver holes and heal with the same SemVer APIs the operator
+reference DAG uses (Tier 1 — copy/adapt `dags/det_silver_catchup_dag.py`):
+
+```python
+from pathlib import Path
+
+from det import iter_silver_catchup_holes, run_silver_catchup_heal
+
+root = Path(".")
+for hole in iter_silver_catchup_holes(root, extract_lookback="48h"):
+    run_silver_catchup_heal(
+        root, pipeline=hole.pipeline, extract_lookback=hole.extract_lookback
+    )
+```
+
+Default lookback is `48h` (Mode A). Census / interval windows stay CLI/MCP
+Advanced. Trusted ops paths should not set `DET_REQUIRE_APPROVAL=1`.
+
 Concurrency (leases, processes vs threads): [api.md § Concurrency](api.md#concurrency).
 
 ## 8. Out of scope for the library path

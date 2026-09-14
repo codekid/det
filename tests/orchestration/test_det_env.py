@@ -103,3 +103,16 @@ def test_lock_ttl_sec_from_conf(project_root: Path):
     assert det_env.lock_ttl_sec_from_conf({}) is None
     assert det_env.lock_ttl_sec_from_conf({"lock_ttl_sec": 21600}) == 21600
     assert det_env.lock_ttl_sec_from_conf({"lock_ttl_sec": "90"}) == 90
+
+
+def test_silver_catchup_env_helpers(project_root: Path, monkeypatch):
+    det_env = _load_det_env(project_root)
+    monkeypatch.delenv("DET_SILVER_CATCHUP_LOOKBACK", raising=False)
+    monkeypatch.delenv("DET_SILVER_CATCHUP_PIPELINES", raising=False)
+    assert det_env.silver_catchup_lookback() == "48h"
+    assert det_env.silver_catchup_pipeline_allowlist() is None
+
+    monkeypatch.setenv("DET_SILVER_CATCHUP_LOOKBACK", "7d")
+    monkeypatch.setenv("DET_SILVER_CATCHUP_PIPELINES", "a.one, b.two")
+    assert det_env.silver_catchup_lookback() == "7d"
+    assert det_env.silver_catchup_pipeline_allowlist() == ["a.one", "b.two"]
