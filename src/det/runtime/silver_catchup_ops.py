@@ -72,8 +72,12 @@ def iter_silver_catchup_holes(
         if pipelines is not None
         else list(list_pipeline_ids(root))
     )
+    seen: set[str] = set()
     for pipe in ids:
         canonical = resolve_pipeline_ref(pipe, project_root=root).canonical_id
+        if canonical in seen:
+            continue
+        seen.add(canonical)
         diff = diff_bronze_silver(
             canonical,
             project_root=root,
@@ -113,8 +117,7 @@ def run_silver_catchup_heal(
         extract_lookback=lookback,
         complete=True,
     )
-    before_count = int(before.get("catchup_count") or 0)
-    if before_count == 0:
+    if int(before.get("catchup_count") or 0) == 0:
         return {
             "pipeline": pipe,
             "extract_lookback": lookback,
@@ -134,6 +137,21 @@ def run_silver_catchup_heal(
     mid = str(planned["manifest_id"])
     digest = str(planned["content_digest"])
     manifest_body = planned["manifest"]
+    planned_diff = planned.get("diff") if isinstance(planned.get("diff"), dict) else {}
+    runs = list(manifest_body.get("runs") or [])
+    before_count = int(planned_diff.get("catchup_count") or len(runs) or 0)
+    if not runs:
+        return {
+            "pipeline": pipe,
+            "extract_lookback": lookback,
+            "catchup_count_before": 0,
+            "catchup_count_after": 0,
+            "manifest_id": None,
+            "content_digest": None,
+            "skipped": True,
+            "reason": "nothing_to_do",
+        }
+
     write_catchup_manifest(manifest_body, project_root=root)
 
     result = run_dbt(
