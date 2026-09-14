@@ -52,6 +52,11 @@ from det.runtime.receipts import list_receipts, summarize_receipts
 from det.runtime.registry import describe_mappers, list_mappers, list_sources
 from det.runtime.runner import ExtractResult, PipelineRunner, RunResult
 from det.runtime.settings import DetSettings
+from det.runtime.silver_catchup_ops import (
+    SilverCatchupHole,
+    iter_silver_catchup_holes,
+    run_silver_catchup_heal,
+)
 from det.sources.base import (
     Interval,
     SourcePlugin,
@@ -90,6 +95,7 @@ __all__ = [
     "PipelineRunner",
     "PrunePlan",
     "RunResult",
+    "SilverCatchupHole",
     "SourcePlugin",
     "SourceRow",
     "__version__",
@@ -106,6 +112,7 @@ __all__ = [
     "identity_mapper",
     "inspect_lease",
     "iter_iceberg_maintain_plans",
+    "iter_silver_catchup_holes",
     "list_mappers",
     "list_receipts",
     "list_sources",
@@ -116,6 +123,7 @@ __all__ = [
     "open_lake",
     "release_lock",
     "resolve_lake_roots",
+    "run_silver_catchup_heal",
     "scrub_rendered",
     "scrub_secrets",
     "summarize_receipts",

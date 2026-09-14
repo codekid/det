@@ -51,6 +51,8 @@ Unreachable local URL → `make airflow-up`. For a future remote Airflow, point
 | `det_backfill_extract_bronze` | trigger extract once per day for `[start, end)` |
 | `det_dbt_silver_gold` | single-process `dbt build` on analytics DuckDB with `--exclude tag:ops` |
 | `det_ops_receipts` | materialize `runs/` → Iceberg, then `dbt build --select tag:ops --target ops` (SLO seed/tests) on `DET_OPS_DUCKDB` |
+| `det_silver_catchup` | Mode A (48h) fleet hole detect → mapped apply+build+verify (`max_active_runs=1`) |
+| `det_iceberg_maintain` | Iceberg maintain plans → mapped external submit |
 
 Extract, silver/gold, and ops are **decoupled**. Nightly analytics dbt is not limited to
 `DET_PIPELINE_CONFIG`. File-backed DuckDB cannot safely fan out per-model writers, so
@@ -74,9 +76,9 @@ each dbt DAG is one task.
 | `DET_LOCK_OWNER` | Set by `set_lock_owner` to `airflow:{dag_id}:{run_id}`. Correlates lake leases **and** `{lake}/runs/` receipts to a DagRun. `list_runs` / `det runs` filter on `owner`. |
 | `DET_RUN_RECEIPTS=0` | Disables extract/load receipt writing (tests only) |
 
-Do **not** set `DET_REQUIRE_APPROVAL=1` on Compose. That env is for agent/CLI sessions so Cursor cannot write without `--approval`. Scheduled extract → load is always approval-free; only prune-**apply** is gated (via `conf.approval`, not the global env).
+Do **not** set `DET_REQUIRE_APPROVAL=1` on Compose. That env is for agent/CLI sessions so Cursor cannot write without `--approval`. Scheduled extract → load and **Mode A silver catch-up** are approval-free; only prune-**apply** / backfill windows are gated (via `conf.approval`, not the global env).
 
-Do **not** set `max_active_runs=1` on `det_extract_bronze` to “fix” locking — that serializes backfill of many days. The lake lease is per `(pipeline, interval)`; cap backfill with a pool / mapped TI limit later.
+Do **not** set `max_active_runs=1` on `det_extract_bronze` to “fix” locking — that serializes backfill of many days. The lake lease is per `(pipeline, interval)`; cap backfill with a pool / mapped TI limit later. **Do** keep `max_active_runs=1` on `det_silver_catchup` (fleet heal must not overlap).
 
 Wedged lock after a dead worker (TTL still in the future): confirm the DagRun/CLI is dead, then `det lock-release -p … -s … --force` or trigger manual DAG `det_clear_lock` with `force: true`. MCP must not delete locks.
 
@@ -97,6 +99,26 @@ cd airflow && docker compose exec airflow-scheduler \
 ```
 
 DET interval is half-open `[start, end)`.
+
+## Silver catch-up (reference DAG)
+
+`det_silver_catchup` (`dags/det_silver_catchup_dag.py`) calls SemVer
+`iter_silver_catchup_holes` then **maps one heal** (`run_silver_catchup_heal`:
+apply → dbt catch-up build → verify) per pipeline with Mode A holes. Default
+lookback **48h**. Holes on detect are not a DagRun failure (empty expand =
+success). No approval. **`max_active_runs=1`**.
+
+| Env | Role |
+| --- | --- |
+| `DET_SILVER_CATCHUP_SCHEDULE` | Airflow schedule (default `@daily`) |
+| `DET_SILVER_CATCHUP_LOOKBACK` | Mode A lookback (default `48h`) |
+| `DET_SILVER_CATCHUP_PIPELINES` | Optional allowlist (comma/space); unset = all |
+| `DET_SILVER_CATCHUP_MAX_ACTIVE` | Max concurrent mapped heals (default `1` — DuckDB single-writer; raise for BQ) |
+| `DET_SILVER_CATCHUP_POOL` | Airflow pool (default `default_pool`) |
+
+Embedders: prefer the SemVer APIs in **their** DAG; this file is a Tier 1
+reference to copy/adapt — DET does not ship a `det.airflow` package module.
+Census / Mode B stay CLI/MCP Advanced.
 
 ## Iceberg maintain (reference DAG)
 

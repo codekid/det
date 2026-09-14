@@ -68,6 +68,7 @@ buckets (or prefixes) + re-extract; there is no layout migrator.
 | `DetSettings` | Frozen embedder settings (`from_env`, lake, locks, secrets callable) |
 | `PipelineConfig`, `load_pipeline`, `load_pipeline_config` | Pipeline YAML model; `load_pipeline` accepts canonical id / path / config |
 | `IcebergMaintainPlan`, `iter_iceberg_maintain_plans` | Pure Iceberg maintain/reconcile plans for external Airflow/Spark runners |
+| `SilverCatchupHole`, `iter_silver_catchup_holes`, `run_silver_catchup_heal` | Mode A (default 48h) bronze↔silver hole detect + heal (apply manifest, dbt catch-up build, verify). Reference DAG: `dags/det_silver_catchup_dag.py` — embedders copy/adapt (Tier 1). Not census/Mode B. |
 | `Interval`, `SourceRow`, `SourcePlugin` | Source protocol |
 | `mapper`, `merge_source_config`, `identity_mapper` | Config merge and migrate mappers |
 
@@ -269,7 +270,7 @@ pytest; not imported by the core helpers).
 | --- | --- |
 | CLI (`det.cli`) | Operator front-door |
 | MCP (`det.mcp.*`) | Agent inspect / dry-run |
-| Scaffold / `dbt_runner` / catch-up | Analytics adapter (not SemVer); CLI/MCP call `check_project_with_dbt` for scaffold drift |
+| Scaffold / `dbt_runner` / internal silver_catchup | Analytics adapter (not SemVer); CLI/MCP call `check_project_with_dbt` for scaffold drift. Mode A ops on `__all__`: `iter_silver_catchup_holes` / `run_silver_catchup_heal`. |
 | Approvals | CLI / agent only — library callers are trusted (`PipelineRunner` / migrator / pruner apply have no approval hook). Audit / intent-binding, not authorization |
 | `record_attempt` / receipt writes | Runner-internal |
 | `runs-materialize` | Ops product path |

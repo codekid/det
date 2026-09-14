@@ -186,3 +186,15 @@ shared mutable `manifest.json` pointer — `det dbt --catchup` / `silver-catchup
 must pass `--catchup-manifest` / `--manifest-id`. Approval plans bind both
 `--manifest-id` and `--content-digest` (coverage-key hash) so apply cannot
 silently heal a different set than the dry-run.
+
+## Airflow Mode A fleet (reference DAG)
+
+Operator Compose ships `det_silver_catchup` (`dags/det_silver_catchup_dag.py`):
+
+1. Detect Mode A holes (`iter_silver_catchup_holes`, default 48h).
+2. Dynamically map one heal per pipeline (`run_silver_catchup_heal`).
+3. `max_active_runs=1`; holes on detect are not a failure.
+
+No approval on this path (trusted ops). Embedders should call the same SemVer
+APIs from **their** Airflow and copy/adapt the reference DAG (Tier 1) — see
+[api.md](api.md) and [getting-started-library.md](getting-started-library.md).

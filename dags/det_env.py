@@ -81,6 +81,24 @@ def dbt_select() -> list[str] | None:
     return [part.strip() for part in raw.replace(",", " ").split() if part.strip()]
 
 
+def silver_catchup_lookback() -> str:
+    """Mode A lookback for the silver catch-up reference DAG (default ``48h``)."""
+    raw = os.environ.get("DET_SILVER_CATCHUP_LOOKBACK", "").strip()
+    return raw or "48h"
+
+
+def silver_catchup_pipeline_allowlist() -> list[str] | None:
+    """Optional canonical pipeline ids from ``DET_SILVER_CATCHUP_PIPELINES``.
+
+    Unset or empty → ``None`` (all pipelines under the project). Otherwise
+    comma- or whitespace-separated ids.
+    """
+    raw = os.environ.get("DET_SILVER_CATCHUP_PIPELINES", "").strip()
+    if not raw:
+        return None
+    return [part.strip() for part in raw.replace(",", " ").split() if part.strip()]
+
+
 def dbt_env_for_pipeline() -> dict[str, str]:
     """Env dbt needs to read DET bronze (lake path + SQL schema identity)."""
     from det.destinations.models import lake_root
