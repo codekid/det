@@ -68,7 +68,10 @@ Config holds names, the environment holds values.
    `--dry-run`). Or apply the dry-run actions manually.
 4. Draft a real schema from fixtures/raw:
    - Extract a sample interval (CLI) or use inline `records`
-   - `schema_from_sample_dry_run` → review `yaml` / `would_write`
+   - `schema_from_sample_dry_run` → review `yaml` / `would_write` / `warnings`
+     (genson-backed: deep nested objects and array-of-object item schemas;
+     mechanical type widenings are warned — dates stay strings unless you
+     hand-edit `format` / stg)
    - Write schema only after confirm; keep `additionalProperties: false`
 5. `scaffold_dbt_dry_run` → then `det scaffold-dbt -p …` if needed.
    Use `dbt.stg` for coalesce/sentinels/maps (see det-dbt); keep bronze wire-faithful.

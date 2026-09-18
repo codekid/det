@@ -454,7 +454,10 @@ def schema_from_sample_dry_run(
     schema_out: str | None = None,
     root: Path | None = None,
 ) -> dict[str, Any]:
-    """Infer bronze JSON Schema from sample rows (dry-run; never writes)."""
+    """Infer bronze JSON Schema from sample rows (dry-run; never writes).
+
+    Genson-backed deep nested / array-of-object drafts; review ``warnings``.
+    """
     h.prepare_tool()
     return h.gen.schema_from_sample_dry_run(
         pipeline,
