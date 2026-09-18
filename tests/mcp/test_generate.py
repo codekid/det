@@ -126,6 +126,53 @@ def test_normalize_scalar_strips_stale_structural_keywords():
     assert any("payload" in w for w in warnings)
 
 
+def test_fold_anyof_object_scalar_widens_to_string():
+    """anyOf object|string should widen, not leave complex anyOf intact."""
+    from det.mcp.generate import _normalize_schema_node
+
+    warnings: list[str] = []
+    out = _normalize_schema_node(
+        {
+            "anyOf": [
+                {"type": "string"},
+                {
+                    "type": "object",
+                    "properties": {"a": {"type": "integer"}},
+                    "required": ["a"],
+                },
+            ]
+        },
+        path="payload",
+        warnings=warnings,
+    )
+    assert out.get("type") == "string"
+    assert "anyOf" not in out
+    assert "properties" not in out
+    assert any("structural+scalar" in w or "string" in w for w in warnings)
+
+
+def test_fold_anyof_two_objects_left_intact():
+    """Structure-only anyOf (two object shapes) stays for human review."""
+    from det.mcp.generate import _normalize_schema_node
+
+    warnings: list[str] = []
+    node = {
+        "anyOf": [
+            {
+                "type": "object",
+                "properties": {"a": {"type": "integer"}},
+            },
+            {
+                "type": "object",
+                "properties": {"b": {"type": "string"}},
+            },
+        ]
+    }
+    out = _normalize_schema_node(node, path="payload", warnings=warnings)
+    assert "anyOf" in out
+    assert any("left anyOf intact" in w for w in warnings)
+
+
 def test_schema_from_sample_inline_dry_run(tmp_path: Path):
     out = schema_from_sample_dry_run(
         records=[{"id": 1, "event_name": "x"}, {"id": 2, "event_name": "y"}],

@@ -106,21 +106,47 @@ def _resolve_scalar_conflict(
 def _fold_type_options(
     options: list[Any], *, path: str, warnings: list[str]
 ) -> dict[str, Any] | None:
-    """Fold simple anyOf/oneOf branches into a single type node, or None."""
+    """Fold simple anyOf/oneOf branches into a single type node, or None.
+
+    Object/array branches are inspected (not immediately rejected). A structural
+    type mixed with a scalar widens via ``_resolve_scalar_conflict`` to
+    ``string``. Nested unions or structure-only conflicts stay unfolded.
+    """
     type_sets: list[set[str]] = []
+    saw_structure = False
     for opt in options:
         if not isinstance(opt, dict):
             return None
-        # Reject nested structure in branches (properties/items/anyOf).
-        if any(k in opt for k in ("properties", "items", "anyOf", "oneOf", "allOf")):
+        # Nested composition inside a branch → genuinely complex.
+        if any(k in opt for k in ("anyOf", "oneOf", "allOf")):
             return None
         ts = set(_type_list(opt.get("type")))
+        if "properties" in opt:
+            saw_structure = True
+            ts.add("object")
+        if "items" in opt:
+            saw_structure = True
+            ts.add("array")
         if not ts:
             return None
         type_sets.append(ts)
+
     merged: set[str] = set()
     for ts in type_sets:
         merged |= ts
+    non_null = merged - {"null"}
+    hard = non_null - _SCALAR_TYPES
+    scalars = non_null & (_SCALAR_TYPES - {"null"})
+
+    if saw_structure and hard and scalars:
+        # e.g. object|string or array|integer → opaque string for bronze.
+        resolved = _resolve_scalar_conflict(merged, path=path, warnings=warnings)
+        return {"type": _emit_type(resolved)}
+
+    if saw_structure:
+        # Structure-only (or ambiguous object shapes) — leave for human review.
+        return None
+
     merged = _resolve_scalar_conflict(merged, path=path, warnings=warnings)
     return {"type": _emit_type(merged)}
 
@@ -139,6 +165,11 @@ def _normalize_schema_node(
             out.pop("anyOf", None)
             out.pop("oneOf", None)
             out.update(folded)
+            # Fold may widen to scalar; drop leftover structural keywords now.
+            folded_types = set(_type_list(folded.get("type")))
+            if folded_types and "object" not in folded_types and "array" not in folded_types:
+                for key in ("properties", "required", "items", "additionalProperties"):
+                    out.pop(key, None)
         else:
             warnings.append(
                 f"{path or '$'}: left anyOf intact (not a simple scalar union); review"
@@ -149,6 +180,10 @@ def _normalize_schema_node(
             out.pop("oneOf", None)
             out.pop("anyOf", None)
             out.update(folded)
+            folded_types = set(_type_list(folded.get("type")))
+            if folded_types and "object" not in folded_types and "array" not in folded_types:
+                for key in ("properties", "required", "items", "additionalProperties"):
+                    out.pop(key, None)
         else:
             warnings.append(
                 f"{path or '$'}: left oneOf intact (not a simple scalar union); review"
@@ -246,7 +281,7 @@ def infer_schema_from_records(
     except ImportError as exc:
         raise ImportError(
             "schema inference requires the mcp extra (genson). "
-            'Install with: pip install -e ".[mcp]"'
+            'Install with: uv pip install "det-elt[mcp]"'
         ) from exc
 
     rows = [_strip_meta_keys(r) for r in records if isinstance(r, dict)]
