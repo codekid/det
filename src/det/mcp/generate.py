@@ -145,10 +145,22 @@ def _fold_type_options(
 
     if saw_structure:
         # Structure-only (or ambiguous object shapes) — leave for human review.
+        # Caller keeps the union and recursively normalizes each branch.
         return None
 
     merged = _resolve_scalar_conflict(merged, path=path, warnings=warnings)
     return {"type": _emit_type(merged)}
+
+
+def _normalize_union_branches(
+    branches: list[Any], *, path: str, warnings: list[str]
+) -> list[Any]:
+    """Normalize each retained anyOf/oneOf branch (close objects, nest)."""
+    out: list[Any] = []
+    for i, opt in enumerate(branches):
+        child_path = f"{path or '$'}[{i}]"
+        out.append(_normalize_schema_node(opt, path=child_path, warnings=warnings))
+    return out
 
 
 def _normalize_schema_node(
@@ -174,6 +186,9 @@ def _normalize_schema_node(
             warnings.append(
                 f"{path or '$'}: left anyOf intact (not a simple scalar union); review"
             )
+            out["anyOf"] = _normalize_union_branches(
+                out["anyOf"], path=path or "$", warnings=warnings
+            )
     elif "oneOf" in out and isinstance(out["oneOf"], list):
         folded = _fold_type_options(out["oneOf"], path=path or "$", warnings=warnings)
         if folded is not None:
@@ -187,6 +202,9 @@ def _normalize_schema_node(
         else:
             warnings.append(
                 f"{path or '$'}: left oneOf intact (not a simple scalar union); review"
+            )
+            out["oneOf"] = _normalize_union_branches(
+                out["oneOf"], path=path or "$", warnings=warnings
             )
 
     if "type" in out:

@@ -152,7 +152,7 @@ def test_fold_anyof_object_scalar_widens_to_string():
 
 
 def test_fold_anyof_two_objects_left_intact():
-    """Structure-only anyOf (two object shapes) stays for human review."""
+    """Structure-only anyOf stays for review; branches still get closed/normalized."""
     from det.mcp.generate import _normalize_schema_node
 
     warnings: list[str] = []
@@ -164,12 +164,23 @@ def test_fold_anyof_two_objects_left_intact():
             },
             {
                 "type": "object",
-                "properties": {"b": {"type": "string"}},
+                "properties": {
+                    "b": {
+                        "type": "object",
+                        "properties": {"c": {"type": "string"}},
+                    }
+                },
             },
         ]
     }
     out = _normalize_schema_node(node, path="payload", warnings=warnings)
     assert "anyOf" in out
+    assert len(out["anyOf"]) == 2
+    assert out["anyOf"][0]["additionalProperties"] is False
+    assert out["anyOf"][1]["additionalProperties"] is False
+    nested = out["anyOf"][1]["properties"]["b"]
+    assert nested["additionalProperties"] is False
+    assert nested["properties"]["c"]["type"] == "string"
     assert any("left anyOf intact" in w for w in warnings)
 
 
