@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,8 @@ from det.runtime.pipelines import resolve_pipeline_ref
 from det.validation.jsonschema_validator import load_json_schema
 
 _JSON_TYPE_ORDER = ("null", "boolean", "integer", "number", "string", "object", "array")
+_SCALAR_TYPES = frozenset({"null", "boolean", "integer", "number", "string"})
+_DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema"
 
 
 def _root(root: Path | None = None) -> Path:
@@ -29,35 +32,35 @@ def _rel(path: Path, root: Path) -> str:
         return str(path.resolve())
 
 
-def _json_type(value: Any) -> str:
-    if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "boolean"
-    if isinstance(value, int) and not isinstance(value, bool):
-        return "integer"
-    if isinstance(value, float):
-        return "number"
-    if isinstance(value, str):
-        return "string"
+def _strip_meta_keys(value: Any) -> Any:
+    """Drop DET runtime ``__*`` keys from objects (recursive)."""
     if isinstance(value, dict):
-        return "object"
+        return {
+            k: _strip_meta_keys(v)
+            for k, v in value.items()
+            if not (isinstance(k, str) and k.startswith("__"))
+        }
     if isinstance(value, list):
-        return "array"
-    return "string"
+        return [_strip_meta_keys(item) for item in value]
+    return value
 
 
-def _merge_types(existing: set[str], new: str) -> set[str]:
-    out = set(existing)
-    out.add(new)
-    # integer ⊂ number for JSON Schema practicality when both seen
-    if "integer" in out and "number" in out:
-        out.discard("integer")
-    return out
+def _type_list(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, list):
+        return [str(t) for t in raw if isinstance(t, str)]
+    return []
 
 
-def _type_schema(types: set[str]) -> Any:
-    ordered = [t for t in _JSON_TYPE_ORDER if t in types]
+def _ordered_types(types: set[str]) -> list[str]:
+    return [t for t in _JSON_TYPE_ORDER if t in types]
+
+
+def _emit_type(types: set[str]) -> Any:
+    ordered = _ordered_types(types)
     if not ordered:
         return "string"
     if len(ordered) == 1:
@@ -65,84 +68,266 @@ def _type_schema(types: set[str]) -> Any:
     return ordered
 
 
-def _infer_object_properties(
-    rows: list[dict[str, Any]],
-    *,
-    depth: int = 0,
-    max_depth: int = 1,
-) -> tuple[dict[str, Any], list[str]]:
-    """Infer properties + required from homogeneous object rows."""
-    key_types: dict[str, set[str]] = {}
-    key_present: dict[str, int] = {}
-    nested_rows: dict[str, list[dict[str, Any]]] = {}
-    array_item_types: dict[str, set[str]] = {}
-    n = len(rows)
-
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        for key, value in row.items():
-            if key.startswith("__"):
-                continue
-            key_present[key] = key_present.get(key, 0) + 1
-            jt = _json_type(value)
-            key_types[key] = _merge_types(key_types.get(key, set()), jt)
-            if jt == "object" and isinstance(value, dict) and depth < max_depth:
-                nested_rows.setdefault(key, []).append(value)
-            elif jt == "array" and isinstance(value, list):
-                for item in value:
-                    array_item_types.setdefault(key, set())
-                    array_item_types[key] = _merge_types(
-                        array_item_types[key], _json_type(item)
-                    )
-
-    properties: dict[str, Any] = {}
-    for key, types in sorted(key_types.items()):
-        prop: dict[str, Any] = {"type": _type_schema(types)}
-        if "object" in types and key in nested_rows and depth < max_depth:
-            nested_props, nested_req = _infer_object_properties(
-                nested_rows[key], depth=depth + 1, max_depth=max_depth
+def _resolve_scalar_conflict(
+    types: set[str], *, path: str, warnings: list[str]
+) -> set[str]:
+    """Apply DET widen rules for scaffold-safe ``type`` unions."""
+    out = set(types)
+    if "integer" in out and "number" in out:
+        out.discard("integer")
+    non_null = out - {"null"}
+    if "string" in non_null and (non_null & {"integer", "number", "boolean"}):
+        kept = {"string"} | ({"null"} & out)
+        dropped = sorted(non_null - {"string"})
+        warnings.append(
+            f"{path}: mixed {', '.join(dropped)}+string in sample; widened to string"
+        )
+        return kept
+    hard = non_null - _SCALAR_TYPES
+    # object/array mixed with scalars → string (opaque) + warn
+    if hard and (non_null & _SCALAR_TYPES):
+        warnings.append(
+            f"{path}: mixed structural+scalar types {sorted(non_null)}; "
+            "widened to string"
+        )
+        return {"string"} | ({"null"} & out)
+    if len(non_null) > 1 and not hard:
+        # e.g. boolean+integer — widen to string
+        if non_null <= _SCALAR_TYPES and "string" not in non_null:
+            if non_null <= {"integer", "number"}:
+                return out  # already collapsed above
+            warnings.append(
+                f"{path}: mixed scalar types {sorted(non_null)}; widened to string"
             )
-            prop["properties"] = nested_props
-            if nested_req:
-                prop["required"] = nested_req
-            prop["additionalProperties"] = False
-        if "array" in types and key in array_item_types:
-            prop["items"] = {"type": _type_schema(array_item_types[key])}
-        properties[key] = prop
+            return {"string"} | ({"null"} & out)
+    return out
 
-    required = sorted(k for k, count in key_present.items() if count == n and n > 0)
-    return properties, required
+
+def _fold_type_options(
+    options: list[Any], *, path: str, warnings: list[str]
+) -> dict[str, Any] | None:
+    """Fold simple anyOf/oneOf branches into a single type node, or None.
+
+    Object/array branches are inspected (not immediately rejected). A structural
+    type mixed with a scalar widens via ``_resolve_scalar_conflict`` to
+    ``string``. Nested unions or structure-only conflicts stay unfolded.
+    """
+    type_sets: list[set[str]] = []
+    saw_structure = False
+    for opt in options:
+        if not isinstance(opt, dict):
+            return None
+        # Nested composition inside a branch → genuinely complex.
+        if any(k in opt for k in ("anyOf", "oneOf", "allOf")):
+            return None
+        ts = set(_type_list(opt.get("type")))
+        if "properties" in opt:
+            saw_structure = True
+            ts.add("object")
+        if "items" in opt:
+            saw_structure = True
+            ts.add("array")
+        if not ts:
+            return None
+        type_sets.append(ts)
+
+    merged: set[str] = set()
+    for ts in type_sets:
+        merged |= ts
+    non_null = merged - {"null"}
+    hard = non_null - _SCALAR_TYPES
+    scalars = non_null & (_SCALAR_TYPES - {"null"})
+
+    if saw_structure and hard and scalars:
+        # e.g. object|string or array|integer → opaque string for bronze.
+        resolved = _resolve_scalar_conflict(merged, path=path, warnings=warnings)
+        return {"type": _emit_type(resolved)}
+
+    if saw_structure:
+        # Structure-only (or ambiguous object shapes) — leave for human review.
+        # Caller keeps the union and recursively normalizes each branch.
+        return None
+
+    merged = _resolve_scalar_conflict(merged, path=path, warnings=warnings)
+    return {"type": _emit_type(merged)}
+
+
+def _normalize_union_branches(
+    branches: list[Any], *, path: str, warnings: list[str]
+) -> list[Any]:
+    """Normalize each retained anyOf/oneOf branch (close objects, nest)."""
+    out: list[Any] = []
+    for i, opt in enumerate(branches):
+        child_path = f"{path or '$'}[{i}]"
+        out.append(_normalize_schema_node(opt, path=child_path, warnings=warnings))
+    return out
+
+
+def _normalize_schema_node(
+    node: Any, *, path: str, warnings: list[str]
+) -> Any:
+    """Recursively close objects and fold simple unions for DET bronze drafts."""
+    if not isinstance(node, dict):
+        return node
+    out = dict(node)
+
+    if "anyOf" in out and isinstance(out["anyOf"], list):
+        folded = _fold_type_options(out["anyOf"], path=path or "$", warnings=warnings)
+        if folded is not None:
+            out.pop("anyOf", None)
+            out.pop("oneOf", None)
+            out.update(folded)
+            # Fold may widen to scalar; drop leftover structural keywords now.
+            folded_types = set(_type_list(folded.get("type")))
+            if folded_types and "object" not in folded_types and "array" not in folded_types:
+                for key in ("properties", "required", "items", "additionalProperties"):
+                    out.pop(key, None)
+        else:
+            warnings.append(
+                f"{path or '$'}: left anyOf intact (not a simple scalar union); review"
+            )
+            out["anyOf"] = _normalize_union_branches(
+                out["anyOf"], path=path or "$", warnings=warnings
+            )
+    elif "oneOf" in out and isinstance(out["oneOf"], list):
+        folded = _fold_type_options(out["oneOf"], path=path or "$", warnings=warnings)
+        if folded is not None:
+            out.pop("oneOf", None)
+            out.pop("anyOf", None)
+            out.update(folded)
+            folded_types = set(_type_list(folded.get("type")))
+            if folded_types and "object" not in folded_types and "array" not in folded_types:
+                for key in ("properties", "required", "items", "additionalProperties"):
+                    out.pop(key, None)
+        else:
+            warnings.append(
+                f"{path or '$'}: left oneOf intact (not a simple scalar union); review"
+            )
+            out["oneOf"] = _normalize_union_branches(
+                out["oneOf"], path=path or "$", warnings=warnings
+            )
+
+    if "type" in out:
+        types = set(_type_list(out["type"]))
+        if types:
+            resolved = _resolve_scalar_conflict(
+                types, path=path or "$", warnings=warnings
+            )
+            out["type"] = _emit_type(resolved)
+
+    types_now = set(_type_list(out.get("type")))
+    # After widen-to-scalar, drop structural keywords so we do not re-close as object.
+    if types_now and "object" not in types_now and "array" not in types_now:
+        for key in ("properties", "required", "items", "additionalProperties"):
+            out.pop(key, None)
+
+    if "object" in types_now or "properties" in out:
+        out["additionalProperties"] = False
+        props = out.get("properties")
+        if isinstance(props, dict):
+            new_props: dict[str, Any] = {}
+            for key, prop in props.items():
+                child_path = f"{path}.{key}" if path else str(key)
+                new_props[key] = _normalize_schema_node(
+                    prop, path=child_path, warnings=warnings
+                )
+            out["properties"] = new_props
+        if "required" in out and not isinstance(out["required"], list):
+            out["required"] = []
+
+    if "items" in out:
+        items_path = f"{path}.items" if path else "items"
+        out["items"] = _normalize_schema_node(
+            out["items"], path=items_path, warnings=warnings
+        )
+
+    return out
+
+
+def _normalize_inferred_schema(
+    raw: dict[str, Any],
+    *,
+    title: str | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    warnings: list[str] = []
+    body = _normalize_schema_node(dict(raw), path="", warnings=warnings)
+    if not isinstance(body, dict):
+        body = {"type": "object", "properties": {}, "additionalProperties": False}
+    props = body.get("properties") if isinstance(body.get("properties"), dict) else {}
+    required = (
+        list(body["required"]) if isinstance(body.get("required"), list) else []
+    )
+    schema: dict[str, Any] = {
+        "$schema": _DRAFT_2020_12,
+        "type": "object",
+        "properties": props,
+        "additionalProperties": False,
+        "required": required,
+        "description": (
+            "Inferred from sample rows via genson (dry-run). "
+            "Review before production use."
+        ),
+    }
+    if title:
+        schema["$title"] = title
+    return schema, warnings
+
+
+@dataclass(frozen=True)
+class InferredSchemaResult:
+    """DET-normalized inferred schema plus mechanical conflict warnings."""
+
+    schema: dict[str, Any]
+    warnings: list[str]
 
 
 def infer_schema_from_records(
     records: list[dict[str, Any]],
     *,
     title: str | None = None,
-) -> dict[str, Any]:
+) -> InferredSchemaResult:
     """
     Infer a DET-style Draft 2020-12 object schema from sample rows.
 
-    Nested objects recurse one level. Runtime ``__*`` meta keys are ignored.
+    Uses genson for deep nested objects and array-of-object item schemas.
+    Runtime ``__*`` meta keys are stripped before inference. Mixed scalar
+    conflicts (e.g. integer+string) widen mechanically to ``string`` with a
+    warning — never invents ``format: date-time``.
     """
-    rows = [r for r in records if isinstance(r, dict)]
-    properties, required = _infer_object_properties(rows)
-    schema: dict[str, Any] = {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "properties": properties,
-        "additionalProperties": False,
-    }
-    if title:
-        schema["$title"] = title
-    if required:
-        schema["required"] = required
-    else:
-        schema["required"] = []
-    schema["description"] = (
-        "Inferred from sample rows (dry-run). Review before production use."
-    )
-    return schema
+    try:
+        from genson import SchemaBuilder
+    except ImportError as exc:
+        raise ImportError(
+            "schema inference requires the mcp extra (genson). "
+            'Install with: uv pip install "det-elt[mcp]"'
+        ) from exc
+
+    rows = [_strip_meta_keys(r) for r in records if isinstance(r, dict)]
+    rows = [r for r in rows if isinstance(r, dict)]
+    if not rows:
+        schema: dict[str, Any] = {
+            "$schema": _DRAFT_2020_12,
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+            "required": [],
+            "description": (
+                "Inferred from sample rows via genson (dry-run). "
+                "Review before production use."
+            ),
+        }
+        if title:
+            schema["$title"] = title
+        return InferredSchemaResult(schema=schema, warnings=[])
+
+    builder = SchemaBuilder()
+    for row in rows:
+        builder.add_object(row)
+    raw = builder.to_schema()
+    if not isinstance(raw, dict):
+        raise TypeError(f"genson returned non-object schema: {type(raw)}")
+    schema, warnings = _normalize_inferred_schema(raw, title=title)
+    return InferredSchemaResult(schema=schema, warnings=warnings)
 
 
 def schema_to_yaml(schema: dict[str, Any]) -> str:
@@ -164,7 +349,8 @@ def schema_from_sample_dry_run(
     """
     Infer a bronze JSON Schema from named sample rows or inline records.
 
-    Dry-run only — never writes ``schema_out``.
+    Dry-run only — never writes ``schema_out``. Deep nested / array-of-object
+    structure comes from genson; review ``warnings`` before writing.
     """
     from det.mcp.inspect import MAX_SAMPLE_LIMIT
 
@@ -212,9 +398,20 @@ def schema_from_sample_dry_run(
     if schema_out is not None:
         resolve_under_root(would_write, root=base)
 
-    schema = infer_schema_from_records(sampled, title=title)
+    inferred = infer_schema_from_records(sampled, title=title)
+    schema = inferred.schema
+    warnings = list(inferred.warnings)
     yaml_text = schema_to_yaml(schema)
     out_path = Path(would_write)
+    note = (
+        "Dry-run only — no file written. Review YAML, then write manually or via "
+        f"a confirmed edit to {would_write}."
+        + (" Path already exists." if (base / out_path).is_file() else "")
+    )
+    if warnings:
+        note += (
+            " Review warnings (mechanical type widenings) before accepting the draft."
+        )
     return {
         "dry_run": True,
         "pipeline": pipeline,
@@ -223,15 +420,8 @@ def schema_from_sample_dry_run(
         "would_write": would_write,
         "rows_sampled": len(sampled),
         "limit": capped,
-        "note": (
-            "Dry-run only — no file written. Review YAML, then write manually or via "
-            f"a confirmed edit to {would_write}."
-            + (
-                " Path already exists."
-                if (base / out_path).is_file()
-                else ""
-            )
-        ),
+        "warnings": warnings,
+        "note": note,
     }
 
 
@@ -390,7 +580,9 @@ def mapper_from_diff_dry_run(
 
     name = (mapper_name or "").strip()
     if not name.isidentifier():
-        raise ValueError(f"mapper_name must be a valid Python identifier, got {mapper_name!r}")
+        raise ValueError(
+            f"mapper_name must be a valid Python identifier, got {mapper_name!r}"
+        )
 
     from_doc = load_json_schema(from_path)
     to_doc = load_json_schema(to_path)

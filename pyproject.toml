@@ -1,6 +1,6 @@
 [project]
 name = "det-elt"
-version = "0.10.3"
+version = "0.10.4"
 description = "DET — Data Extract Tool: config-driven extraction runtime with pluggable ingestion"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -69,6 +69,8 @@ iceberg = [
 mcp = [
     # FastMCP lives in mcp 1.x; mcp 2.0 replaced it with MCPServer.
     "mcp>=1.2,<2",
+    # schema_from_sample_dry_run / infer_schema_from_records (deep nested drafts).
+    "genson>=1.3.0",
 ]
 
 [project.urls]

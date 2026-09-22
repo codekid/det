@@ -17,7 +17,7 @@ from det.runtime.meta import to_partition_value
 
 
 def test_infer_schema_from_mixed_rows():
-    schema = infer_schema_from_records(
+    result = infer_schema_from_records(
         [
             {"id": 1, "name": "a", "score": None},
             {"id": 2, "name": "b", "score": 1.5},
@@ -25,6 +25,7 @@ def test_infer_schema_from_mixed_rows():
         ],
         title="demo",
     )
+    schema = result.schema
     assert schema["$title"] == "demo"
     assert schema["additionalProperties"] is False
     assert set(schema["required"]) == {"id", "name"}
@@ -33,6 +34,154 @@ def test_infer_schema_from_mixed_rows():
     score_type = schema["properties"]["score"]["type"]
     assert "number" in (score_type if isinstance(score_type, list) else [score_type])
     assert "null" in (score_type if isinstance(score_type, list) else [score_type])
+    assert result.warnings == []
+
+
+def test_infer_schema_deep_nested_object():
+    result = infer_schema_from_records(
+        [
+            {
+                "id": "ord_1",
+                "customer": {
+                    "email": "a@b.com",
+                    "address": {"city": "Austin", "geo": {"lat": 30.2, "lon": -97.7}},
+                },
+            }
+        ]
+    )
+    props = result.schema["properties"]
+    geo = props["customer"]["properties"]["address"]["properties"]["geo"]
+    assert geo["properties"]["lat"]["type"] == "number"
+    assert geo["additionalProperties"] is False
+    assert props["customer"]["additionalProperties"] is False
+
+
+def test_infer_schema_array_of_objects():
+    result = infer_schema_from_records(
+        [
+            {
+                "id": "ord_1",
+                "line_items": [
+                    {"sku": "A", "qty": 1},
+                    {"sku": "B", "qty": 2},
+                ],
+            }
+        ]
+    )
+    items = result.schema["properties"]["line_items"]["items"]
+    assert items["properties"]["sku"]["type"] == "string"
+    assert items["properties"]["qty"]["type"] == "integer"
+    assert items["additionalProperties"] is False
+
+
+def test_infer_schema_strips_meta_keys():
+    result = infer_schema_from_records(
+        [
+            {
+                "id": 1,
+                "__extract_run_datetime": "2026-01-01T00:00:00+00:00",
+                "nested": {"x": 1, "__bronze_loaded_at": "nope"},
+            }
+        ]
+    )
+    props = result.schema["properties"]
+    assert "__extract_run_datetime" not in props
+    assert "id" in props
+    assert "__bronze_loaded_at" not in props["nested"]["properties"]
+    assert props["nested"]["properties"]["x"]["type"] == "integer"
+
+
+def test_infer_schema_widens_int_string_with_warning():
+    result = infer_schema_from_records(
+        [
+            {"id": 1, "qty": 1},
+            {"id": 2, "qty": "2"},
+        ]
+    )
+    assert result.schema["properties"]["qty"]["type"] == "string"
+    assert any("qty" in w and "string" in w for w in result.warnings)
+
+
+def test_normalize_scalar_strips_stale_structural_keywords():
+    """Widen-to-string must not keep properties/items/additionalProperties."""
+    from det.mcp.generate import _normalize_schema_node
+
+    warnings: list[str] = []
+    out = _normalize_schema_node(
+        {
+            "type": ["object", "string"],
+            "properties": {"x": {"type": "integer"}},
+            "required": ["x"],
+            "additionalProperties": True,
+            "items": {"type": "integer"},
+        },
+        path="payload",
+        warnings=warnings,
+    )
+    assert out["type"] == "string"
+    assert "properties" not in out
+    assert "required" not in out
+    assert "items" not in out
+    assert "additionalProperties" not in out
+    assert any("payload" in w for w in warnings)
+
+
+def test_fold_anyof_object_scalar_widens_to_string():
+    """anyOf object|string should widen, not leave complex anyOf intact."""
+    from det.mcp.generate import _normalize_schema_node
+
+    warnings: list[str] = []
+    out = _normalize_schema_node(
+        {
+            "anyOf": [
+                {"type": "string"},
+                {
+                    "type": "object",
+                    "properties": {"a": {"type": "integer"}},
+                    "required": ["a"],
+                },
+            ]
+        },
+        path="payload",
+        warnings=warnings,
+    )
+    assert out.get("type") == "string"
+    assert "anyOf" not in out
+    assert "properties" not in out
+    assert any("structural+scalar" in w or "string" in w for w in warnings)
+
+
+def test_fold_anyof_two_objects_left_intact():
+    """Structure-only anyOf stays for review; branches still get closed/normalized."""
+    from det.mcp.generate import _normalize_schema_node
+
+    warnings: list[str] = []
+    node = {
+        "anyOf": [
+            {
+                "type": "object",
+                "properties": {"a": {"type": "integer"}},
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "b": {
+                        "type": "object",
+                        "properties": {"c": {"type": "string"}},
+                    }
+                },
+            },
+        ]
+    }
+    out = _normalize_schema_node(node, path="payload", warnings=warnings)
+    assert "anyOf" in out
+    assert len(out["anyOf"]) == 2
+    assert out["anyOf"][0]["additionalProperties"] is False
+    assert out["anyOf"][1]["additionalProperties"] is False
+    nested = out["anyOf"][1]["properties"]["b"]
+    assert nested["additionalProperties"] is False
+    assert nested["properties"]["c"]["type"] == "string"
+    assert any("left anyOf intact" in w for w in warnings)
 
 
 def test_schema_from_sample_inline_dry_run(tmp_path: Path):
@@ -45,8 +194,20 @@ def test_schema_from_sample_inline_dry_run(tmp_path: Path):
     assert out["rows_sampled"] == 2
     assert out["would_write"] == "schemas/demo/demo.schema.yaml"
     assert "id" in out["schema"]["properties"]
+    assert out["warnings"] == []
     assert not (tmp_path / "schemas" / "demo" / "demo.schema.yaml").exists()
     assert "type: object" in out["yaml"]
+
+
+def test_schema_from_sample_dry_run_includes_widen_warnings(tmp_path: Path):
+    out = schema_from_sample_dry_run(
+        records=[{"qty": 1}, {"qty": "2"}],
+        schema_out="schemas/demo/mixed.schema.yaml",
+        root=tmp_path,
+    )
+    assert out["warnings"]
+    assert any("qty" in w for w in out["warnings"])
+    assert "warnings" in out["note"].lower() or "widening" in out["note"].lower()
 
 
 def _write_pipeline_and_raw(root: Path) -> Path:

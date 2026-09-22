@@ -65,7 +65,7 @@ from det.sources.base import (
     merge_source_config,
 )
 
-__version__ = "0.10.3"
+__version__ = "0.10.4"
 
 __all__ = [
     "LAKE_LAYOUT",
