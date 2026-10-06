@@ -2,17 +2,27 @@ from __future__ import annotations
 
 import builtins
 import gzip
+import threading
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import requests
 import yaml
 
+import det.runtime.lake as lake_mod
 from det.errors import DetPluginError
+from det.runtime.config import DestinationConfig
 from det.runtime.lake import (
     DEFAULT_LAKE_REL,
     ENV_LAKE_MODE,
     LakeRef,
+    ObjectVersionConflict,
+    _is_precondition_failed,
+    _local_gen_path,
+    _local_read_gen,
+    _match_rglob,
+    _raise_s3_cas,
     clear_memory_lakes,
     is_lake_uri,
     lake_mode_from_env,
@@ -56,8 +66,6 @@ def test_pick_lake_spec_order():
 
 
 def test_omitted_destination_path_is_unset():
-    from det.runtime.config import DestinationConfig
-
     dest = DestinationConfig(type="filesystem")
     assert dest.path is None
 
@@ -147,7 +155,6 @@ def test_memory_create_exclusive_rejects_preexisting_same_bytes(tmp_path: Path):
 
 def test_memory_create_exclusive_serializes_concurrent_creators(tmp_path: Path):
     """Exactly one of two racing exclusive creates on the same key may win."""
-    import threading
 
     # Repeat so a missing lock fails reliably rather than by chance.
     for i in range(30):
@@ -220,8 +227,6 @@ def test_memory_failed_extract_deletes_prefix(project_root: Path, tmp_path: Path
         (data_dir / "partial.bin").write_bytes(b"truncated")
         raise RuntimeError("download failed")
 
-    from unittest.mock import patch
-
     runner = PipelineRunner(tmp_path)
     with (
         patch.object(ExampleApiSource, "extract_to_raw", boom),
@@ -263,7 +268,6 @@ def test_glob_embedded_doublestar_matches_zero_or_more_dirs(tmp_path: Path):
     assert not any(p.endswith("other/b.txt") for p in matched)
 
     # Same coverage via rglob / matcher helpers.
-    from det.runtime.lake import _match_rglob
 
     assert _match_rglob("a/**/b.txt", "a/b.txt", "b.txt")
     assert _match_rglob("a/**/b.txt", "a/x/b.txt", "b.txt")
@@ -272,7 +276,6 @@ def test_glob_embedded_doublestar_matches_zero_or_more_dirs(tmp_path: Path):
 
 def test_glob_doublestar_with_character_class(tmp_path: Path):
     """``**/[ab].txt`` matches a/b names at any depth; ``[!a].txt`` excludes ``a``."""
-    from det.runtime.lake import _match_rglob
 
     lake = open_lake("memory://charclass", tmp_path)
     (lake / "a.txt").write_text("a", encoding="utf-8")
@@ -351,8 +354,6 @@ def test_path_constructor_never_used_for_s3(monkeypatch: pytest.MonkeyPatch, tmp
     def boom(*args, **kwargs):
         raise AssertionError("Path() must not wrap object-store lake URIs")
 
-    import det.runtime.lake as lake_mod
-
     monkeypatch.setattr(lake_mod, "_import_fsspec", boom)
     with pytest.raises(AssertionError, match="must not wrap"):
         open_lake("s3://bucket/prefix", tmp_path)
@@ -414,8 +415,6 @@ def test_open_lake_enforces_mode_before_import(monkeypatch: pytest.MonkeyPatch, 
 
 
 def test_local_replace_if_match_bumps_version_same_size(tmp_path: Path):
-    from det.runtime.lake import ObjectVersionConflict
-
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     target = lake / "locks" / "p" / "x.json"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -431,8 +430,6 @@ def test_local_replace_if_match_bumps_version_same_size(tmp_path: Path):
 
 
 def test_local_create_after_delete_increments_generation(tmp_path: Path):
-    from det.runtime.lake import _local_read_gen
-
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     target = lake / "locks" / "p" / "gen.json"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -447,8 +444,6 @@ def test_local_create_after_delete_increments_generation(tmp_path: Path):
 
 
 def test_local_read_gen_corrupt_fails_closed(tmp_path: Path):
-    from det.runtime.lake import _local_gen_path, _local_read_gen
-
     key = str(tmp_path / "obj.json")
     Path(key).write_bytes(b"x")
     _local_gen_path(key).write_text("not-an-int", encoding="utf-8")
@@ -460,8 +455,6 @@ def test_local_read_gen_corrupt_fails_closed(tmp_path: Path):
 def test_local_create_exclusive_rolls_back_when_gen_write_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    import det.runtime.lake as lake_mod
-
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     target = lake / "locks" / "p" / "fail-create.json"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -478,8 +471,6 @@ def test_local_create_exclusive_rolls_back_when_gen_write_fails(
 def test_local_replace_if_match_fails_before_publish_when_gen_write_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    import det.runtime.lake as lake_mod
-
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     target = lake / "locks" / "p" / "fail-replace.json"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -498,9 +489,6 @@ def test_local_replace_if_match_fails_before_publish_when_gen_write_fails(
 def test_local_replace_restores_gen_when_publish_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    import det.runtime.lake as lake_mod
-    from det.runtime.lake import _local_read_gen
-
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     target = lake / "locks" / "p" / "fail-publish.json"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -546,10 +534,6 @@ def test_local_iter_excludes_cas_sidecars(tmp_path: Path):
 
 
 def test_local_cas_serializes_concurrent_replace(tmp_path: Path):
-    import threading
-
-    from det.runtime.lake import ObjectVersionConflict
-
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     target = lake / "locks" / "p" / "race.json"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -576,8 +560,6 @@ def test_local_cas_serializes_concurrent_replace(tmp_path: Path):
 
 
 def test_is_precondition_failed_requires_structured_signal():
-    from det.runtime.lake import _is_precondition_failed, _raise_s3_cas
-
     class PreconditionFailed(Exception):
         pass
 

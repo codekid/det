@@ -153,8 +153,6 @@ def test_init_source_refuses_in_tree_name(tmp_path: Path) -> None:
 
 
 def test_discover_examples_gated(monkeypatch: pytest.MonkeyPatch) -> None:
-    from det.runtime.discovery import discovered_source_ids
-
     monkeypatch.delenv("DET_DISCOVER_EXAMPLES", raising=False)
     ids_off = discovered_source_ids()
     assert "noaa.storm_events" not in ids_off

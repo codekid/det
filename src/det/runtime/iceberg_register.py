@@ -188,17 +188,13 @@ def _require_register_catalog(
         uri = (environ.get(ENV_REST_URI) or "").strip()
         if not uri:
             raise ValueError(
-                f"{ENV_CATALOG}=rest requires {ENV_REST_URI} "
-                "(Iceberg REST catalog endpoint)"
+                f"{ENV_CATALOG}=rest requires {ENV_REST_URI} (Iceberg REST catalog endpoint)"
             )
         rest_host = rest_uri_identity(uri)
         warehouse = (environ.get("DET_ICEBERG_REST_WAREHOUSE") or "").strip() or None
     else:
         if not lake_uri.startswith("s3://"):
-            raise ValueError(
-                f"{ENV_CATALOG}=glue requires an s3:// lake "
-                f"(got {lake_uri!r})"
-            )
+            raise ValueError(f"{ENV_CATALOG}=glue requires an s3:// lake (got {lake_uri!r})")
         glue_id = (environ.get("DET_ICEBERG_GLUE_ID") or "").strip() or None
 
     return kind, rest_host, warehouse, glue_id
@@ -282,9 +278,7 @@ def format_catalog_target(plan: IcebergRegisterPlan) -> str:
     return ";".join(f"{k}={v}" for k, v in sorted(plan.catalog_target().items()))
 
 
-def with_catalog_target_argv(
-    argv: list[str], plan: IcebergRegisterPlan
-) -> list[str]:
+def with_catalog_target_argv(argv: list[str], plan: IcebergRegisterPlan) -> list[str]:
     """Append non-secret ``--catalog-target`` so approval digests bind the metastore."""
     cleaned: list[str] = []
     skip_next = False
@@ -300,9 +294,7 @@ def with_catalog_target_argv(
     return cleaned
 
 
-def approval_plan_for_register(
-    plan: IcebergRegisterPlan, argv: list[str]
-) -> ApprovalPlan:
+def approval_plan_for_register(plan: IcebergRegisterPlan, argv: list[str]) -> ApprovalPlan:
     return make_plan("iceberg-register", with_catalog_target_argv(argv, plan))
 
 
@@ -313,9 +305,7 @@ def assert_catalog_target_matches_env(
 ) -> None:
     """Refuse apply when live catalog env no longer matches the approved plan."""
     environ = dict(os.environ if env is None else env)
-    kind, rest_host, warehouse, glue_id = _require_register_catalog(
-        environ, plan.lake_uri
-    )
+    kind, rest_host, warehouse, glue_id = _require_register_catalog(environ, plan.lake_uri)
     live = IcebergRegisterPlan(
         catalog_kind=kind,
         lake_uri=plan.lake_uri,
@@ -333,9 +323,7 @@ def assert_catalog_target_matches_env(
         )
 
 
-def _ensure_namespace(
-    catalog: Any, namespace: str, *, table_location: str | None = None
-) -> None:
+def _ensure_namespace(catalog: Any, namespace: str, *, table_location: str | None = None) -> None:
     ensure_iceberg_namespace(catalog, namespace, table_location=table_location)
 
 
@@ -346,7 +334,7 @@ def apply_iceberg_register(
     env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Register plan tables into the configured REST/Glue catalog."""
-    from pyiceberg.exceptions import NoSuchTableError
+    from pyiceberg.exceptions import NoSuchTableError  # noqa: PLC0415
 
     environ = dict(os.environ if env is None else env)
     assert_catalog_target_matches_env(plan, env=environ)
@@ -362,9 +350,7 @@ def apply_iceberg_register(
             catalog.load_table(ident)
             status = "exists"
         except NoSuchTableError:
-            _ensure_namespace(
-                catalog, table.namespace, table_location=table.table_location
-            )
+            _ensure_namespace(catalog, table.namespace, table_location=table.table_location)
             logger.info(
                 "iceberg register",
                 namespace=table.namespace,
@@ -400,8 +386,7 @@ def format_dry_run(plan: IcebergRegisterPlan, argv: list[str]) -> str:
         lines.append(f"  glue_id={plan.glue_id}")
     for table in plan.tables:
         lines.append(
-            f"  {table.namespace}.{table.table} ({table.kind}) "
-            f"metadata={table.metadata_uri}"
+            f"  {table.namespace}.{table.table} ({table.kind}) metadata={table.metadata_uri}"
         )
     lines.append("")
     lines.append("approval_plan:")

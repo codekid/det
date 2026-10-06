@@ -17,9 +17,11 @@ from det.ingestion.iceberg_catalog_factory import (
     resolve_iceberg_catalog,
 )
 from det.ingestion.iceberg_writer import scan_iceberg_rows
+from det.runtime.config import load_pipeline_config
 from det.runtime.iceberg_register import apply_iceberg_register, build_iceberg_register_plan
 from det.runtime.ids import sql_names_for_config
 from det.runtime.lake import ENV_LAKE_MODE, open_lake
+from det.runtime.object_store import fsspec_s3_kwargs
 from det.runtime.runner import PipelineRunner
 
 _ENDPOINT = (os.environ.get("AWS_ENDPOINT_URL") or "").strip()
@@ -27,9 +29,7 @@ _REST_URI = (os.environ.get("DET_ICEBERG_REST_URI") or "").strip()
 _KEY = (os.environ.get("AWS_ACCESS_KEY_ID") or "minioadmin").strip()
 _SECRET = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "minioadmin").strip()
 _REGION = (
-    os.environ.get("AWS_REGION")
-    or os.environ.get("AWS_DEFAULT_REGION")
-    or "us-east-1"
+    os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
 ).strip()
 _BUCKET = (os.environ.get("DET_MINIO_BUCKET") or "det-ci").strip()
 _LAKE_URI = f"s3://{_BUCKET}/det-lake"
@@ -46,9 +46,7 @@ SOAK_ROWS = 12
 
 def _ensure_bucket() -> None:
     pytest.importorskip("s3fs")
-    import fsspec
-
-    from det.runtime.object_store import fsspec_s3_kwargs
+    import fsspec  # noqa: PLC0415
 
     fs = fsspec.filesystem("s3", **fsspec_s3_kwargs())
     if not fs.exists(_BUCKET):
@@ -144,8 +142,6 @@ def test_polaris_hadoop_write_then_register(
     assert result_reg["count"] == 1
     assert result_reg["applied"][0]["status"] == "registered"
 
-    from det.runtime.config import load_pipeline_config
-
     config = load_pipeline_config(pipe)
     ns, table = sql_names_for_config(config)
     lake = open_lake(lake_uri, tmp_path)
@@ -172,8 +168,6 @@ def test_polaris_greenfield_rest_write(
     runner = PipelineRunner(project_root=tmp_path)
     result = runner.run(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
     assert result.rows == SOAK_ROWS
-
-    from det.runtime.config import load_pipeline_config
 
     config = load_pipeline_config(pipe)
     ns, table = sql_names_for_config(config)

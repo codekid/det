@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -8,21 +9,22 @@ from det.sources.noaa.storm_events import NoaaStormEventsSource
 
 
 def _row(name: str, modified: str) -> str:
-    return (
-        f'<tr><td><a href="{name}">{name}</a></td>'
-        f"<td>{modified}</td></tr>"
+    return f'<tr><td><a href="{name}">{name}</a></td><td>{modified}</td></tr>'
+
+
+INDEX = (
+    "<html><body><table>"
+    + "".join(
+        [
+            "<tr><th>Name</th><th>Last modified</th></tr>",
+            _row("StormEvents_details-ftp_v1.0_d2023_c20240101.csv.gz", "2024-01-01 00:00"),
+            _row("StormEvents_details-ftp_v1.0_d2024_c20250101.csv.gz", "2025-01-01 00:00"),
+            _row("StormEvents_details-ftp_v1.0_d2024_c20260728.csv.gz", "2026-07-27 21:11"),
+            _row("StormEvents_details-ftp_v1.0_d2025_c20260728.csv.gz", "2026-07-27 21:11"),
+        ]
     )
-
-
-INDEX = "<html><body><table>" + "".join(
-    [
-        "<tr><th>Name</th><th>Last modified</th></tr>",
-        _row("StormEvents_details-ftp_v1.0_d2023_c20240101.csv.gz", "2024-01-01 00:00"),
-        _row("StormEvents_details-ftp_v1.0_d2024_c20250101.csv.gz", "2025-01-01 00:00"),
-        _row("StormEvents_details-ftp_v1.0_d2024_c20260728.csv.gz", "2026-07-27 21:11"),
-        _row("StormEvents_details-ftp_v1.0_d2025_c20260728.csv.gz", "2026-07-27 21:11"),
-    ]
-) + "</table></body></html>"
+    + "</table></body></html>"
+)
 
 
 def test_filenames_selected_by_data_year_not_mtime():
@@ -57,16 +59,12 @@ def test_get_soup_uses_http_get(monkeypatch):
         content = INDEX.encode()
         text = INDEX
 
-    monkeypatch.setattr(
-        "det.sources.noaa.storm_events.http_get", lambda *args, **kwargs: Resp()
-    )
+    monkeypatch.setattr("det.sources.noaa.storm_events.http_get", lambda *args, **kwargs: Resp())
     soup = NoaaStormEventsSource()._get_soup("https://ncei.example/")
     assert soup.find("table") is not None
 
 
 def test_download_uses_http_get_file(monkeypatch, tmp_path: Path):
-    import gzip
-
     captured: dict[str, object] = {}
 
     def fake_file(url, dest, **kwargs):

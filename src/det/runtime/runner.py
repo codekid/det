@@ -29,6 +29,7 @@ from det.runtime.lease import (
 from det.runtime.lease.dataset_lock import dataset_shared_lock
 from det.runtime.manifest import (
     LakePath,
+    committed_extract_run_dirs,
     is_committed_raw_dir,
     read_manifest,
     write_manifest,
@@ -57,6 +58,7 @@ def assert_manifest_lake_layout(manifest: ManifestPayload) -> None:
             f"manifest lake_layout={layout} newer than this DET install "
             f"(supports up to {LAKE_LAYOUT}); upgrade DET or use a matching lake"
         )
+
 
 @dataclass
 class ExtractResult:
@@ -118,6 +120,7 @@ class PipelineRunner:
             "options": options,
             "resolve_secret": self.settings.resolve_secret,
         }
+
     def extract(
         self,
         pipeline: PipelineConfig | Path | str,
@@ -217,9 +220,7 @@ class PipelineRunner:
                                 config=effective, interval=interval, data_dir=data_dir
                             )
                         except Exception as exc:
-                            reraise_as_plugin(
-                                exc, plugin=source.name, action="extract_to_raw"
-                            )
+                            reraise_as_plugin(exc, plugin=source.name, action="extract_to_raw")
                         check_raw_hygiene(raw_dir, artifacts)
                         refresh_lease(lease, store=None if lease is None else lease.store)
                         logger.info(
@@ -239,9 +240,7 @@ class PipelineRunner:
                                 "artifacts": artifacts,
                             },
                         )
-                        assert_lease_held(
-                            lease, store=None if lease is None else lease.store
-                        )
+                        assert_lease_held(lease, store=None if lease is None else lease.store)
                         write_manifest(raw_dir, manifest_payload)
                     except LeaseFencedError:
                         # Bytes may still be useful for ops; do not scrub the
@@ -344,9 +343,7 @@ class PipelineRunner:
                     manifest = read_manifest(raw_dir)
                     assert_manifest_lake_layout(manifest)
                     check_raw_hygiene(raw_dir, manifest.get("artifacts"))
-                    extract_ts = str(
-                        manifest.get("extract_run_datetime") or extract_run_datetime
-                    )
+                    extract_ts = str(manifest.get("extract_run_datetime") or extract_run_datetime)
                     receipt.extract_run_datetime = extract_ts
                     update_run_context(extract_run_datetime=extract_ts)
                     refresh_lease(lease, store=None if lease is None else lease.store)
@@ -452,9 +449,7 @@ class PipelineRunner:
         pipeline: PipelineConfig | Path | str,
         overrides: Sequence[str] | None,
     ) -> PipelineConfig:
-        return load_pipeline(
-            pipeline, project_root=self.project_root, overrides=overrides
-        )
+        return load_pipeline(pipeline, project_root=self.project_root, overrides=overrides)
 
     def _resolve_raw_dir(
         self,
@@ -470,9 +465,7 @@ class PipelineRunner:
             / f"__interval_end_datetime={to_partition_value(interval_end)}"
         )
         if extract_run_datetime:
-            target = (
-                base / f"__extract_run_datetime={to_partition_value(extract_run_datetime)}"
-            )
+            target = base / f"__extract_run_datetime={to_partition_value(extract_run_datetime)}"
             if not is_committed_raw_dir(target):
                 raise DetNotFoundError(
                     f"No committed raw extract at {target} "
@@ -481,7 +474,6 @@ class PipelineRunner:
             return target
         if not base.exists():
             raise DetNotFoundError(f"No raw partitions under {base}")
-        from det.runtime.manifest import committed_extract_run_dirs
 
         runs = committed_extract_run_dirs(base)
         if not runs:

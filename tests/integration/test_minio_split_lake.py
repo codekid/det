@@ -17,6 +17,7 @@ import yaml
 from det.ingestion.iceberg_writer import load_iceberg_table, scan_iceberg_rows
 from det.runtime.lake import ENV_LAKE_MODE, open_lake, resolve_lake_roots
 from det.runtime.manifest import read_manifest
+from det.runtime.object_store import fsspec_s3_kwargs
 from det.runtime.runner import PipelineRunner
 from det.runtime.settings import DetSettings
 
@@ -24,9 +25,7 @@ _ENDPOINT = (os.environ.get("AWS_ENDPOINT_URL") or "").strip()
 _KEY = (os.environ.get("AWS_ACCESS_KEY_ID") or "minioadmin").strip()
 _SECRET = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "minioadmin").strip()
 _REGION = (
-    os.environ.get("AWS_REGION")
-    or os.environ.get("AWS_DEFAULT_REGION")
-    or "us-east-1"
+    os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
 ).strip()
 
 pytestmark = [
@@ -40,9 +39,7 @@ SOAK_ROWS = 10
 
 def _ensure_bucket(name: str) -> None:
     pytest.importorskip("s3fs")
-    import fsspec
-
-    from det.runtime.object_store import fsspec_s3_kwargs
+    import fsspec  # noqa: PLC0415
 
     fs = fsspec.filesystem("s3", **fsspec_s3_kwargs())
     if not fs.exists(name):

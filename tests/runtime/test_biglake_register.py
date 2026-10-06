@@ -9,7 +9,10 @@ import pytest
 from det.ingestion.iceberg_catalog import hint_version_from_metadata_location
 from det.runtime.biglake_register import (
     BigLakeRegisterPlan,
+    BigLakeTablePlan,
+    _bronze_table_plans,
     _lake_bucket,
+    _metadata_uri_for_table,
     build_biglake_register_plan,
     build_iam_hint,
     external_table_ddl,
@@ -46,7 +49,6 @@ def test_external_table_ddl():
         lake_uri="gs://b/lake",
         tables=(),
     )
-    from det.runtime.biglake_register import BigLakeTablePlan
 
     table = BigLakeTablePlan(
         bq_dataset="bronze_example_api",
@@ -70,8 +72,6 @@ def test_bronze_table_plans_from_local_lake(tmp_path: Path, monkeypatch: pytest.
     meta.mkdir(parents=True)
     (meta / "00001-abc.metadata.json").write_text("{}", encoding="utf-8")
 
-    from det.runtime.biglake_register import _bronze_table_plans
-
     plans = _bronze_table_plans(lake, None)
     assert len(plans) == 1
     assert plans[0].bq_dataset == "bronze_example_api"
@@ -86,8 +86,6 @@ def test_metadata_uri_from_local_lake(tmp_path: Path, monkeypatch: pytest.Monkey
     meta.mkdir(parents=True)
     (meta / "00001-abc.metadata.json").write_text("{}", encoding="utf-8")
     (meta / "version-hint.text").write_text("00001-abc", encoding="utf-8")
-
-    from det.runtime.biglake_register import _metadata_uri_for_table
 
     uri = _metadata_uri_for_table(table_dir)
     assert uri.endswith("00001-abc.metadata.json")

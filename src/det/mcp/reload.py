@@ -11,11 +11,12 @@ import importlib
 import sys
 from typing import Final
 
+from det.runtime.discovery import evict_in_tree_plugin_modules
+from det.runtime.registry import clear_registries
+
 # Reload only modules MCP tools commonly need fresh, without replacing pydantic
 # model class identity (which breaks ``PipelineConfig(medallion=existing)``).
-_RELOAD_MODULES: Final[tuple[str, ...]] = (
-    "det.runtime.manifest",
-)
+_RELOAD_MODULES: Final[tuple[str, ...]] = ("det.runtime.manifest",)
 
 
 def refresh_det_runtime() -> None:
@@ -26,8 +27,6 @@ def refresh_det_runtime() -> None:
     Safe to call at the start of each MCP tool. Keeps registry / plugins /
     config class identity stable for in-process callers.
     """
-    from det.runtime.discovery import evict_in_tree_plugin_modules
-    from det.runtime.registry import clear_registries
 
     evict_in_tree_plugin_modules()
     clear_registries()
@@ -45,6 +44,6 @@ def refresh_det_runtime() -> None:
         except Exception:
             del sys.modules[name]
 
-    from det.plugins import load_plugins
+    from det.plugins import load_plugins  # noqa: PLC0415
 
     load_plugins()

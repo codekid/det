@@ -25,6 +25,8 @@ from typing import Any
 from airflow.decorators import dag, task
 from det_env import project_root
 
+from det import iter_iceberg_maintain_plans
+
 PROJECT_ROOT = project_root()
 SCHEDULE = os.environ.get("DET_ICEBERG_MAINTAIN_SCHEDULE", "@weekly")
 SUBMIT_SPEC = os.environ.get("DET_ICEBERG_MAINTAIN_SUBMIT", "").strip()
@@ -32,13 +34,9 @@ POOL = os.environ.get("DET_ICEBERG_MAINTAIN_POOL", "default_pool").strip() or "d
 try:
     MAX_ACTIVE = int(os.environ.get("DET_ICEBERG_MAINTAIN_MAX_ACTIVE", "4"))
 except ValueError as exc:
-    raise ValueError(
-        "DET_ICEBERG_MAINTAIN_MAX_ACTIVE must be an integer >= 1"
-    ) from exc
+    raise ValueError("DET_ICEBERG_MAINTAIN_MAX_ACTIVE must be an integer >= 1") from exc
 if MAX_ACTIVE < 1:
-    raise ValueError(
-        f"DET_ICEBERG_MAINTAIN_MAX_ACTIVE must be an integer >= 1, got {MAX_ACTIVE}"
-    )
+    raise ValueError(f"DET_ICEBERG_MAINTAIN_MAX_ACTIVE must be an integer >= 1, got {MAX_ACTIVE}")
 
 
 def _load_submit() -> Any:
@@ -48,8 +46,7 @@ def _load_submit() -> Any:
         )
     if ":" not in SUBMIT_SPEC:
         raise ValueError(
-            "DET_ICEBERG_MAINTAIN_SUBMIT must be module:function, "
-            f"got {SUBMIT_SPEC!r}"
+            f"DET_ICEBERG_MAINTAIN_SUBMIT must be module:function, got {SUBMIT_SPEC!r}"
         )
     mod_name, _, func_name = SUBMIT_SPEC.partition(":")
     mod = importlib.import_module(mod_name.strip())
@@ -70,8 +67,6 @@ def _load_submit() -> Any:
 def det_iceberg_maintain():
     @task
     def build_plans() -> list[dict[str, Any]]:
-        from det import iter_iceberg_maintain_plans
-
         plans = list(iter_iceberg_maintain_plans(PROJECT_ROOT))
         payload = [p.to_dict() for p in plans]
         actionable = [p for p in payload if p.get("actionable")]
@@ -92,10 +87,7 @@ def det_iceberg_maintain():
             )
         )
         if not SUBMIT_SPEC:
-            print(
-                "DET_ICEBERG_MAINTAIN_SUBMIT unset — plan-only run "
-                "(no mapped submit tasks)"
-            )
+            print("DET_ICEBERG_MAINTAIN_SUBMIT unset — plan-only run (no mapped submit tasks)")
             return []
         return actionable
 

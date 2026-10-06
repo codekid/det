@@ -31,9 +31,11 @@ logger = get_logger(__name__)
 
 CATCHUP_BQ_EXTERNAL_TABLE_PREFIX = "_det_catchup_runs_"
 
+
 def analytics_target_is_bigquery() -> bool:
     """True when ``DET_DBT_TARGET=bigquery`` (same signal as dbt profiles)."""
     return (os.environ.get("DET_DBT_TARGET") or "").strip() == "bigquery"
+
 
 def _list_silver_extract_runs_bigquery(
     config: PipelineConfig,
@@ -41,9 +43,7 @@ def _list_silver_extract_runs_bigquery(
     intervals: Sequence[tuple[str, str]] | None = None,
 ) -> tuple[set[tuple[str, str, str]], str | None]:
     project = (
-        os.environ.get("DET_GCP_PROJECT")
-        or os.environ.get("GOOGLE_CLOUD_PROJECT")
-        or ""
+        os.environ.get("DET_GCP_PROJECT") or os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
     ).strip()
     if not project:
         return (
@@ -54,7 +54,9 @@ def _list_silver_extract_runs_bigquery(
     if intervals is not None and len(intervals) == 0:
         return set(), None
     try:
-        from google.cloud import bigquery  # pyright: ignore[reportAttributeAccessIssue]
+        from google.cloud import (  # noqa: PLC0415
+            bigquery,  # pyright: ignore[reportAttributeAccessIssue]
+        )
     except ImportError:
         return (
             set(),
@@ -79,8 +81,7 @@ def _list_silver_extract_runs_bigquery(
             for i in range(0, len(intervals), _SILVER_PROBE_CHUNK):
                 chunk = intervals[i : i + _SILVER_PROBE_CHUNK]
                 ors = " or ".join(
-                    f"(`__interval_start_datetime` = @s{j} "
-                    f"and `__interval_end_datetime` = @e{j})"
+                    f"(`__interval_start_datetime` = @s{j} and `__interval_end_datetime` = @e{j})"
                     for j in range(len(chunk))
                 )
                 job_config = bigquery.QueryJobConfig(
@@ -111,6 +112,7 @@ def _list_silver_extract_runs_bigquery(
             out.add(key)
     return out, None
 
+
 def catchup_bq_external_table_name(manifest_id: str) -> str:
     """BigQuery table id for one catch-up heal (isolated per ``scm_…``)."""
     mid = validate_catchup_manifest_id(manifest_id)
@@ -126,14 +128,10 @@ def catchup_bq_relation(*, project: str, dataset: str, manifest_id: str) -> str:
 def _bq_project_dataset_location() -> tuple[str, str, str]:
     """Resolve ``(project, dataset, location)`` for catch-up BQ helpers."""
     project = (
-        os.environ.get("DET_GCP_PROJECT")
-        or os.environ.get("GOOGLE_CLOUD_PROJECT")
-        or ""
+        os.environ.get("DET_GCP_PROJECT") or os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
     ).strip()
     if not project:
-        raise ValueError(
-            "BigQuery catch-up requires DET_GCP_PROJECT (or GOOGLE_CLOUD_PROJECT)"
-        )
+        raise ValueError("BigQuery catch-up requires DET_GCP_PROJECT (or GOOGLE_CLOUD_PROJECT)")
     dataset = (os.environ.get("DET_BQ_DATASET") or "analytics").strip() or "analytics"
     location = (os.environ.get("DET_BQ_LOCATION") or "US").strip() or "US"
     return project, dataset, location
@@ -141,13 +139,16 @@ def _bq_project_dataset_location() -> tuple[str, str, str]:
 
 def _bq_client() -> tuple[Any, str, str, str]:
     try:
-        from google.cloud import bigquery  # pyright: ignore[reportAttributeAccessIssue]
+        from google.cloud import (  # noqa: PLC0415
+            bigquery,  # pyright: ignore[reportAttributeAccessIssue]
+        )
     except ImportError as exc:
         raise RuntimeError(
             'google-cloud-bigquery is required. Install: uv pip install -e ".[bigquery]"'
         ) from exc
     project, dataset, location = _bq_project_dataset_location()
     return bigquery.Client(project=project), project, dataset, location
+
 
 def _as_utc(dt: datetime | None) -> datetime | None:
     if dt is None:
@@ -167,6 +168,7 @@ def _manifest_id_from_catchup_table_name(table_id: str) -> str | None:
         return None
     return suffix
 
+
 def ensure_bq_catchup_external_table(*, runs_uri: str, manifest_id: str) -> str:
     """Create/replace a manifest-scoped external table over GCS NDJSON.
 
@@ -182,7 +184,9 @@ def ensure_bq_catchup_external_table(*, runs_uri: str, manifest_id: str) -> str:
         )
     mid = validate_catchup_manifest_id(manifest_id)
     client, project, dataset, location = _bq_client()
-    from google.cloud import bigquery  # pyright: ignore[reportAttributeAccessIssue]
+    from google.cloud import (  # noqa: PLC0415
+        bigquery,  # pyright: ignore[reportAttributeAccessIssue]
+    )
 
     _ensure_bq_dataset(client, project, dataset, location)
     table_name = catchup_bq_external_table_name(mid)
@@ -209,10 +213,10 @@ def ensure_bq_catchup_external_table(*, runs_uri: str, manifest_id: str) -> str:
     return relation
 
 
-def _ensure_bq_dataset(
-    client: Any, project: str, dataset_id: str, location: str
-) -> None:
-    from google.cloud import bigquery  # pyright: ignore[reportAttributeAccessIssue]
+def _ensure_bq_dataset(client: Any, project: str, dataset_id: str, location: str) -> None:
+    from google.cloud import (  # noqa: PLC0415
+        bigquery,  # pyright: ignore[reportAttributeAccessIssue]
+    )
 
     ref = bigquery.Dataset(f"{project}.{dataset_id}")
     ref.location = location
@@ -220,4 +224,3 @@ def _ensure_bq_dataset(
         client.get_dataset(ref)
     except Exception:
         client.create_dataset(ref, exists_ok=True)
-

@@ -8,6 +8,7 @@ import yaml
 
 from det.mcp.context import PathSandboxError
 from det.mcp.generate import (
+    _normalize_schema_node,
     infer_schema_from_records,
     mapper_from_diff_dry_run,
     schema_from_sample_dry_run,
@@ -104,7 +105,6 @@ def test_infer_schema_widens_int_string_with_warning():
 
 def test_normalize_scalar_strips_stale_structural_keywords():
     """Widen-to-string must not keep properties/items/additionalProperties."""
-    from det.mcp.generate import _normalize_schema_node
 
     warnings: list[str] = []
     out = _normalize_schema_node(
@@ -128,7 +128,6 @@ def test_normalize_scalar_strips_stale_structural_keywords():
 
 def test_fold_anyof_object_scalar_widens_to_string():
     """anyOf object|string should widen, not leave complex anyOf intact."""
-    from det.mcp.generate import _normalize_schema_node
 
     warnings: list[str] = []
     out = _normalize_schema_node(
@@ -153,7 +152,6 @@ def test_fold_anyof_object_scalar_widens_to_string():
 
 def test_fold_anyof_two_objects_left_intact():
     """Structure-only anyOf stays for review; branches still get closed/normalized."""
-    from det.mcp.generate import _normalize_schema_node
 
     warnings: list[str] = []
     node = {

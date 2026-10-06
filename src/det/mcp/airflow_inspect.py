@@ -15,7 +15,9 @@ import requests
 
 from det.logging import redact_uri_credentials
 from det.mcp.context import project_root
+from det.mcp.errors import sanitize_detail
 from det.mcp.inspect import DEFAULT_SAMPLE_LIMIT, clamp_sample_limit
+from det.runtime.approval import backfill_write_argv, make_plan
 
 DET_DAG_IDS = (
     "det_extract_bronze",
@@ -123,9 +125,7 @@ def airflow_settings(*, root: Path | None = None) -> AirflowSettings | dict[str,
         or DEFAULT_PASSWORD
     )
     try:
-        timeout = float(
-            os.environ.get("DET_AIRFLOW_TIMEOUT_SEC") or DEFAULT_TIMEOUT_SEC
-        )
+        timeout = float(os.environ.get("DET_AIRFLOW_TIMEOUT_SEC") or DEFAULT_TIMEOUT_SEC)
     except ValueError:
         timeout = DEFAULT_TIMEOUT_SEC
 
@@ -144,8 +144,6 @@ def _is_local_url(base_url: str) -> bool:
 
 
 def _unreachable_note(base_url: str, exc: BaseException) -> str:
-    from det.mcp.errors import sanitize_detail
-
     detail = sanitize_detail(exc) if isinstance(exc, Exception) else str(exc)
     if _is_local_url(base_url):
         return (
@@ -225,16 +223,13 @@ def _request(
     return resp.text, None
 
 
-def daily_logical_dates_for_interval(
-    interval_start: str, interval_end: str
-) -> list[str]:
+def daily_logical_dates_for_interval(interval_start: str, interval_end: str) -> list[str]:
     """Map DET ``[interval_start, interval_end)`` to Airflow @daily logical_date ISOs."""
     start = date.fromisoformat(interval_start.strip()[:10])
     end = date.fromisoformat(interval_end.strip()[:10])
     if end <= start:
         raise ValueError(
-            f"interval_end ({end.isoformat()}) must be after "
-            f"interval_start ({start.isoformat()})"
+            f"interval_end ({end.isoformat()}) must be after interval_start ({start.isoformat()})"
         )
     out: list[str] = []
     day = start
@@ -383,9 +378,7 @@ def describe_airflow_det_env(*, root: Path | None = None) -> dict[str, Any]:
     for key in ("DET_ANALYTICS_DUCKDB", "DET_OPS_DUCKDB"):
         value = raw.get(key, "")
         if value and not (value.startswith("/") or Path(value).is_absolute()):
-            path_notes.append(
-                f"{key} should be absolute in Compose/Airflow (got {value!r})"
-            )
+            path_notes.append(f"{key} should be absolute in Compose/Airflow (got {value!r})")
 
     client = airflow_settings(root=base)
     client_public: dict[str, Any]
@@ -426,7 +419,6 @@ def preview_backfill_conf(
 ) -> dict[str, Any]:
     """Preview backfill trigger conf + logical dates. Never triggers a DagRun."""
     _ = root
-    from det.runtime.approval import backfill_write_argv, make_plan
 
     try:
         logical_dates = daily_logical_dates_for_interval(interval_start, interval_end)
@@ -447,9 +439,7 @@ def preview_backfill_conf(
         "cd airflow && docker compose exec airflow-scheduler "
         f"airflow dags trigger det_backfill_extract_bronze --conf '{conf_json}'"
     )
-    generic_hint = (
-        f"airflow dags trigger det_backfill_extract_bronze --conf '{conf_json}'"
-    )
+    generic_hint = f"airflow dags trigger det_backfill_extract_bronze --conf '{conf_json}'"
     return {
         "ok": True,
         "dag_id": "det_backfill_extract_bronze",

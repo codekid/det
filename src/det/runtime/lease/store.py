@@ -76,7 +76,7 @@ def open_lease_store(
 ) -> LeaseStore:
     """Build the store for *options*. Postgres requires ``resolve_secret``."""
     if options.backend == "lake":
-        from det.runtime.lease.lake_store import LakeLeaseStore
+        from det.runtime.lease.lake_store import LakeLeaseStore  # noqa: PLC0415
 
         if options.mode != "exact":
             raise ValueError(
@@ -86,7 +86,7 @@ def open_lease_store(
         return LakeLeaseStore(lake)
 
     if options.backend == "postgres":
-        from det.runtime.lease.postgres_store import PostgresLeaseStore
+        from det.runtime.lease.postgres_store import PostgresLeaseStore  # noqa: PLC0415
 
         if resolve_secret is None:
             raise ValueError(

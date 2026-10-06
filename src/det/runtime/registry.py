@@ -13,6 +13,7 @@ from det.runtime.discovery import (
     load_source,
     resolve_discovery_root,
 )
+from det.runtime.mappers import identity_mapper
 from det.sources.base import SourcePlugin
 
 # Test/process-wide injection via register_source/register_mapper (not project-local).
@@ -55,7 +56,7 @@ def clear_registries() -> None:
     _INGESTION_REGISTRY.clear()
     _MAPPER_REGISTRY.clear()
     _MAPPERS_SCANNED.clear()
-    import det.plugins as plugs
+    import det.plugins as plugs  # noqa: PLC0415
 
     plugs._LOADED = False
 
@@ -113,9 +114,7 @@ def _ensure_source_factory(
     except PluginLoadError:
         raise
     except Exception as exc:
-        raise DetPluginError(
-            f"failed to load source {name!r}: {exc}", plugin=name
-        ) from exc
+        raise DetPluginError(f"failed to load source {name!r}: {exc}", plugin=name) from exc
     _SOURCE_REGISTRY[key] = factory
     return factory
 
@@ -138,8 +137,6 @@ def _ensure_mappers(*, project_root: Path | None = None) -> None:
     if root_key in _MAPPERS_SCANNED:
         return
     if _resolve_mapper("identity", root_key) is None:
-        from det.runtime.mappers import identity_mapper
-
         register_mapper("identity", identity_mapper)
     for mapper_name, fn in iter_discovered_mappers(project_root=project_root):
         register_mapper(mapper_name, fn, project_root=project_root)

@@ -6,16 +6,20 @@ from typing import Any
 
 import pytest
 
+from det.runtime import registry as reg
 from det.runtime.discovery import (
     PluginLoadError,
     collect_mappers,
     discovered_source_ids,
+    evict_in_tree_plugin_modules,
     in_tree_source_map,
     is_in_tree_plugin_module,
     source_class_from_module,
 )
 from det.runtime.registry import (
+    get_mapper,
     get_source,
+    list_mappers,
     register_mapper,
 )
 from det.sources.base import mapper
@@ -116,8 +120,6 @@ def test_collect_mappers_and_duplicate_in_module():
 
 
 def test_register_mapper_rejects_different_function():
-    from det.runtime import registry as reg
-
     def a(row: dict[str, Any]) -> dict[str, Any]:
         return row
 
@@ -145,9 +147,6 @@ def test_entry_point_source_collides_with_in_tree(monkeypatch: pytest.MonkeyPatc
 
 
 def test_get_source_does_not_import_other_providers():
-    from det.runtime import registry as reg
-    from det.runtime.discovery import evict_in_tree_plugin_modules
-
     evict_in_tree_plugin_modules()
     reg._SOURCE_REGISTRY.clear()
     assert "det.sources.noaa.storm_events" not in sys.modules
@@ -158,8 +157,6 @@ def test_get_source_does_not_import_other_providers():
 
 
 def test_noaa_storm_events_mapper_in_tree():
-    from det.runtime.registry import get_mapper, list_mappers
-
     name = "noaa_storm_events_episode_id_str"
     assert name in list_mappers()
     mapper = get_mapper(name)

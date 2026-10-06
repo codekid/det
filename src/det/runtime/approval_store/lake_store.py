@@ -7,25 +7,22 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
+from det.logging import get_logger
+from det.runtime.approval import ApprovalError, effective_status, utcnow
+from det.runtime.approval import _iso as approval_iso
 from det.runtime.approval_store.enrich import DEFAULT_HEARTBEAT_INTERVAL_SEC
 from det.runtime.lake import LakeRef, ObjectVersionConflict
 
 
 def _iso(dt: datetime) -> str:
-    from det.runtime.approval import _iso as approval_iso
-
     return approval_iso(dt)
 
 
 def _utcnow() -> datetime:
-    from det.runtime.approval import utcnow
-
     return utcnow()
 
 
 def _validate_id(approval_id: str) -> None:
-    from det.runtime.approval import ApprovalError
-
     if not approval_id.startswith("apr_") or "/" in approval_id or "\\" in approval_id:
         raise ApprovalError("approval_not_found", f"invalid approval id {approval_id!r}")
 
@@ -45,7 +42,6 @@ class LakeApprovalStore:
 
     def _write_record(self, record: dict[str, Any], *, expected_version: str) -> None:
         """CAS update against the version observed at load (never soft-overwrite)."""
-        from det.runtime.approval import ApprovalError
 
         ref = self._record_ref(str(record["id"]))
         payload = (json.dumps(record, indent=2) + "\n").encode("utf-8")
@@ -59,14 +55,11 @@ class LakeApprovalStore:
 
     def _load_versioned(self, approval_id: str) -> tuple[dict[str, Any], str]:
         """Load record + opaque version; version is taken before bytes (fail closed)."""
-        from det.runtime.approval import ApprovalError
 
         ref = self._record_ref(approval_id)
         version = ref.object_version()
         if version is None or not ref.is_file():
-            raise ApprovalError(
-                "approval_not_found", f"no approval file for {approval_id}"
-            )
+            raise ApprovalError("approval_not_found", f"no approval file for {approval_id}")
         try:
             rec = json.loads(ref.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -76,8 +69,6 @@ class LakeApprovalStore:
         return rec, version
 
     def create(self, record: dict[str, Any]) -> dict[str, Any]:
-        from det.runtime.approval import ApprovalError
-
         ref = self._record_ref(str(record["id"]))
         payload = (json.dumps(record, indent=2) + "\n").encode("utf-8")
         try:
@@ -91,14 +82,13 @@ class LakeApprovalStore:
     def load(self, approval_id: str) -> dict[str, Any]:
         rec, _version = self._load_versioned(approval_id)
         return rec
+
     def list(
         self,
         *,
         statuses: Sequence[str] | None = None,
         now: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        from det.runtime.approval import effective_status
-
         if not self.root.exists():
             return []
         wanted = set(statuses) if statuses is not None else None
@@ -123,8 +113,6 @@ class LakeApprovalStore:
         now: datetime | None = None,
         heartbeat_interval_sec: int = DEFAULT_HEARTBEAT_INTERVAL_SEC,
     ) -> dict[str, Any]:
-        from det.runtime.approval import ApprovalError, effective_status
-
         rec, version = self._load_versioned(approval_id)
         status = effective_status(rec, now=now)
         if status != "unused":
@@ -164,15 +152,11 @@ class LakeApprovalStore:
         *,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        from det.runtime.approval import ApprovalError, effective_status
-
         for _ in range(2):
             rec, version = self._load_versioned(approval_id)
             status = effective_status(rec, now=now)
             if status not in {"unused", "claimed"}:
-                raise ApprovalError(
-                    f"approval_{status}", f"approval {approval_id} is {status}"
-                )
+                raise ApprovalError(f"approval_{status}", f"approval {approval_id} is {status}")
             rec["status"] = "consumed"
             rec["consumed_at"] = _iso(now or _utcnow())
             try:
@@ -198,9 +182,6 @@ class LakeApprovalStore:
         released_by: str,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        from det.logging import get_logger
-        from det.runtime.approval import ApprovalError, effective_status
-
         for _ in range(2):
             rec, version = self._load_versioned(approval_id)
             status = effective_status(rec, now=now)
@@ -256,7 +237,6 @@ class LakeApprovalStore:
         *,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        from det.runtime.approval import ApprovalError, effective_status
 
         # Retry once on CAS conflict; never overwrite a consume/release that won.
         for _ in range(2):

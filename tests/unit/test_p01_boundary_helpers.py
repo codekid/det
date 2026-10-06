@@ -9,20 +9,31 @@ from pathlib import Path
 import pytest
 import yaml
 
-from det.runtime.bronze_runs import list_bronze_runs, run_dict, walk_hive_runs
+from det.runtime.bronze_runs import (
+    _list_bronze_sql_runs,
+    list_bronze_runs,
+    run_dict,
+    walk_hive_runs,
+)
+from det.runtime.config import load_pipeline_config
 from det.runtime.limits import DEFAULT_LIST_LIMIT, clamp_list_limit
+from det.runtime.manifest import write_manifest
+from det.runtime.meta import to_partition_value
 from det.runtime.schema_shapes import (
     allowed_types,
     is_array_prop,
     is_object_prop,
     is_scalar_prop,
 )
+from det.runtime.secrets import clear_secret_cache
 from det.runtime.warehouse_paths import analytics_duckdb_path, ops_duckdb_path
+from det.scaffold import check_dbt as check_dbt_mod
 from det.scaffold.check_dbt import (
     check_pipeline_config_with_dbt,
     check_project_with_dbt,
     scaffold_sql_stale_findings,
 )
+from det.scaffold.dbt import scaffold_dbt
 
 
 def test_schema_shapes_classifiers() -> None:
@@ -74,9 +85,6 @@ def test_clamp_list_limit_and_warehouse_paths(
 def test_walk_hive_runs_and_filesystem_list_bronze(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from det.runtime.config import load_pipeline_config
-    from det.runtime.manifest import write_manifest
-
     monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path))
     root = tmp_path
     ds = (
@@ -159,7 +167,6 @@ def test_walk_hive_runs_and_filesystem_list_bronze(
 
 def test_list_bronze_runs_duckdb(tmp_path: Path) -> None:
     duckdb = pytest.importorskip("duckdb")
-    from det.runtime.config import load_pipeline_config
 
     root = tmp_path
     pipe = root / "configs" / "pipelines" / "acme" / "widgets.yaml"
@@ -231,9 +238,7 @@ def test_list_bronze_runs_duckdb(tmp_path: Path) -> None:
     missing_db = list_bronze_runs(
         config.model_copy(
             update={
-                "destination": config.destination.model_copy(
-                    update={"connection": "nope.duckdb"}
-                )
+                "destination": config.destination.model_copy(update={"connection": "nope.duckdb"})
             }
         ),
         root=root,
@@ -269,7 +274,6 @@ def _write_acme_plugin(root: Path, name: str = "acme.widgets") -> None:
 
 def test_list_bronze_runs_duckdb_table_missing(tmp_path: Path) -> None:
     duckdb = pytest.importorskip("duckdb")
-    from det.runtime.config import load_pipeline_config
 
     root = tmp_path
     pipe = root / "configs" / "pipelines" / "acme" / "widgets.yaml"
@@ -304,8 +308,6 @@ def test_list_bronze_runs_duckdb_table_missing(tmp_path: Path) -> None:
 
 
 def test_list_bronze_runs_iceberg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from det.runtime.config import load_pipeline_config
-
     root = tmp_path
     pipe = root / "configs" / "pipelines" / "acme" / "widgets.yaml"
     pipe.parent.mkdir(parents=True)
@@ -364,8 +366,6 @@ def test_list_bronze_runs_iceberg(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 
 
 def test_walk_hive_runs_filters_and_committed(tmp_path: Path) -> None:
-    from det.runtime.meta import to_partition_value
-
     root = tmp_path
     base = root / "raw" / "acme" / "widgets_v1"
     start = to_partition_value("2026-08-06T00:00:00+00:00")
@@ -428,9 +428,6 @@ def test_walk_hive_runs_filters_and_committed(tmp_path: Path) -> None:
 
 
 def test_list_bronze_sql_runs_unsupported_filesystem(tmp_path: Path) -> None:
-    from det.runtime.bronze_runs import _list_bronze_sql_runs
-    from det.runtime.config import load_pipeline_config
-
     pipe = tmp_path / "configs" / "pipelines" / "acme" / "widgets.yaml"
     pipe.parent.mkdir(parents=True)
     schema = tmp_path / "schemas" / "acme" / "widgets" / "widgets.schema.yaml"
@@ -557,8 +554,6 @@ def _write_postgres_pipeline(root: Path) -> Path:
 
 
 def test_list_bronze_runs_postgres(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from det.runtime.config import load_pipeline_config
-
     monkeypatch.setenv("DET_POSTGRES_DSN", "postgresql://det:secret@db/det")
     pipe = _write_postgres_pipeline(tmp_path)
     config = load_pipeline_config(pipe)
@@ -587,7 +582,6 @@ def test_list_bronze_runs_postgres(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert missing_note and "table not found" in missing_note
 
     monkeypatch.delenv("DET_POSTGRES_DSN", raising=False)
-    from det.runtime.secrets import clear_secret_cache
 
     clear_secret_cache()
     _install_list_runs_psycopg(monkeypatch, rows=rows)
@@ -603,8 +597,6 @@ def test_list_bronze_runs_postgres(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 
 
 def test_list_bronze_runs_iceberg_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from det.runtime.config import load_pipeline_config
-
     root = tmp_path
     pipe = root / "configs" / "pipelines" / "acme" / "widgets.yaml"
     pipe.parent.mkdir(parents=True)
@@ -648,10 +640,6 @@ def test_list_bronze_runs_iceberg_window(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
 
 def test_scaffold_sql_stale_render_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from det.runtime.config import load_pipeline_config
-    from det.scaffold import check_dbt as check_dbt_mod
-    from det.scaffold.dbt import scaffold_dbt
-
     pipe = tmp_path / "configs" / "pipelines" / "acme" / "widgets.yaml"
     pipe.parent.mkdir(parents=True)
     schema = tmp_path / "schemas" / "acme" / "widgets" / "widgets.schema.yaml"
@@ -718,9 +706,6 @@ def test_check_project_with_dbt_without_scaffold(tmp_path: Path) -> None:
 
 
 def test_check_project_with_dbt_detects_stale_silver(tmp_path: Path) -> None:
-    from det.runtime.config import load_pipeline_config
-    from det.scaffold.dbt import scaffold_dbt
-
     pipe = tmp_path / "configs" / "pipelines" / "acme" / "widgets.yaml"
     pipe.parent.mkdir(parents=True)
     schema = tmp_path / "schemas" / "acme" / "widgets" / "widgets.schema.yaml"
@@ -762,9 +747,6 @@ def test_check_project_with_dbt_detects_stale_silver(tmp_path: Path) -> None:
 
 
 def test_scaffold_sql_stale_missing_file_and_normalize(tmp_path: Path) -> None:
-    from det.runtime.config import load_pipeline_config
-    from det.scaffold.dbt import scaffold_dbt
-
     pipe = tmp_path / "configs" / "pipelines" / "acme" / "widgets.yaml"
     pipe.parent.mkdir(parents=True)
     schema = tmp_path / "schemas" / "acme" / "widgets" / "widgets.schema.yaml"
@@ -810,9 +792,6 @@ def test_scaffold_sql_stale_missing_file_and_normalize(tmp_path: Path) -> None:
 def test_scaffold_sql_stale_unreadable_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from det.runtime.config import load_pipeline_config
-    from det.scaffold.dbt import scaffold_dbt
-
     pipe = tmp_path / "configs" / "pipelines" / "acme" / "widgets.yaml"
     pipe.parent.mkdir(parents=True)
     schema = tmp_path / "schemas" / "acme" / "widgets" / "widgets.schema.yaml"
@@ -849,15 +828,11 @@ def test_scaffold_sql_stale_unreadable_file(
 
     monkeypatch.setattr(Path, "read_text", _boom)
     findings = check_pipeline_config_with_dbt(pipe, project_root=tmp_path)
-    assert any(
-        f.code == "scaffold_sql_stale" and "could not read" in f.detail for f in findings
-    )
+    assert any(f.code == "scaffold_sql_stale" and "could not read" in f.detail for f in findings)
 
 
 def test_scaffold_sql_stale_despite_missing_dbt_models(tmp_path: Path) -> None:
     """Silver drift still reported when only stg is missing (missing_dbt_models)."""
-    from det.runtime.config import load_pipeline_config
-    from det.scaffold.dbt import scaffold_dbt
 
     pipe = tmp_path / "configs" / "pipelines" / "acme" / "widgets.yaml"
     pipe.parent.mkdir(parents=True)
@@ -900,8 +875,6 @@ def test_scaffold_sql_stale_despite_missing_dbt_models(tmp_path: Path) -> None:
 def test_check_pipeline_config_with_dbt_early_exits(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from det.scaffold import check_dbt as check_dbt_mod
-
     pipe = tmp_path / "configs" / "pipelines" / "acme" / "widgets.yaml"
     pipe.parent.mkdir(parents=True)
     schema = tmp_path / "schemas" / "acme" / "widgets" / "widgets.schema.yaml"
@@ -945,9 +918,9 @@ def test_check_pipeline_config_with_dbt_early_exits(
 
     monkeypatch.setattr(check_dbt_mod, "load_pipeline_config", _boom)
     (tmp_path / "dbt" / "models" / "silver").mkdir(parents=True)
-    (
-        tmp_path / "dbt" / "models" / "silver" / "silver_acme__widgets.sql"
-    ).write_text("select 1\n", encoding="utf-8")
+    (tmp_path / "dbt" / "models" / "silver" / "silver_acme__widgets.sql").write_text(
+        "select 1\n", encoding="utf-8"
+    )
     findings4 = check_pipeline_config_with_dbt(pipe, project_root=tmp_path)
     assert not any(f.code == "scaffold_sql_stale" for f in findings4)
 

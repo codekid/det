@@ -18,6 +18,7 @@ that runs — every flag that can change *what* or *where* is written is bound i
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -36,6 +37,8 @@ from det.runtime.approval_store import (
     open_approval_store,
 )
 from det.runtime.approval_store.legacy import legacy_approvals_dir
+from det.runtime.meta import identity_iso, to_interval_datetime
+from det.runtime.silver_catchup.ids import resolve_catchup_candidate_scope
 
 logger = get_logger(__name__)
 
@@ -106,8 +109,6 @@ def ttl_sec_from_env() -> int:
 
 
 def plan_digest(command: str, argv: Sequence[str]) -> str:
-    import hashlib
-
     payload = {"argv": list(argv), "command": command}
     blob = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()
@@ -469,7 +470,6 @@ def _norm_interval(value: str | None) -> str | None:
     text = str(value).strip()
     if not text:
         return None
-    from det.runtime.meta import to_interval_datetime
 
     return to_interval_datetime(text)
 
@@ -824,8 +824,6 @@ def silver_catchup_plan_write_argv(
     lake_path_bronze: str | None = None,
     lake_path_ops: str | None = None,
 ) -> list[str]:
-    from det.runtime.silver_catchup.ids import resolve_catchup_candidate_scope
-
     argv = ["silver-catchup-plan", "--apply"]
     if all_pipelines:
         argv.append("--all-pipelines")
@@ -909,8 +907,6 @@ def silver_catchup_cleanup_write_argv(
     if mid:
         argv.extend(["--manifest-id", mid])
     else:
-        from det.runtime.meta import identity_iso
-
         argv.extend(["--created-before", identity_iso(before)])
     return argv
 

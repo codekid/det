@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import importlib
+import sys
 from pathlib import Path
 
 import pytest
 
-from det.runtime.approval import create_approval, load_approval, prune_write_argv
+from det.runtime.approval import (
+    backfill_write_argv,
+    create_approval,
+    load_approval,
+    prune_write_argv,
+)
 
 
 def _load_det_env(project_root: Path):
-    import importlib
-    import sys
-
     dags = str(project_root / "dags")
     if dags not in sys.path:
         sys.path.insert(0, dags)
@@ -27,10 +31,7 @@ def test_approval_id_from_conf_keys(project_root: Path):
     assert det_env.approval_id_from_conf({}) is None
     assert det_env.approval_id_from_conf({"approval": "  apr_abc  "}) == "apr_abc"
     assert det_env.approval_id_from_conf({"approval_id": "apr_xyz"}) == "apr_xyz"
-    assert (
-        det_env.approval_id_from_conf({"approval": "apr_a", "approval_id": "apr_b"})
-        == "apr_a"
-    )
+    assert det_env.approval_id_from_conf({"approval": "apr_a", "approval_id": "apr_b"}) == "apr_a"
     assert det_env.approval_id_from_conf({"approval": "  "}) is None
 
 
@@ -130,8 +131,6 @@ def test_gate_backfill_requires_id(project_root: Path, tmp_path: Path):
 
 
 def test_gate_and_consume_backfill_approval(project_root: Path, tmp_path: Path):
-    from det.runtime.approval import backfill_write_argv
-
     det_env = _load_det_env(project_root)
     argv = backfill_write_argv("2026-08-01", "2026-08-08")
     rec = create_approval(
@@ -158,8 +157,6 @@ def test_gate_and_consume_backfill_approval(project_root: Path, tmp_path: Path):
 
 
 def test_gate_backfill_argv_mismatch(project_root: Path, tmp_path: Path):
-    from det.runtime.approval import backfill_write_argv
-
     det_env = _load_det_env(project_root)
     argv = backfill_write_argv("2026-08-01", "2026-08-08")
     rec = create_approval(

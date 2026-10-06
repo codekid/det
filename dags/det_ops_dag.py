@@ -15,6 +15,10 @@ from pathlib import Path
 from airflow.decorators import dag, task
 from det_env import ops_dbt_env, ops_dbt_target, project_root
 
+from det.runtime.dbt_runner import DbtNotInstalledError, run_dbt
+from det.runtime.lake import open_lake, pick_lake_spec
+from det.runtime.receipts_materialize import materialize_receipts
+
 PROJECT_ROOT = project_root()
 DBT_PROJECT = Path(os.environ.get("DET_DBT_PROJECT", str(PROJECT_ROOT / "dbt")))
 
@@ -29,9 +33,6 @@ DBT_PROJECT = Path(os.environ.get("DET_DBT_PROJECT", str(PROJECT_ROOT / "dbt")))
 def det_ops_receipts():
     @task
     def materialize_runs(data_interval_start=None, data_interval_end=None) -> dict:
-        from det.runtime.lake import open_lake, pick_lake_spec
-        from det.runtime.receipts_materialize import materialize_receipts
-
         for key, value in ops_dbt_env().items():
             os.environ[key] = value
 
@@ -54,8 +55,6 @@ def det_ops_receipts():
 
     @task
     def dbt_ops_build(_materialize_info: dict) -> dict:
-        from det.runtime.dbt_runner import DbtNotInstalledError, run_dbt
-
         for key, value in ops_dbt_env().items():
             os.environ[key] = value
 
@@ -72,9 +71,7 @@ def det_ops_receipts():
             raise
 
         if result.returncode != 0:
-            raise RuntimeError(
-                f"dbt ops build failed with exit code {result.returncode}"
-            )
+            raise RuntimeError(f"dbt ops build failed with exit code {result.returncode}")
         return {
             "command": result.command,
             "returncode": result.returncode,

@@ -15,6 +15,9 @@ Trigger with conf::
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -59,10 +62,6 @@ PROJECT_ROOT = project_root()
 def det_clear_lock():
     @task
     def clear_lock(**context) -> dict:
-        import shutil
-        import subprocess
-        import sys
-
         det_bin = shutil.which("det")
         if det_bin is None:
             candidate = Path(sys.executable).parent / "det"

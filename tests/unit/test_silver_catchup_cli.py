@@ -7,9 +7,11 @@ from pathlib import Path
 
 import pytest
 import structlog
+from click.core import ParameterSource
 from typer.testing import CliRunner
 
 from det.cli.app import app
+from det.cli.silver_catchup_cmd import _unbound_params_for_dbt_catchup_build
 from det.logging import configure_logging
 
 
@@ -130,9 +132,6 @@ def test_silver_catchup_cleanup_skips_duckdb(tmp_path: Path, monkeypatch):
 
 def test_build_manifest_id_is_not_unbound_against_dbt():
     """Regression: build --manifest-id must not fail approval_unbound_flag."""
-    from click.core import ParameterSource
-
-    from det.cli.silver_catchup_cmd import _unbound_params_for_dbt_catchup_build
 
     class _Ctx:
         params = {

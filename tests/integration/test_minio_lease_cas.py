@@ -21,6 +21,7 @@ from det.runtime.lease import (
     release_lease,
 )
 from det.runtime.meta import resolve_interval
+from det.runtime.object_store import fsspec_s3_kwargs
 
 _ENDPOINT = (os.environ.get("AWS_ENDPOINT_URL") or "").strip()
 _BUCKET = (os.environ.get("DET_MINIO_BUCKET") or "det-ci").strip()
@@ -35,9 +36,7 @@ pytestmark = [
 
 def _ensure_bucket() -> None:
     pytest.importorskip("s3fs")
-    import fsspec
-
-    from det.runtime.object_store import fsspec_s3_kwargs
+    import fsspec  # noqa: PLC0415
 
     fs = fsspec.filesystem("s3", **fsspec_s3_kwargs())
     if not fs.exists(_BUCKET):
@@ -106,9 +105,7 @@ def test_minio_exclusive_create_and_cas_steal(tmp_path: Path, monkeypatch: pytes
     path.unlink(missing_ok=True)
 
 
-def test_minio_refresh_release_after_foreign_steal(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_minio_refresh_release_after_foreign_steal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     pytest.importorskip("s3fs")
     _ensure_bucket()
     monkeypatch.setenv(ENV_LAKE_MODE, "cloud")

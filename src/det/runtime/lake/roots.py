@@ -92,9 +92,7 @@ def lake_layout_from_env(env: Mapping[str, str] | None = None) -> int:
     try:
         value = int(raw)
     except ValueError as exc:
-        raise ValueError(
-            f"{ENV_LAKE_LAYOUT} must be 2 (layout 1 removed), got {raw!r}"
-        ) from exc
+        raise ValueError(f"{ENV_LAKE_LAYOUT} must be 2 (layout 1 removed), got {raw!r}") from exc
     return _validate_layout_value(value, where=ENV_LAKE_LAYOUT)
 
 
@@ -284,7 +282,8 @@ def resolve_lake_root_specs(
     ``destination_path`` is ignored (kept for call-site compatibility).
     ``cli_lake_layout`` is validated (must be unset or 2).
     """
-    from det.runtime.settings import get_active_settings
+    # settings imports lake, which imports this module.
+    from det.runtime.settings import get_active_settings  # noqa: PLC0415
 
     del destination_path  # never selects the lake root (layout 2 only)
     active = settings if settings is not None else get_active_settings()
@@ -371,7 +370,7 @@ def resolve_lake_roots(
     - Explicit ``DET_LAKE_PATH_{RAW,BRONZE,OPS}`` (all three) → split.
     - Else derive ``{DET_LAKE_PATH}/raw``, ``…/bronze``, ops = parent.
     """
-    from det.runtime.settings import get_active_settings
+    from det.runtime.settings import get_active_settings  # noqa: PLC0415
 
     active = settings if settings is not None else get_active_settings()
     environ = os.environ if env is None else env

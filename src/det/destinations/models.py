@@ -16,6 +16,7 @@ from det.runtime.ids import (
 from det.runtime.lake import LakeRef, LakeRoots, resolve_lake_roots
 from det.runtime.meta import to_partition_value
 from det.runtime.secrets import DSN_KEYS, SecretsBackend, resolve_secret
+from det.runtime.settings import get_active_settings
 
 if TYPE_CHECKING:
     from det.runtime.settings import DetSettings
@@ -38,8 +39,6 @@ def lake_roots_for(
     """
     active = settings
     if active is None:
-        from det.runtime.settings import get_active_settings
-
         active = get_active_settings()
     return resolve_lake_roots(
         active,
@@ -111,8 +110,7 @@ def postgres_dsn(
     literal = (destination.connection or "").strip()
     if not literal:
         raise ValueError(
-            "destination.connection_env (env var name holding the DSN) is required "
-            "for postgres"
+            "destination.connection_env (env var name holding the DSN) is required for postgres"
         )
     # A DSN in YAML still deserves scrubbing if a driver echoes it in an error.
     register_secret_value(literal)

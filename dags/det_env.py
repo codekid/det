@@ -7,6 +7,19 @@ from collections.abc import Mapping
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+from det.destinations.models import lake_root
+from det.runtime.approval import (
+    ApprovalError,
+    backfill_write_argv,
+    check_approval,
+    consume_approval,
+    prune_write_argv,
+)
+from det.runtime.config import load_pipeline_config
+from det.runtime.dbt_runner import default_select_for_pipeline
+from det.runtime.ids import sql_names_for_config
+from det.runtime.pipelines import resolve_pipeline_ref
+
 
 def project_root() -> Path:
     return Path(os.environ.get("DET_PROJECT_ROOT", "/opt/det"))
@@ -33,8 +46,6 @@ def set_lock_owner(*, dag_id: str, run_id: str) -> None:
 
 
 def pipeline_path() -> Path:
-    from det.runtime.pipelines import resolve_pipeline_ref
-
     return resolve_pipeline_ref(pipeline_ref(), project_root=project_root()).path
 
 
@@ -59,12 +70,8 @@ def dbt_select_for_pipeline() -> list[str]:
 
     Prefer :func:`dbt_select` for the nightly dbt DAG (full project by default).
     """
-    from det.runtime.config import load_pipeline_config
-    from det.runtime.dbt_runner import default_select_for_pipeline
 
-    config = load_pipeline_config(
-        pipeline_path(), overrides=pipeline_overrides() or None
-    )
+    config = load_pipeline_config(pipeline_path(), overrides=pipeline_overrides() or None)
     return default_select_for_pipeline(config)
 
 
@@ -101,14 +108,9 @@ def silver_catchup_pipeline_allowlist() -> list[str] | None:
 
 def dbt_env_for_pipeline() -> dict[str, str]:
     """Env dbt needs to read DET bronze (lake path + SQL schema identity)."""
-    from det.destinations.models import lake_root
-    from det.runtime.config import load_pipeline_config
-    from det.runtime.ids import sql_names_for_config
 
     root = project_root()
-    config = load_pipeline_config(
-        pipeline_path(), overrides=pipeline_overrides() or None
-    )
+    config = load_pipeline_config(pipeline_path(), overrides=pipeline_overrides() or None)
     sql_schema, _ = sql_names_for_config(config)
     lake = os.environ.get("DET_LAKE_PATH")
     if not lake:
@@ -162,9 +164,7 @@ def ops_dbt_target() -> str:
     return "ops"
 
 
-def daily_logical_dates_for_interval(
-    interval_start: str, interval_end: str
-) -> list[datetime]:
+def daily_logical_dates_for_interval(interval_start: str, interval_end: str) -> list[datetime]:
     """Map DET ``[interval_start, interval_end)`` to Airflow ``@daily`` logical dates.
 
     For each day ``D`` in the half-open range, the daily timetable uses
@@ -174,15 +174,12 @@ def daily_logical_dates_for_interval(
     end = date.fromisoformat(interval_end.strip()[:10])
     if end <= start:
         raise ValueError(
-            f"interval_end ({end.isoformat()}) must be after "
-            f"interval_start ({start.isoformat()})"
+            f"interval_end ({end.isoformat()}) must be after interval_start ({start.isoformat()})"
         )
     out: list[datetime] = []
     day = start
     while day < end:
-        out.append(
-            datetime(day.year, day.month, day.day, tzinfo=UTC) + timedelta(days=1)
-        )
+        out.append(datetime(day.year, day.month, day.day, tzinfo=UTC) + timedelta(days=1))
         day += timedelta(days=1)
     return out
 
@@ -228,11 +225,6 @@ def gate_prune_apply_approval(
 
     Always ``require=True`` — prune-apply in Airflow never runs without an id.
     """
-    from det.runtime.approval import (
-        ApprovalError,
-        check_approval,
-        prune_write_argv,
-    )
 
     argv = prune_write_argv(
         pipeline,
@@ -254,7 +246,6 @@ def gate_prune_apply_approval(
 
 def consume_prune_approval(project_root: Path, approval_id: str) -> None:
     """Mark prune-apply approval consumed after a successful apply."""
-    from det.runtime.approval import ApprovalError, consume_approval
 
     try:
         consume_approval(project_root, approval_id)
@@ -275,11 +266,6 @@ def gate_backfill_approval(
     Always ``require=True`` — manual backfill never opens without an id.
     Child ``det_extract_bronze`` runs stay approval-free.
     """
-    from det.runtime.approval import (
-        ApprovalError,
-        backfill_write_argv,
-        check_approval,
-    )
 
     argv = backfill_write_argv(interval_start, interval_end)
     try:
@@ -296,7 +282,6 @@ def gate_backfill_approval(
 
 def consume_backfill_approval(project_root: Path, approval_id: str) -> None:
     """Mark backfill-window approval consumed after trigger specs are built."""
-    from det.runtime.approval import ApprovalError, consume_approval
 
     try:
         consume_approval(project_root, approval_id)

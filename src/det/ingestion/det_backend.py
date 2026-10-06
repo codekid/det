@@ -4,13 +4,14 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
-from det.destinations.models import duckdb_connection_path, postgres_dsn
+from det.destinations.models import duckdb_connection_path, lake_roots_for, postgres_dsn
 from det.ingestion.duckdb_writer import write_duckdb_table
+from det.ingestion.iceberg_writer import write_iceberg_table
 from det.ingestion.jsonl import write_jsonl_partition
 from det.ingestion.postgres_writer import write_postgres_table
 from det.logging import get_logger
 from det.runtime.config import DestinationConfig, PipelineConfig, resolve_path
-from det.runtime.ids import sql_names_for_config
+from det.runtime.ids import fs_dataset_parts, sql_names_for_config
 from det.runtime.lake import LakeRef
 from det.runtime.manifest import publish_filesystem_bronze_commit
 from det.validation.jsonschema_validator import load_json_schema
@@ -94,9 +95,7 @@ class DetBackend:
         run_identity: tuple[str, str, str] | None = None,
         on_chunk: Callable[[], None] | None = None,
     ) -> Path | LakeRef:
-        write_jsonl_partition(
-            records, partition_dir, chunk_rows=chunk_rows, on_chunk=on_chunk
-        )
+        write_jsonl_partition(records, partition_dir, chunk_rows=chunk_rows, on_chunk=on_chunk)
         publish_filesystem_bronze_commit(partition_dir, run_identity=run_identity)
         logger.info(
             "filesystem load finished",
@@ -169,10 +168,6 @@ class DetBackend:
         run_identity: tuple[str, str, str] | None = None,
         on_chunk: Callable[[], None] | None = None,
     ) -> LakeRef:
-        from det.destinations.models import lake_roots_for
-        from det.ingestion.iceberg_writer import write_iceberg_table
-        from det.runtime.ids import fs_dataset_parts
-
         json_schema = load_json_schema(resolve_path(project_root, config.schema_path))
         schema, table = sql_names_for_config(config)
         roots = lake_roots_for(project_root)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import replace
 from typing import Any
 
 from det.runtime.lake import LakeRef
@@ -67,20 +68,15 @@ def acquire_lease(
 
     Nested same id is a no-op Lease.
     """
-    opts = options or resolve_lease_options(
-        env=env, ttl_sec=ttl_sec, owner=owner, enabled=enabled
-    )
+    opts = options or resolve_lease_options(env=env, ttl_sec=ttl_sec, owner=owner, enabled=enabled)
     if enabled is not None:
         # Explicit flag wins over resolved options.
-        from dataclasses import replace
 
         opts = replace(opts, enabled=enabled)
     if not opts.enabled:
         return None
 
-    ttl = resolve_lock_ttl_sec(
-        ttl_sec if ttl_sec is not None else opts.ttl_sec, env=env
-    )
+    ttl = resolve_lock_ttl_sec(ttl_sec if ttl_sec is not None else opts.ttl_sec, env=env)
     who = owner or opts.owner or default_lock_owner(env)
     ident = lock_id(pipeline, interval_start, interval_end)
     nested = _HELD.get()
@@ -90,11 +86,14 @@ def acquire_lease(
         active = _ACTIVE.get()
         if active is not None:
             return active
-        existing = active_store.inspect(
-            pipeline=pipeline,
-            interval_start=interval_start,
-            interval_end=interval_end,
-        ) or {}
+        existing = (
+            active_store.inspect(
+                pipeline=pipeline,
+                interval_start=interval_start,
+                interval_end=interval_end,
+            )
+            or {}
+        )
         path = (
             lock_path(lake, pipeline, interval_start, interval_end)
             if opts.backend == "lake"
@@ -190,12 +189,8 @@ def pipeline_lease(
     options: ResolvedLeaseOptions | None = None,
     resolve_secret: Any | None = None,
 ) -> Iterator[Lease | None]:
-    opts = options or resolve_lease_options(
-        env=env, ttl_sec=ttl_sec, owner=owner, enabled=enabled
-    )
+    opts = options or resolve_lease_options(env=env, ttl_sec=ttl_sec, owner=owner, enabled=enabled)
     if enabled is not None:
-        from dataclasses import replace
-
         opts = replace(opts, enabled=enabled)
 
     store: LeaseStore | None = None

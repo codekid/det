@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
@@ -63,6 +64,5 @@ def _rmtree(path: LakePath, ignore_errors: bool = False) -> None:
     if isinstance(path, LakeRef):
         path.rmtree(ignore_errors=ignore_errors)
         return
-    import shutil
 
     shutil.rmtree(path, ignore_errors=ignore_errors)

@@ -6,6 +6,15 @@ from pathlib import Path
 from typing import Any
 
 from det.mcp import _helpers as h
+from det.mcp.inspect._common import resolve_migrate_validate_limit
+from det.runtime.approval import migrate_write_argv
+from det.runtime.full_validate import assert_full_validate_allowed
+from det.runtime.migrate import (
+    DEFAULT_MIGRATE_VALIDATE_MAX_ROWS,
+    BronzeMigrator,
+    MigratePlan,
+)
+from det.runtime.pipelines import resolve_pipeline_ref
 
 
 def migrate_dry_run(
@@ -27,15 +36,6 @@ def migrate_dry_run(
 ) -> dict[str, Any]:
     """Preview det migrate: parse/map/validate raw partitions; never writes bronze."""
     h.prepare_tool()
-    from det.mcp.inspect._common import resolve_migrate_validate_limit
-    from det.runtime.approval import migrate_write_argv
-    from det.runtime.full_validate import assert_full_validate_allowed
-    from det.runtime.migrate import (
-        DEFAULT_MIGRATE_VALIDATE_MAX_ROWS,
-        BronzeMigrator,
-        MigratePlan,
-    )
-    from det.runtime.pipelines import resolve_pipeline_ref
 
     if all_raw:
         if interval_start is not None or interval_end is not None:

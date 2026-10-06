@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from det.runtime.config import DbtStgConfig, FlattenConfig, ViewWarnConfig, load_pipeline_config
 from det.scaffold.dbt import (
+    _bootstrap_generate_schema_name,
     _is_identity_name,
     _order_stg_select_columns,
     _ordered_meta_columns,
@@ -176,7 +177,7 @@ def test_scaffolded_sql_is_parseable_jinja(tmp_path: Path):
     """Generated models must be syntactically valid Jinja, not just contain the
     right substrings. Guards against emitting `{{ ... }}` nested inside a
     `{{ config(...) }}` block, which dbt cannot compile."""
-    from jinja2 import Environment
+    from jinja2 import Environment  # noqa: PLC0415
 
     pipeline = _write_mini_project(tmp_path)
     config = load_pipeline_config(pipeline)
@@ -258,18 +259,12 @@ def test_scaffold_bootstraps_generate_schema_name_never_force(tmp_path: Path):
     )
 
     macro.write_text("-- embedder custom\n", encoding="utf-8")
-    forced = scaffold_dbt(
-        config, project_root=tmp_path, force=True, dbt_models_dir=models
-    )
+    forced = scaffold_dbt(config, project_root=tmp_path, force=True, dbt_models_dir=models)
     assert macro.read_text(encoding="utf-8") == "-- embedder custom\n"
-    assert any(
-        a.action == "skip" and a.path == macro.resolve() for a in forced.actions
-    )
+    assert any(a.action == "skip" and a.path == macro.resolve() for a in forced.actions)
 
 
 def test_bootstrap_generate_schema_name_rejects_symlink_escape(tmp_path: Path):
-    from det.scaffold.dbt import _bootstrap_generate_schema_name
-
     outside = tmp_path / "outside"
     outside.mkdir()
     project = tmp_path / "project"
@@ -278,9 +273,7 @@ def test_bootstrap_generate_schema_name_rejects_symlink_escape(tmp_path: Path):
     (dbt / "macros").symlink_to(outside)
 
     with pytest.raises(ValueError, match="escapes project root"):
-        _bootstrap_generate_schema_name(
-            project, dry_run=False, actions=[]
-        )
+        _bootstrap_generate_schema_name(project, dry_run=False, actions=[])
     assert not (outside / "generate_schema_name.sql").exists()
 
 
@@ -290,9 +283,7 @@ def test_scaffold_force_refreshes_stg_when_schema_gains_property(tmp_path: Path)
     models = tmp_path / "dbt" / "models" / "silver"
     scaffold_dbt(config, project_root=tmp_path, dbt_models_dir=models)
 
-    schema_path = (
-        tmp_path / "schemas" / "noaa" / "storm_events" / "storm_events.schema.yaml"
-    )
+    schema_path = tmp_path / "schemas" / "noaa" / "storm_events" / "storm_events.schema.yaml"
     schema = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
     schema["properties"]["cz_name"] = {"type": ["string", "null"]}
     schema_path.write_text(yaml.safe_dump(schema), encoding="utf-8")
@@ -306,9 +297,7 @@ def test_scaffold_dry_run_writes_nothing(tmp_path: Path):
     pipeline = _write_mini_project(tmp_path)
     config = load_pipeline_config(pipeline)
     models = tmp_path / "dbt" / "models" / "silver"
-    result = scaffold_dbt(
-        config, project_root=tmp_path, dry_run=True, dbt_models_dir=models
-    )
+    result = scaffold_dbt(config, project_root=tmp_path, dry_run=True, dbt_models_dir=models)
     assert all(a.action.startswith("would_") for a in result.actions)
     assert any(a.path.name == "ops_slo_expected.csv" for a in result.actions)
     assert not models.exists()
@@ -403,28 +392,20 @@ def test_dbt_stg_nested_fields_scopes_still_validate():
         }
     )
     assert (
-        stg.fields["shipping_address"].children["geo"].children["coords"].rename[
-            "lat"
-        ]
+        stg.fields["shipping_address"].children["geo"].children["coords"].rename["lat"]
         == "ship_lat"
     )
     assert stg.relations["line_items"].children["variant"].rename["id"] == "variant_id"
 
 
 def test_in_tree_pipelines_with_dbt_stg_still_load(project_root: Path):
-    events = load_pipeline_config(
-        project_root / "configs/pipelines/example_api/events.yaml"
-    )
+    events = load_pipeline_config(project_root / "configs/pipelines/example_api/events.yaml")
     assert events.dbt.stg.coalesce
     assert events.dbt.stg.rename
     # Default/empty stg on pipelines without knobs must still load under forbid.
-    orders = load_pipeline_config(
-        project_root / "configs/pipelines/example_api/orders.yaml"
-    )
+    orders = load_pipeline_config(project_root / "configs/pipelines/example_api/orders.yaml")
     assert orders.dbt.stg is not None
-    storm = load_pipeline_config(
-        project_root / "configs/pipelines/noaa/storm_events.yaml"
-    )
+    storm = load_pipeline_config(project_root / "configs/pipelines/noaa/storm_events.yaml")
     assert storm.dbt.stg is not None
 
 
@@ -440,9 +421,7 @@ def test_scaffold_applies_dbt_stg(tmp_path: Path):
         },
         "additionalProperties": False,
     }
-    schema_path = (
-        tmp_path / "schemas" / "example_api" / "events" / "events.schema.yaml"
-    )
+    schema_path = tmp_path / "schemas" / "example_api" / "events" / "events.schema.yaml"
     schema_path.parent.mkdir(parents=True)
     schema_path.write_text(yaml.safe_dump(schema), encoding="utf-8")
 
@@ -494,19 +473,12 @@ destination:
     assert "'severity': 'VARCHAR'" in sources
 
     assert not (models / "_stg__models.yml").exists()
-    silver_yml = yaml.safe_load(
-        (models / "_silver__models.yml").read_text(encoding="utf-8")
-    )
-    model = next(
-        m for m in silver_yml["models"] if m["name"] == "silver_example_api__events"
-    )
+    silver_yml = yaml.safe_load((models / "_silver__models.yml").read_text(encoding="utf-8"))
+    model = next(m for m in silver_yml["models"] if m["name"] == "silver_example_api__events")
     col_tests = {c["name"]: c["tests"] for c in model["columns"]}
     assert "unique" in col_tests["id"]
     assert "not_null" in col_tests["id"]
-    assert any(
-        isinstance(t, dict) and "accepted_values" in t
-        for t in col_tests["event_severity"]
-    )
+    assert any(isinstance(t, dict) and "accepted_values" in t for t in col_tests["event_severity"])
 
 
 def test_scaffold_propagates_schema_and_docs_descriptions(tmp_path: Path):
@@ -527,9 +499,7 @@ def test_scaffold_propagates_schema_and_docs_descriptions(tmp_path: Path):
         },
         "additionalProperties": False,
     }
-    schema_path = (
-        tmp_path / "schemas" / "example_api" / "events" / "events.schema.yaml"
-    )
+    schema_path = tmp_path / "schemas" / "example_api" / "events" / "events.schema.yaml"
     schema_path.parent.mkdir(parents=True)
     schema_path.write_text(yaml.safe_dump(schema), encoding="utf-8")
 
@@ -580,24 +550,16 @@ destination:
     assert "Wire events contract" not in stg
     assert "Primary key from API" not in stg
 
-    silver_yml = yaml.safe_load(
-        (models / "_silver__models.yml").read_text(encoding="utf-8")
-    )
-    model = next(
-        m for m in silver_yml["models"] if m["name"] == "silver_example_api__events"
-    )
+    silver_yml = yaml.safe_load((models / "_silver__models.yml").read_text(encoding="utf-8"))
+    model = next(m for m in silver_yml["models"] if m["name"] == "silver_example_api__events")
     assert model["description"] == "Wire events contract for tests."
     by_name = {c["name"]: c for c in model["columns"]}
     assert by_name["event_severity"]["description"] == "Analytics severity (docs overlay)."
     assert by_name["state"]["description"] == "State for reporting (docs overlay)."
     assert by_name["id"]["description"] == "Primary key from API."
-    assert by_name["report_bucket"]["description"] == (
-        "Docs-only column with no schema property."
-    )
+    assert by_name["report_bucket"]["description"] == ("Docs-only column with no schema property.")
     assert "tests" not in by_name["report_bucket"]
-    assert by_name["__row_hash"]["description"] == (
-        "DET content hash used for silver dedupe."
-    )
+    assert by_name["__row_hash"]["description"] == ("DET content hash used for silver dedupe.")
 
 
 def test_scaffold_iceberg_uses_iceberg_scan(tmp_path: Path):
@@ -648,9 +610,7 @@ def test_scaffold_silver_omits_bigquery_layout_when_unset(tmp_path: Path):
 
 
 def test_scaffold_table_silver_omits_det_catchup_tag(tmp_path: Path):
-    schema_path = (
-        tmp_path / "schemas" / "example_api" / "events" / "events.schema.yaml"
-    )
+    schema_path = tmp_path / "schemas" / "example_api" / "events" / "events.schema.yaml"
     schema_path.parent.mkdir(parents=True)
     schema_path.write_text(
         yaml.safe_dump(
@@ -710,9 +670,7 @@ def test_scaffold_silver_emits_bigquery_partition_cluster(tmp_path: Path):
         },
         "additionalProperties": False,
     }
-    schema_path = (
-        tmp_path / "schemas" / "pokeapi" / "pokemon" / "pokemon.schema.yaml"
-    )
+    schema_path = tmp_path / "schemas" / "pokeapi" / "pokemon" / "pokemon.schema.yaml"
     schema_path.parent.mkdir(parents=True)
     schema_path.write_text(yaml.safe_dump(schema), encoding="utf-8")
     pipeline = tmp_path / "configs" / "pipelines" / "pokeapi" / "pokemon.yaml"
@@ -772,9 +730,7 @@ destination:
     assert 'cluster_by=["id"]' in silver
     assert "require_partition_filter=true" in silver
 
-    rel = (models / "silver_pokeapi__pokemon__abilities.sql").read_text(
-        encoding="utf-8"
-    )
+    rel = (models / "silver_pokeapi__pokemon__abilities.sql").read_text(encoding="utf-8")
     assert 'materialized="table"' in rel
     assert "target.name == 'bigquery'" in rel
     assert '"field": "__extract_run_datetime"' in rel

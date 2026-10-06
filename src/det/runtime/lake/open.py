@@ -20,6 +20,7 @@ from det.runtime.lake.backends.memory import (
 )
 from det.runtime.lake.mode import DEFAULT_LAKE_REL, LakeMode, lake_mode_from_env, validate_lake_mode
 from det.runtime.lake.ref import LakeRef
+from det.runtime.object_store import fsspec_gcs_kwargs, fsspec_s3_kwargs
 
 logger = get_logger("det.runtime.lake")
 
@@ -28,7 +29,7 @@ _CLOUD_EXPERIMENTAL_WARNED = False
 
 def _lake_pkg():
     """Resolve package module at call time so tests can monkeypatch it."""
-    import det.runtime.lake as lake_mod
+    import det.runtime.lake as lake_mod  # noqa: PLC0415
 
     return lake_mod
 
@@ -62,7 +63,6 @@ def open_lake(
     if text.startswith("s3://"):
         # Look up via package so tests can monkeypatch lake._import_fsspec.
         fs = lake._import_fsspec("s3")
-        from det.runtime.object_store import fsspec_s3_kwargs
 
         key = text[len("s3://") :].rstrip("/")
         return LakeRef(
@@ -71,7 +71,6 @@ def open_lake(
         )
     if text.startswith(("gs://", "gcs://")):
         fs = lake._import_fsspec("gcs")
-        from det.runtime.object_store import fsspec_gcs_kwargs
 
         rest = text.split("://", 1)[1].rstrip("/")
         return LakeRef(
@@ -119,18 +118,14 @@ def relpath(path: Path | LakeRef, root: Path) -> str:
 def _import_fsspec(extra: Literal["s3", "gcs"]):
     hint = pip_extra_hint(extra)
     try:
-        import fsspec
+        import fsspec  # noqa: PLC0415
     except ImportError as exc:
-        raise ImportError(
-            f"Object lake {extra} requires the optional extra: {hint}"
-        ) from exc
+        raise ImportError(f"Object lake {extra} requires the optional extra: {hint}") from exc
     pkg = "s3fs" if extra == "s3" else "gcsfs"
     try:
         __import__(pkg)
     except ImportError as exc:
-        raise ImportError(
-            f"Object lake {extra} requires the optional extra: {hint}"
-        ) from exc
+        raise ImportError(f"Object lake {extra} requires the optional extra: {hint}") from exc
     return fsspec
 
 

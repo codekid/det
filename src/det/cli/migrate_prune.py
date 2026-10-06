@@ -24,6 +24,11 @@ from det.cli.common import (
     _schema_for_digest,
     _settings,
 )
+from det.runtime.approval import migrate_write_argv, prune_write_argv
+from det.runtime.config import load_pipeline_config
+from det.runtime.lease import LeaseHeldError
+from det.runtime.migrate import BronzeMigrator, MigratePlan
+from det.runtime.prune import BronzePruner
 
 
 @app.command("migrate")
@@ -96,9 +101,6 @@ def migrate_bronze(
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Rebuild bronze from raw data/ for an interval."""
-    from det.runtime.approval import migrate_write_argv
-    from det.runtime.lease import LeaseHeldError
-    from det.runtime.migrate import BronzeMigrator, MigratePlan
 
     if all_raw:
         if interval_start is not None or interval_end is not None:
@@ -258,10 +260,6 @@ def prune_bronze(
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Delete old bronze extract runs. Never touches raw/. Requires --dry-run or --apply."""
-    from det.runtime.approval import prune_write_argv
-    from det.runtime.config import load_pipeline_config
-    from det.runtime.lease import LeaseHeldError
-    from det.runtime.prune import BronzePruner
 
     if dry_run == apply:
         raise typer.BadParameter(

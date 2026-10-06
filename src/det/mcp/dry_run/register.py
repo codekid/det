@@ -6,6 +6,13 @@ from pathlib import Path
 from typing import Any
 
 from det.mcp import _helpers as h
+from det.runtime import biglake_register as biglake_register
+from det.runtime.biglake_register import biglake_register_write_argv, build_iam_hint
+from det.runtime.iceberg_register import (
+    build_iceberg_register_plan,
+    iceberg_register_write_argv,
+    with_catalog_target_argv,
+)
 
 
 def biglake_register_dry_run(
@@ -20,11 +27,6 @@ def biglake_register_dry_run(
 ) -> dict[str, Any]:
     """Preview BigLake registration plan (never creates BQ resources)."""
     h.prepare_tool()
-    from det.runtime.biglake_register import (
-        biglake_register_write_argv,
-        build_biglake_register_plan,
-        build_iam_hint,
-    )
 
     base = h.root(root)
     pipe_path = None
@@ -43,7 +45,7 @@ def biglake_register_dry_run(
         skip_ops=skip_ops or pipeline is not None,
         **lake_kw,
     )
-    plan = build_biglake_register_plan(
+    plan = biglake_register.build_biglake_register_plan(
         project_root=base,
         lake_path=lake_path,
         pipeline=pipe_path,
@@ -73,11 +75,6 @@ def iceberg_register_dry_run(
 ) -> dict[str, Any]:
     """Preview Iceberg REST/Glue registration plan (never mutates the catalog)."""
     h.prepare_tool()
-    from det.runtime.iceberg_register import (
-        build_iceberg_register_plan,
-        iceberg_register_write_argv,
-        with_catalog_target_argv,
-    )
 
     base = h.root(root)
     pipe_path = None

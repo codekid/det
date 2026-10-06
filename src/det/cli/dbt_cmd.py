@@ -23,6 +23,11 @@ from det.cli.common import (
     _resolve_pipeline,
     _settings,
 )
+from det.runtime.approval import dbt_write_argv
+from det.runtime.config import load_pipeline_config
+from det.runtime.dbt_runner import DbtNotInstalledError, run_dbt
+from det.runtime.settings import use_settings
+from det.scaffold.view_warn import emit_view_size_warnings
 
 
 @app.command("dbt")
@@ -93,9 +98,6 @@ def dbt_cmd(
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Run dbt (build/run/test) for local testing. Requires the optional [dbt] extra."""
-    from det.runtime.approval import dbt_write_argv
-    from det.runtime.dbt_runner import DbtNotInstalledError, run_dbt
-    from det.runtime.settings import use_settings
 
     if command not in {"build", "run", "test"}:
         raise typer.BadParameter(
@@ -153,9 +155,6 @@ def dbt_cmd(
             use_settings(settings),
         ):
             if resolved is not None:
-                from det.runtime.config import load_pipeline_config
-                from det.scaffold.view_warn import emit_view_size_warnings
-
                 cfg = load_pipeline_config(resolved.path, overrides=set_ or None)
                 for w in emit_view_size_warnings(
                     cfg,

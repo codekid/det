@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from det.destinations.models import bronze_dataset_dir, lake_root, lake_roots_for, raw_dataset_dir
+from det.ingestion.iceberg_writer import list_iceberg_extract_runs, load_iceberg_table
 from det.mcp import _helpers as h
 from det.mcp import airflow_inspect as af
 from det.mcp.context import PathSandboxError, resolve_under_root
@@ -39,6 +41,11 @@ from det.mcp.ops_tools import (
     query_analytics,
     summarize_runs,
 )
+from det.plugins import load_plugins
+from det.runtime.discovery import probe_source_load_errors
+from det.runtime.ids import sql_names_for_config
+from det.runtime.pipelines import list_pipeline_ids
+from det.runtime.registry import describe_mappers, list_mappers, list_sources
 
 # Back-compat aliases for helpers historically defined on this module.
 DEFAULT_LIST_LIMIT = h.DEFAULT_LIST_LIMIT
@@ -56,7 +63,6 @@ _rel = h.rel
 
 def list_pipelines(*, root: Path | None = None) -> dict[str, Any]:
     h.prepare_tool()
-    from det.runtime.pipelines import list_pipeline_ids
 
     base = h.root(root)
     return {"project_root": str(base), "pipelines": list_pipeline_ids(base)}
@@ -64,9 +70,6 @@ def list_pipelines(*, root: Path | None = None) -> dict[str, Any]:
 
 def list_sources_tool(*, root: Path | None = None) -> dict[str, Any]:
     h.prepare_tool()
-    from det.plugins import load_plugins
-    from det.runtime.discovery import probe_source_load_errors
-    from det.runtime.registry import list_sources
 
     _ = h.root(root)
     load_plugins()
@@ -79,8 +82,6 @@ def list_sources_tool(*, root: Path | None = None) -> dict[str, Any]:
 
 def list_mappers_tool(*, root: Path | None = None) -> dict[str, Any]:
     h.prepare_tool()
-    from det.plugins import load_plugins
-    from det.runtime.registry import describe_mappers, list_mappers
 
     base = h.root(root)
     load_plugins()
@@ -102,7 +103,6 @@ def _connection_display(destination: Any) -> str | None:
 
 def describe_pipeline(pipeline: str, *, root: Path | None = None) -> dict[str, Any]:
     h.prepare_tool()
-    from det.runtime.ids import sql_names_for_config
 
     base = h.root(root)
     config, path = h.load_pipeline(pipeline, base)
@@ -121,9 +121,7 @@ def describe_pipeline(pipeline: str, *, root: Path | None = None) -> dict[str, A
             "connection": _connection_display(config.destination),
             "connection_env": config.destination.connection_env,
             "partition": (
-                config.destination.partition
-                if config.destination.type == "iceberg"
-                else None
+                config.destination.partition if config.destination.type == "iceberg" else None
             ),
             "sql_schema": sql_schema,
             "sql_table": sql_table,
@@ -152,9 +150,7 @@ def describe_pipeline(pipeline: str, *, root: Path | None = None) -> dict[str, A
                                 else None
                             ),
                             "cluster_by": list(silver.bigquery.cluster_by),
-                            "require_partition_filter": (
-                                silver.bigquery.require_partition_filter
-                            ),
+                            "require_partition_filter": (silver.bigquery.require_partition_filter),
                         }
                     }
                     if silver.bigquery is not None
@@ -179,7 +175,6 @@ def list_raw_partitions(
     root: Path | None = None,
 ) -> dict[str, Any]:
     h.prepare_tool()
-    from det.destinations.models import raw_dataset_dir
 
     base = h.root(root)
     config, _ = h.load_pipeline(pipeline, base)
@@ -204,16 +199,11 @@ def list_bronze_partitions(
     root: Path | None = None,
 ) -> dict[str, Any]:
     h.prepare_tool()
-    from det.destinations.models import bronze_dataset_dir
-    from det.runtime.ids import sql_names_for_config
 
     base = h.root(root)
     config, _ = h.load_pipeline(pipeline, base)
     dest = config.destination
     if dest.type == "iceberg":
-        from det.destinations.models import lake_root
-        from det.ingestion.iceberg_writer import list_iceberg_extract_runs, load_iceberg_table
-
         sql_schema, sql_table = sql_names_for_config(config)
         dataset_dir = bronze_dataset_dir(config, base)
         capped = max(1, min(int(limit), DEFAULT_LIST_LIMIT))
@@ -323,7 +313,6 @@ def read_manifest(run_path: str, *, root: Path | None = None) -> dict[str, Any]:
 def lake_path_for_pipeline(pipeline: str, *, root: Path | None = None) -> str:
     """Display path for the lake (ops root)."""
     h.prepare_tool()
-    from det.destinations.models import lake_roots_for
 
     base = h.root(root)
     config, _ = h.load_pipeline(pipeline, base)

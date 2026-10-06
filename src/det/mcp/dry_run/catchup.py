@@ -6,6 +6,18 @@ from pathlib import Path
 from typing import Any
 
 from det.mcp import _helpers as h
+from det.runtime import silver_catchup as _sc
+from det.runtime.approval import (
+    silver_catchup_apply_cli_hint,
+    silver_catchup_cleanup_write_argv,
+    silver_catchup_plan_write_argv,
+)
+from det.runtime.silver_catchup import diff_bronze_silver as _diff
+from det.runtime.silver_catchup import (
+    diff_bronze_silver_fleet,
+    plan_bq_catchup_cleanup,
+    resolve_catchup_candidate_scope,
+)
 
 
 def _effective_lookback(
@@ -16,7 +28,6 @@ def _effective_lookback(
     census: bool,
 ) -> tuple[str | None, bool]:
     """Return (effective_lookback, census_for_argv)."""
-    from det.runtime.silver_catchup import resolve_catchup_candidate_scope
 
     effective = resolve_catchup_candidate_scope(
         interval_start=interval_start,
@@ -41,8 +52,6 @@ def diff_bronze_silver(
 ) -> dict[str, Any]:
     """Latest bronze extract-run per interval vs silver coverage (read-only)."""
     h.prepare_tool()
-    from det.runtime.silver_catchup import diff_bronze_silver as _diff
-    from det.runtime.silver_catchup import diff_bronze_silver_fleet
 
     h.require_catchup_scope(pipeline=pipeline, all_pipelines=all_pipelines)
     effective, _census = _effective_lookback(
@@ -83,11 +92,6 @@ def silver_catchup_dry_run(
 ) -> dict[str, Any]:
     """Preview immutable ops/silver_catchup/<id>.json + approval_plan (never writes)."""
     h.prepare_tool()
-    from det.runtime.approval import (
-        silver_catchup_apply_cli_hint,
-        silver_catchup_plan_write_argv,
-    )
-    from det.runtime.silver_catchup import plan_catchup_manifest
 
     h.require_catchup_scope(pipeline=pipeline, all_pipelines=all_pipelines)
     effective, census_argv = _effective_lookback(
@@ -98,7 +102,7 @@ def silver_catchup_dry_run(
     )
     base = h.root(root)
     pipe_id = h.canonical_id(pipeline, base) if pipeline is not None else None
-    planned = plan_catchup_manifest(
+    planned = _sc.plan_catchup_manifest(
         project_root=base,
         pipeline=pipe_id,
         all_pipelines=all_pipelines,
@@ -146,11 +150,6 @@ def _mode_a_heal_preview(
     root: Path | None = None,
 ) -> dict[str, Any]:
     """Build Mode A heal preview payload (no MCP prepare_tool)."""
-    from det.runtime.approval import (
-        silver_catchup_apply_cli_hint,
-        silver_catchup_plan_write_argv,
-    )
-    from det.runtime.silver_catchup import plan_catchup_manifest
 
     if not (pipeline and str(pipeline).strip()):
         raise ValueError("Mode A heal requires pipeline")
@@ -162,7 +161,7 @@ def _mode_a_heal_preview(
     )
     base = h.root(root)
     pipe_id = h.canonical_id(pipeline, base)
-    planned = plan_catchup_manifest(
+    planned = _sc.plan_catchup_manifest(
         project_root=base,
         pipeline=pipe_id,
         all_pipelines=False,
@@ -263,8 +262,6 @@ def silver_catchup_cleanup_dry_run(
 ) -> dict[str, Any]:
     """Preview BQ ``_det_catchup_runs_*`` drops + approval_plan (never writes)."""
     h.prepare_tool()
-    from det.runtime.approval import silver_catchup_cleanup_write_argv
-    from det.runtime.silver_catchup import plan_bq_catchup_cleanup
 
     mid = str(manifest_id).strip() if manifest_id else ""
     older = str(older_than).strip() if older_than else ""

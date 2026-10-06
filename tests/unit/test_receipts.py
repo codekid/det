@@ -7,12 +7,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import structlog
 import yaml
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
+from typer.testing import CliRunner
 
+from det.cli import _print_run_list, app
 from det.errors import DetPluginError
 from det.ingestion.det_backend import DetBackend
-from det.logging import register_secret_value
+from det.logging import configure_logging, register_secret_value
 from det.runtime.coerce import CoerceError
 from det.runtime.config import load_pipeline_config
 from det.runtime.lake import LakeRef, clear_memory_lakes, open_lake
@@ -140,9 +143,7 @@ def test_receipts_enabled_opt_out():
 
 
 def test_sum_artifact_bytes_ignores_junk():
-    assert (
-        sum_artifact_bytes([{"bytes": 10}, {"bytes": "2"}, "x", {"bytes": None}]) == 12
-    )
+    assert sum_artifact_bytes([{"bytes": 10}, {"bytes": "2"}, "x", {"bytes": None}]) == 12
 
 
 def test_write_receipt_memory_lake_one_object():
@@ -251,9 +252,7 @@ def test_reader_filters_bounds_and_limit():
             "duration_ms": 30,
         },
     )
-    bounded = list_receipts(
-        lake, since="2026-08-16", until="2026-08-17", now=now
-    )
+    bounded = list_receipts(lake, since="2026-08-16", until="2026-08-17", now=now)
     assert {r["pipeline"] for r in bounded} == {
         "example_api.events",
         "noaa.storm_events",
@@ -273,9 +272,7 @@ def test_reader_filters_bounds_and_limit():
     assert len(filtered) == 1
     assert filtered[0]["error_code"] == "http_error"
 
-    capped = list_receipts(
-        lake, since="2026-08-16", until="2026-08-17", limit=1, now=now
-    )
+    capped = list_receipts(lake, since="2026-08-16", until="2026-08-17", limit=1, now=now)
     assert len(capped) == 1
     assert capped[0]["started_at"] == "2026-08-16T11:00:00+00:00"
 
@@ -300,9 +297,7 @@ def test_summarize_percentiles_and_error_codes():
                 "rows": 2 if status == "ok" else 0,
             },
         )
-    summary = summarize_receipts(
-        lake, since="2026-08-16", until="2026-08-17", now=now
-    )
+    summary = summarize_receipts(lake, since="2026-08-16", until="2026-08-17", now=now)
     group = summary["groups"][0]
     assert group["attempts"] == 5
     assert group["ok"] == 4
@@ -323,9 +318,7 @@ def test_attempt_window_defaults_to_seven_days():
 def test_extract_success_receipt(project_root: Path, tmp_path: Path):
     pipe = _example_pipe(tmp_path, project_root)
     runner = PipelineRunner(tmp_path)
-    result = runner.extract(
-        pipe, interval_start="2026-08-06", interval_end="2026-08-07"
-    )
+    result = runner.extract(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     rows = list_receipts(lake, pipeline="example_api.events", command="extract")
     assert len(rows) == 1
@@ -342,9 +335,7 @@ def test_extract_success_receipt(project_root: Path, tmp_path: Path):
 def test_load_success_receipt(project_root: Path, tmp_path: Path):
     pipe = _example_pipe(tmp_path, project_root)
     runner = PipelineRunner(tmp_path)
-    extracted = runner.extract(
-        pipe, interval_start="2026-08-06", interval_end="2026-08-07"
-    )
+    extracted = runner.extract(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
     loaded = runner.load(
         pipe,
         interval_start=extracted.interval_start,
@@ -362,13 +353,9 @@ def test_load_success_receipt(project_root: Path, tmp_path: Path):
     assert row["extract_run_datetime"] == extracted.extract_run_datetime
 
 
-def test_run_emits_extract_and_load_not_a_third_receipt(
-    project_root: Path, tmp_path: Path
-):
+def test_run_emits_extract_and_load_not_a_third_receipt(project_root: Path, tmp_path: Path):
     pipe = _example_pipe(tmp_path, project_root)
-    PipelineRunner(tmp_path).run(
-        pipe, interval_start="2026-08-06", interval_end="2026-08-07"
-    )
+    PipelineRunner(tmp_path).run(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     rows = list_receipts(lake, pipeline="example_api.events")
     assert sorted(r["command"] for r in rows) == ["extract", "load"]
@@ -399,9 +386,7 @@ def test_failed_extract_receipt_survives_rmtree(project_root: Path, tmp_path: Pa
     assert rows[0]["error_class"] == "DetPluginError"
 
 
-def test_lease_held_receipt_wrapper_is_outside_lease(
-    project_root: Path, tmp_path: Path
-):
+def test_lease_held_receipt_wrapper_is_outside_lease(project_root: Path, tmp_path: Path):
     pipe = _example_pipe(tmp_path, project_root)
     config = load_pipeline_config(pipe)
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
@@ -454,15 +439,11 @@ def test_raising_writer_does_not_fail_the_run(project_root: Path, tmp_path: Path
 def test_opt_out_writes_nothing(project_root: Path, tmp_path: Path, monkeypatch):
     monkeypatch.setenv("DET_RUN_RECEIPTS", "0")
     pipe = _example_pipe(tmp_path, project_root)
-    PipelineRunner(tmp_path).extract(
-        pipe, interval_start="2026-08-06", interval_end="2026-08-07"
-    )
+    PipelineRunner(tmp_path).extract(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
     assert list((tmp_path / "lake" / "runs").rglob("*.json")) == []
 
 
-def test_postgres_destination_receipt_has_no_dsn(
-    project_root: Path, tmp_path: Path, monkeypatch
-):
+def test_postgres_destination_receipt_has_no_dsn(project_root: Path, tmp_path: Path, monkeypatch):
     dsn = "postgresql://det:hunter2pw@db.internal:5432/det"
     monkeypatch.setenv("DET_POSTGRES_DSN", dsn)
     register_secret_value(dsn)
@@ -476,9 +457,7 @@ def test_postgres_destination_receipt_has_no_dsn(
         },
     )
     runner = PipelineRunner(tmp_path)
-    extracted = runner.extract(
-        pipe, interval_start="2026-08-06", interval_end="2026-08-07"
-    )
+    extracted = runner.extract(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
 
     def boom(*args, **kwargs):
         raise RuntimeError(f'connection failed for "{dsn}"')
@@ -536,16 +515,8 @@ def test_record_attempt_still_writes_on_success_and_error():
 
 
 def test_cli_runs_json(project_root: Path, tmp_path: Path):
-    import structlog
-    from typer.testing import CliRunner
-
-    from det.cli import app
-    from det.logging import configure_logging
-
     pipe = _example_pipe(tmp_path, project_root)
-    PipelineRunner(tmp_path).extract(
-        pipe, interval_start="2026-08-06", interval_end="2026-08-07"
-    )
+    PipelineRunner(tmp_path).extract(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
     runner = CliRunner()
     try:
         result = runner.invoke(
@@ -583,16 +554,8 @@ def test_cli_runs_json(project_root: Path, tmp_path: Path):
 
 
 def test_cli_runs_human_table(project_root: Path, tmp_path: Path):
-    import structlog
-    from typer.testing import CliRunner
-
-    from det.cli import app
-    from det.logging import configure_logging
-
     pipe = _example_pipe(tmp_path, project_root)
-    PipelineRunner(tmp_path).extract(
-        pipe, interval_start="2026-08-06", interval_end="2026-08-07"
-    )
+    PipelineRunner(tmp_path).extract(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
     runner = CliRunner()
     try:
         listed = runner.invoke(
@@ -649,8 +612,6 @@ def test_cli_runs_human_table(project_root: Path, tmp_path: Path):
 
 
 def test_human_run_output_shows_error_detail(capsys):
-    from det.cli import _print_run_list
-
     _print_run_list(
         [
             {

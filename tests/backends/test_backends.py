@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import duckdb
 import pytest
 from pydantic import ValidationError
 
 from det.ingestion.det_backend import DetBackend
+from det.ingestion.duckdb_writer import write_duckdb_table
 from det.ingestion.thin_backend import ThinBackend
 from det.runtime.config import (
     DestinationConfig,
@@ -336,8 +338,6 @@ def test_det_backend_duckdb_empty_reload_clears_run(tmp_path: Path):
 
 
 def test_write_duckdb_table_rejects_mixed_extract_run(tmp_path: Path):
-    from det.ingestion.duckdb_writer import write_duckdb_table
-
     mixed = [
         _records()[0],
         {
@@ -360,8 +360,6 @@ def test_write_duckdb_table_rejects_mixed_extract_run(tmp_path: Path):
 def test_write_duckdb_chunk_rows_one_keeps_sibling_and_replaces_same_run(
     tmp_path: Path,
 ):
-    from det.ingestion.duckdb_writer import write_duckdb_table
-
     db_path = tmp_path / "analytics.duckdb"
     first_run = "2026-08-06T15:04:05.123456+00:00"
     sibling_run = "2026-08-06T16:00:00+00:00"
@@ -420,8 +418,6 @@ def test_write_duckdb_chunk_rows_one_keeps_sibling_and_replaces_same_run(
 
 
 def test_write_duckdb_mid_stream_error_rolls_back(tmp_path: Path):
-    from det.ingestion.duckdb_writer import write_duckdb_table
-
     db_path = tmp_path / "analytics.duckdb"
     write_duckdb_table(
         _records(),
@@ -458,7 +454,6 @@ def test_write_duckdb_mid_stream_error_rolls_back(tmp_path: Path):
 
 def test_det_backend_postgres_delegates_to_writer(tmp_path: Path):
     """Postgres landing is DET-owned (same as duckdb), not a dlt pipeline."""
-    from unittest.mock import patch
 
     backend = DetBackend()
     dest = DestinationConfig(
@@ -494,8 +489,6 @@ def _meta(**overrides):
 
 
 def test_write_duckdb_null_first_chunk_uses_schema_integer(tmp_path: Path):
-    from det.ingestion.duckdb_writer import write_duckdb_table
-
     db_path = tmp_path / "analytics.duckdb"
     write_duckdb_table(
         [{**_meta(), "event_id": None}],
@@ -520,8 +513,6 @@ def test_write_duckdb_null_first_chunk_uses_schema_integer(tmp_path: Path):
 
 
 def test_write_duckdb_nested_object_is_json(tmp_path: Path):
-    from det.ingestion.duckdb_writer import write_duckdb_table
-
     db_path = tmp_path / "analytics.duckdb"
     write_duckdb_table(
         [{**_meta(), "authors": [{"name": "Ada"}]}],
@@ -551,8 +542,6 @@ def test_write_duckdb_nested_object_is_json(tmp_path: Path):
 
 
 def test_write_duckdb_alter_adds_missing_column(tmp_path: Path):
-    from det.ingestion.duckdb_writer import write_duckdb_table
-
     db_path = tmp_path / "analytics.duckdb"
     base = {
         "type": "object",
@@ -566,8 +555,15 @@ def test_write_duckdb_alter_adds_missing_column(tmp_path: Path):
         json_schema=base,
     )
     write_duckdb_table(
-        [{**_meta(), "event_id": 2, "state": "TX", "__row_hash": "two",
-          "__extract_run_datetime": "2026-08-06T16:00:00+00:00"}],
+        [
+            {
+                **_meta(),
+                "event_id": 2,
+                "state": "TX",
+                "__row_hash": "two",
+                "__extract_run_datetime": "2026-08-06T16:00:00+00:00",
+            }
+        ],
         connection_path=db_path,
         schema="bronze_noaa",
         table="storm_events_v1",
@@ -588,10 +584,7 @@ def test_write_duckdb_alter_adds_missing_column(tmp_path: Path):
         ).fetchone()[0]
         assert str(dtype).upper() in {"VARCHAR", "TEXT"}
         states = {
-            r[0]
-            for r in con.execute(
-                "select state from bronze_noaa.storm_events_v1"
-            ).fetchall()
+            r[0] for r in con.execute("select state from bronze_noaa.storm_events_v1").fetchall()
         }
         assert states == {None, "TX"}
     finally:
@@ -599,12 +592,10 @@ def test_write_duckdb_alter_adds_missing_column(tmp_path: Path):
 
 
 def test_write_duckdb_refuses_varchar_vs_integer(tmp_path: Path):
-    from det.ingestion.duckdb_writer import write_duckdb_table
-
     db_path = tmp_path / "analytics.duckdb"
     con = duckdb.connect(str(db_path))
     try:
-        con.execute('CREATE SCHEMA bronze_noaa')
+        con.execute("CREATE SCHEMA bronze_noaa")
         con.execute('CREATE TABLE bronze_noaa.storm_events_v1 ("event_id" VARCHAR)')
     finally:
         con.close()

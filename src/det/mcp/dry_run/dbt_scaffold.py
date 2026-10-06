@@ -6,6 +6,16 @@ from pathlib import Path
 from typing import Any
 
 from det.mcp import _helpers as h
+from det.runtime.approval import (
+    dbt_write_argv,
+    init_pipeline_write_argv,
+    scaffold_dbt_write_argv,
+    scaffold_ops_write_argv,
+)
+from det.runtime.dbt_runner import analytics_exclude, run_dbt
+from det.scaffold.dbt import scaffold_dbt
+from det.scaffold.init_pipeline import init_pipeline
+from det.scaffold.ops import scaffold_ops
 
 
 def dbt_dry_run(
@@ -18,7 +28,6 @@ def dbt_dry_run(
     root: Path | None = None,
 ) -> dict[str, Any]:
     h.prepare_tool()
-    from det.runtime.dbt_runner import analytics_exclude, run_dbt
 
     base = h.root(root)
     pipeline_arg: Path | str | None = None
@@ -38,7 +47,6 @@ def dbt_dry_run(
         catchup_manifest=catchup_manifest,
         dry_run=True,
     )
-    from det.runtime.approval import dbt_write_argv
 
     mid = str(catchup_manifest).strip() if catchup_manifest else ""
     out: dict[str, Any] = {
@@ -64,14 +72,10 @@ def dbt_dry_run(
     }
     if catchup:
         cmd = str(result.command).strip() or "build"
-        dbt_hint = (
-            f"det dbt --command {cmd} --catchup --catchup-manifest {mid} "
-            "--approval <id>"
-        )
+        dbt_hint = f"det dbt --command {cmd} --catchup --catchup-manifest {mid} --approval <id>"
         if cmd == "build":
             write_hint = (
-                f"det silver-catchup build --manifest-id {mid} --approval <id> "
-                f"(or {dbt_hint})"
+                f"det silver-catchup build --manifest-id {mid} --approval <id> (or {dbt_hint})"
             )
         else:
             write_hint = dbt_hint
@@ -92,11 +96,9 @@ def scaffold_dbt_dry_run(
     root: Path | None = None,
 ) -> dict[str, Any]:
     h.prepare_tool()
-    from det.scaffold.dbt import scaffold_dbt
 
     base = h.root(root)
     config, _ = h.load_pipeline(pipeline, base)
-    from det.runtime.approval import scaffold_dbt_write_argv
 
     result = scaffold_dbt(config, project_root=base, force=force, dry_run=True)
     return {
@@ -124,8 +126,6 @@ def scaffold_ops_dry_run(
 ) -> dict[str, Any]:
     """Preview scaffold-ops file actions without writing."""
     h.prepare_tool()
-    from det.runtime.approval import scaffold_ops_write_argv
-    from det.scaffold.ops import scaffold_ops
 
     base = h.root(root)
     result = scaffold_ops(project_root=base, force=force, dry_run=True)
@@ -158,7 +158,6 @@ def init_pipeline_dry_run(
     root: Path | None = None,
 ) -> dict[str, Any]:
     h.prepare_tool()
-    from det.scaffold.init_pipeline import init_pipeline
 
     base = h.root(root)
     result = init_pipeline(
@@ -171,7 +170,6 @@ def init_pipeline_dry_run(
         lake_path=lake_path,
         connection=connection,
     )
-    from det.runtime.approval import init_pipeline_write_argv
 
     return {
         "dry_run": True,

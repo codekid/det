@@ -111,8 +111,7 @@ def diagnose_pipeline(
                         "severity": "error",
                         "code": "schema_invalid",
                         "detail": (
-                            f"validate_sample error on {latest.get('path')}: "
-                            f"{sanitize_detail(exc)}"
+                            f"validate_sample error on {latest.get('path')}: {sanitize_detail(exc)}"
                         ),
                     }
                 )
@@ -121,7 +120,8 @@ def diagnose_pipeline(
                     mdir = resolve_under_root(str(latest["path"]), root=base)
                     # Late import so test monkeypatching via det.mcp.inspect.read_raw_manifest
                     # remains effective (the function's globals must be the inspect package).
-                    import det.mcp.inspect as _insp
+                    import det.mcp.inspect as _insp  # noqa: PLC0415
+
                     evidence["manifest"] = {
                         "path": _rel(mdir / "meta" / "manifest.json", base),
                         "manifest": _insp.read_raw_manifest(mdir),

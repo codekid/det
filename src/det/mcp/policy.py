@@ -11,6 +11,8 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from det.mcp.inspect import MAX_SAMPLE_LIMIT
+
 EventType = Literal["mcp", "cli", "user_approval", "assistant_text"]
 
 ALLOWED_MCP_TOOLS: frozenset[str] = frozenset(
@@ -362,9 +364,7 @@ def _score_scenario(trace: Trace) -> list[Violation]:
     return []
 
 
-def _score_silver_catchup_required(
-    trace: Trace, required: tuple[str, ...]
-) -> list[Violation]:
+def _score_silver_catchup_required(trace: Trace, required: tuple[str, ...]) -> list[Violation]:
     """Require diff + a plan preview (dry_run or heal) before any write."""
     write_at = _first_write_index(trace)
     missing: list[str] = []
@@ -372,9 +372,7 @@ def _score_silver_catchup_required(
         positions = _mcp_positions(trace, (name,))
         if not positions or (write_at is not None and min(positions) > write_at):
             missing.append(name)
-    plan_pos = _mcp_positions(
-        trace, ("silver_catchup_dry_run", "silver_catchup_heal_dry_run")
-    )
+    plan_pos = _mcp_positions(trace, ("silver_catchup_dry_run", "silver_catchup_heal_dry_run"))
     if not plan_pos or (write_at is not None and min(plan_pos) > write_at):
         missing.append("silver_catchup_dry_run|silver_catchup_heal_dry_run")
     if not missing:
@@ -390,6 +388,7 @@ def _score_silver_catchup_required(
             ),
         )
     ]
+
 
 def _score_new_source_order(trace: Trace) -> list[Violation]:
     """list_sources must appear before init_pipeline_dry_run / init-pipeline."""
@@ -479,7 +478,6 @@ def _score_silver_catchup_full_refresh(trace: Trace) -> list[Violation]:
 
 def _score_full_validate_gating(trace: Trace) -> list[Violation]:
     """Full-partition migrate dry-run must follow the sample ladder and confirm flag."""
-    from det.mcp.inspect import MAX_SAMPLE_LIMIT
 
     found: list[Violation] = []
     had_ladder = False
@@ -504,10 +502,7 @@ def _score_full_validate_gating(trace: Trace) -> list[Violation]:
                 Violation(
                     code="full_validate_ungated",
                     turn=turn_i,
-                    detail=(
-                        "migrate_dry_run validate_limit=0 without "
-                        "confirm_full_validate=true"
-                    ),
+                    detail=("migrate_dry_run validate_limit=0 without confirm_full_validate=true"),
                 )
             )
             continue

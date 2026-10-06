@@ -6,24 +6,51 @@ dbt.stg knobs stay aligned (``det check --strict`` catches scaffold drift).
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from det.destinations.models import bronze_dataset_dir, raw_dataset_dir
+from det.ingestion.iceberg_catalog_factory import (
+    ENV_CATALOG,
+    ENV_REST_URI,
+    catalog_kind_from_env,
+)
 from det.plugins import load_plugins
-from det.runtime.config import load_pipeline_config, resolve_path
+from det.runtime.approval import require_approvals_enabled
+from det.runtime.config import load_pipeline, load_pipeline_config, resolve_path
 from det.runtime.discovery import PluginLoadError
+from det.runtime.dlt_hygiene import dlt_hygiene_message, lake_dlt_path_hits
+from det.runtime.full_validate import ENV_ALLOW_FULL_VALIDATE, full_validate_allowed
+from det.runtime.iceberg_register import _lake_uri_str, _require_register_catalog
 from det.runtime.ids import dbt_model_slug
+from det.runtime.lake import (
+    ENV_LAKE_PATH_BRONZE,
+    ENV_LAKE_PATH_OPS,
+    ENV_LAKE_PATH_RAW,
+    is_object_lake_spec,
+    is_split_lake_configured,
+    lake_mode_from_env,
+    open_lake,
+    resolve_lake_root_specs,
+    split_lake_specs_from_settings,
+    validate_lake_mode,
+)
 from det.runtime.pipelines import (
+    canonical_id_from_path,
     discover_pipeline_files,
     resolve_pipeline_ref,
     resolve_project_root,
 )
 from det.runtime.registry import get_source, list_sources
 from det.runtime.secrets import looks_like_passwordful_uri, uri_has_userinfo
+from det.runtime.settings import DetSettings
+from det.runtime.slo import SLO_SEED_RELPATH, slo_seed_is_stale
 from det.validation.jsonschema_validator import load_json_schema
 
 Severity = Literal["error", "warning"]
@@ -62,8 +89,6 @@ def check_pipeline_config(
     root = project_root.resolve()
     findings: list[Finding] = []
     try:
-        from det.runtime.pipelines import canonical_id_from_path
-
         pipeline_id = canonical_id_from_path(config_path, root)
     except Exception:
         pipeline_id = config_path.stem
@@ -221,9 +246,6 @@ def _dlt_lake_findings(
     pipeline_id: str,
 ) -> list[Finding]:
     """Flag leftover dlt state tables / paths under this pipeline's lake prefixes."""
-    from det.destinations.models import bronze_dataset_dir, raw_dataset_dir
-    from det.runtime.dlt_hygiene import dlt_hygiene_message, lake_dlt_path_hits
-    from det.runtime.lake import is_object_lake_spec
 
     findings: list[Finding] = []
     try:
@@ -375,28 +397,6 @@ def check_project(
 
 def _lake_mode_findings(project_root: Path) -> list[Finding]:
     """Validate DET_LAKE_MODE / Iceberg catalog env against the resolved lake URI."""
-    import os
-
-    from det.ingestion.iceberg_catalog_factory import (
-        ENV_CATALOG,
-        ENV_REST_URI,
-        catalog_kind_from_env,
-    )
-    from det.runtime.approval import require_approvals_enabled
-    from det.runtime.config import load_pipeline
-    from det.runtime.full_validate import ENV_ALLOW_FULL_VALIDATE, full_validate_allowed
-    from det.runtime.lake import (
-        ENV_LAKE_PATH_BRONZE,
-        ENV_LAKE_PATH_OPS,
-        ENV_LAKE_PATH_RAW,
-        is_split_lake_configured,
-        lake_mode_from_env,
-        resolve_lake_root_specs,
-        split_lake_specs_from_settings,
-        validate_lake_mode,
-    )
-    from det.runtime.pipelines import discover_pipeline_files
-    from det.runtime.settings import DetSettings
 
     findings: list[Finding] = []
     try:
@@ -443,11 +443,7 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
         specs = resolve_lake_root_specs(settings, project_root=project_root)
     except ValueError as exc:
         detail = str(exc)
-        code = (
-            "lake_mode_mismatch"
-            if "DET_LAKE_MODE" in detail
-            else "lake_roots_invalid"
-        )
+        code = "lake_mode_mismatch" if "DET_LAKE_MODE" in detail else "lake_roots_invalid"
         findings.append(
             Finding(
                 severity="error",
@@ -588,15 +584,6 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
 
 def _iceberg_glue_lake_findings(project_root: Path) -> list[Finding]:
     """Glue catalog needs s3:// for each lake URI registration would use."""
-    import os
-
-    from det.runtime.iceberg_register import _lake_uri_str, _require_register_catalog
-    from det.runtime.lake import (
-        is_object_lake_spec,
-        open_lake,
-        resolve_lake_root_specs,
-    )
-    from det.runtime.settings import DetSettings
 
     root = project_root.resolve()
     environ = dict(os.environ)
@@ -643,8 +630,6 @@ def _iceberg_glue_lake_findings(project_root: Path) -> list[Finding]:
 
 
 def _slo_seed_findings(root: Path) -> list[Finding]:
-    from det.runtime.slo import SLO_SEED_RELPATH, slo_seed_is_stale
-
     if not slo_seed_is_stale(root):
         return []
     return [
@@ -692,7 +677,6 @@ def format_findings(findings: Sequence[Finding]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     """``python -m det.runtime.check`` entry (used by Cursor hook)."""
-    import argparse
 
     parser = argparse.ArgumentParser(description="DET pipeline structure check")
     parser.add_argument("--project-root", type=Path, default=None)

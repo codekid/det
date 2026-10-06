@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from det.runtime.registry import clear_registries, get_source, list_sources
 from det.scaffold.init_source import init_source
+from det.sources.base import SourceRow
+from det.sources.example_api.events import ExampleApiSource
+from det.sources.http_json import dig, nest_under_path, write_json_page
 from det.testing import (
     TestProject,
     assert_no_dlt_artifacts,
@@ -36,8 +40,6 @@ def test_register_source_for_tests_isolates() -> None:
             return {"fixture_records": [{"id": 1}], "record_path": "data.records", "auth_env": None}
 
         def extract_to_raw(self, *, config, interval, data_dir):
-            from det.sources.http_json import nest_under_path, write_json_page
-
             pages = data_dir / "pages"
             pages.mkdir(parents=True, exist_ok=True)
             return [
@@ -54,11 +56,6 @@ def test_register_source_for_tests_isolates() -> None:
             ]
 
         def records_from_raw(self, *, config, raw_dir, manifest):
-            import json
-
-            from det.sources.base import SourceRow
-            from det.sources.http_json import dig
-
             for art in manifest.get("artifacts") or []:
                 payload = json.loads((raw_dir / art["path"]).read_text(encoding="utf-8"))
                 for row in dig(payload, config["record_path"]) or []:
@@ -76,7 +73,6 @@ def test_register_source_for_tests_isolates() -> None:
 def test_extract_fixture_roundtrip() -> None:
     clear_registries()
     # Use in-tree example with fixture overrides via extract_fixture rows.
-    from det.sources.example_api.events import ExampleApiSource
 
     source = ExampleApiSource()
     fx = extract_fixture(

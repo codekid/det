@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from det.mcp import _helpers as h
+from det.runtime.approval import prune_write_argv
+from det.runtime.prune import BronzePruner
 
 
 def prune_dry_run(
@@ -17,7 +19,6 @@ def prune_dry_run(
     root: Path | None = None,
 ) -> dict[str, Any]:
     h.prepare_tool()
-    from det.runtime.prune import BronzePruner
 
     base = h.root(root)
     config, _ = h.load_pipeline(pipeline, base)
@@ -27,7 +28,6 @@ def prune_dry_run(
         interval_end=interval_end,
         keep=keep,
     )
-    from det.runtime.approval import prune_write_argv
 
     pipe_id = h.canonical_id(pipeline, base)
     return {

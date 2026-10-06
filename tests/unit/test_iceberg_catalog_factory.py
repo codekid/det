@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from det.ingestion.iceberg_catalog import LakeHadoopCatalog
 from det.ingestion.iceberg_catalog_factory import (
     ENV_CATALOG,
     ENV_GLUE_ID,
@@ -16,8 +17,10 @@ from det.ingestion.iceberg_catalog_factory import (
     ENV_REST_URI,
     ENV_REST_WAREHOUSE,
     catalog_kind_from_env,
+    ensure_iceberg_namespace,
     glue_catalog_props,
     maybe_bind_location,
+    object_store_root_uri,
     resolve_iceberg_catalog,
     rest_catalog_props,
     rest_uri_identity,
@@ -67,8 +70,6 @@ def test_catalog_kind_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_object_store_root_uri() -> None:
-    from det.ingestion.iceberg_catalog_factory import object_store_root_uri
-
     assert object_store_root_uri("s3://det-ci/lake/bronze/x") == "s3://det-ci/"
     assert object_store_root_uri("gs://b/a") == "gs://b/"
     assert object_store_root_uri("gcs://b/a") == "gs://b/"
@@ -76,8 +77,6 @@ def test_object_store_root_uri() -> None:
 
 
 def test_ensure_iceberg_namespace_idempotent_and_sets_location() -> None:
-    from det.ingestion.iceberg_catalog_factory import ensure_iceberg_namespace
-
     calls: list[tuple[str, dict[str, str]]] = []
 
     class _Cat:
@@ -85,17 +84,13 @@ def test_ensure_iceberg_namespace_idempotent_and_sets_location() -> None:
             props = dict(properties or {})
             calls.append((namespace, props))
             if len(calls) > 1:
-                from pyiceberg.exceptions import NamespaceAlreadyExistsError
+                from pyiceberg.exceptions import NamespaceAlreadyExistsError  # noqa: PLC0415
 
                 raise NamespaceAlreadyExistsError("already")
 
     cat = _Cat()
-    ensure_iceberg_namespace(
-        cat, "bronze_example_api", table_location="s3://det-ci/lake/bronze/x"
-    )
-    ensure_iceberg_namespace(
-        cat, "bronze_example_api", table_location="s3://det-ci/lake/bronze/x"
-    )
+    ensure_iceberg_namespace(cat, "bronze_example_api", table_location="s3://det-ci/lake/bronze/x")
+    ensure_iceberg_namespace(cat, "bronze_example_api", table_location="s3://det-ci/lake/bronze/x")
     assert calls == [
         ("bronze_example_api", {"location": "s3://det-ci/"}),
         ("bronze_example_api", {"location": "s3://det-ci/"}),
@@ -213,9 +208,7 @@ def test_resolve_rest_glue_passes_sigv4_to_load_catalog(
 ) -> None:
     pytest.importorskip("pyiceberg")
     monkeypatch.setenv(ENV_CATALOG, "rest")
-    monkeypatch.setenv(
-        ENV_REST_URI, "https://glue.us-east-1.amazonaws.com/iceberg"
-    )
+    monkeypatch.setenv(ENV_REST_URI, "https://glue.us-east-1.amazonaws.com/iceberg")
     monkeypatch.setenv(ENV_REST_WAREHOUSE, "s3://bucket/lake")
     monkeypatch.setenv("AWS_REGION", "us-east-1")
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
@@ -240,9 +233,7 @@ def test_resolve_rest_glue_omits_warehouse_when_unset(
 ) -> None:
     pytest.importorskip("pyiceberg")
     monkeypatch.setenv(ENV_CATALOG, "rest")
-    monkeypatch.setenv(
-        ENV_REST_URI, "https://glue.us-east-1.amazonaws.com/iceberg"
-    )
+    monkeypatch.setenv(ENV_REST_URI, "https://glue.us-east-1.amazonaws.com/iceberg")
     monkeypatch.delenv(ENV_REST_WAREHOUSE, raising=False)
     monkeypatch.setenv("AWS_REGION", "us-east-1")
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
@@ -316,14 +307,11 @@ def test_resolve_hadoop_returns_lake_hadoop(
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     lake.mkdir(parents=True, exist_ok=True)
     catalog = resolve_iceberg_catalog(lake)
-    from det.ingestion.iceberg_catalog import LakeHadoopCatalog
 
     assert isinstance(catalog, LakeHadoopCatalog)
 
 
-def test_resolve_rest_calls_load_catalog(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_resolve_rest_calls_load_catalog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("pyiceberg")
     monkeypatch.setenv(ENV_CATALOG, "rest")
     monkeypatch.setenv(ENV_REST_URI, "http://localhost:8181/")
@@ -348,7 +336,7 @@ def test_ensure_iceberg_table_without_bind_location(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pytest.importorskip("pyiceberg")
-    from pyiceberg.exceptions import NoSuchTableError
+    from pyiceberg.exceptions import NoSuchTableError  # noqa: PLC0415
 
     created: dict[str, Any] = {}
 

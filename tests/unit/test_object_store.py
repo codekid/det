@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+
 from det.runtime.object_store import (
+    duckdb_s3_credentials_required,
+    duckdb_s3_endpoint_parts,
+    duckdb_s3_profile_env,
+    duckdb_s3_secret_params,
     fsspec_gcs_kwargs,
     fsspec_s3_kwargs,
     gcs_emulator_host_from_env,
@@ -60,9 +66,9 @@ def test_gcs_emulator_host_adds_scheme():
     assert gcs_emulator_host_from_env({"STORAGE_EMULATOR_HOST": "localhost:4443"}) == (
         "http://localhost:4443"
     )
-    assert gcs_emulator_host_from_env(
-        {"STORAGE_EMULATOR_HOST": "https://127.0.0.1:4443"}
-    ) == ("https://127.0.0.1:4443")
+    assert gcs_emulator_host_from_env({"STORAGE_EMULATOR_HOST": "https://127.0.0.1:4443"}) == (
+        "https://127.0.0.1:4443"
+    )
 
 
 def test_fsspec_gcs_kwargs_emulator():
@@ -103,28 +109,18 @@ def test_iceberg_gcs_properties_explicit_token():
 
 
 def test_duckdb_s3_endpoint_parts_minio():
-    from det.runtime.object_store import duckdb_s3_endpoint_parts
-
-    host, use_ssl = duckdb_s3_endpoint_parts(
-        {"AWS_ENDPOINT_URL": "http://127.0.0.1:9000"}
-    )
+    host, use_ssl = duckdb_s3_endpoint_parts({"AWS_ENDPOINT_URL": "http://127.0.0.1:9000"})
     assert host == "127.0.0.1:9000"
     assert use_ssl is False
 
 
 def test_duckdb_s3_endpoint_parts_https():
-    from det.runtime.object_store import duckdb_s3_endpoint_parts
-
-    host, use_ssl = duckdb_s3_endpoint_parts(
-        {"AWS_ENDPOINT_URL": "https://s3.example.com"}
-    )
+    host, use_ssl = duckdb_s3_endpoint_parts({"AWS_ENDPOINT_URL": "https://s3.example.com"})
     assert host == "s3.example.com"
     assert use_ssl is True
 
 
 def test_duckdb_s3_secret_params_minio():
-    from det.runtime.object_store import duckdb_s3_secret_params
-
     params = duckdb_s3_secret_params(
         {
             "AWS_ENDPOINT_URL": "http://127.0.0.1:9000",
@@ -140,17 +136,11 @@ def test_duckdb_s3_secret_params_minio():
 
 
 def test_duckdb_s3_credentials_required_raises():
-    import pytest
-
-    from det.runtime.object_store import duckdb_s3_credentials_required
-
     with pytest.raises(ValueError, match="AWS_ACCESS_KEY_ID"):
         duckdb_s3_credentials_required({})
 
 
 def test_duckdb_s3_profile_env_exports_endpoint():
-    from det.runtime.object_store import duckdb_s3_profile_env
-
     env = duckdb_s3_profile_env(
         {
             "AWS_ENDPOINT_URL": "http://127.0.0.1:9000",

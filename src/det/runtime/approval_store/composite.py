@@ -6,14 +6,13 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
+from det.runtime.approval import ApprovalError
 from det.runtime.approval_store.enrich import DEFAULT_HEARTBEAT_INTERVAL_SEC
 from det.runtime.approval_store.legacy import LegacyApprovalReader
 from det.runtime.approval_store.store import ApprovalStore
 
 
 def _legacy_readonly_error(approval_id: str, *, action: str) -> Exception:
-    from det.runtime.approval import ApprovalError
-
     return ApprovalError(
         "approval_legacy_readonly",
         f"approval {approval_id} exists only under legacy .det/approvals; "
@@ -30,8 +29,6 @@ class CompositeApprovalStore:
         return self._primary.create(record)
 
     def load(self, approval_id: str) -> dict[str, Any]:
-        from det.runtime.approval import ApprovalError
-
         try:
             return self._primary.load(approval_id)
         except ApprovalError as exc:
@@ -48,7 +45,6 @@ class CompositeApprovalStore:
         ``load`` still serves legacy for inspect (list/show); writers must mint
         into the primary lake/postgres store.
         """
-        from det.runtime.approval import ApprovalError
 
         try:
             self._primary.load(approval_id)
@@ -83,7 +79,6 @@ class CompositeApprovalStore:
     ) -> dict[str, Any]:
         # Claims only against the primary store (lake/postgres). Legacy records
         # must be re-approved into the new store.
-        from det.runtime.approval import ApprovalError
 
         try:
             return self._primary.claim(
@@ -102,8 +97,6 @@ class CompositeApprovalStore:
         *,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        from det.runtime.approval import ApprovalError
-
         try:
             return self._primary.consume(approval_id, now=now)
         except ApprovalError as exc:
@@ -120,8 +113,6 @@ class CompositeApprovalStore:
         released_by: str,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        from det.runtime.approval import ApprovalError
-
         try:
             return self._primary.release(approval_id, released_by=released_by, now=now)
         except ApprovalError as exc:
@@ -134,8 +125,6 @@ class CompositeApprovalStore:
         *,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        from det.runtime.approval import ApprovalError
-
         try:
             return self._primary.touch_heartbeat(approval_id, now=now)
         except ApprovalError as exc:
@@ -150,7 +139,6 @@ class CompositeApprovalStore:
         cause: Exception,
     ) -> None:
         """If id exists only under legacy .det, raise approval_legacy_readonly."""
-        from det.runtime.approval import ApprovalError
 
         if self._legacy.load(approval_id) is None:
             return

@@ -13,10 +13,16 @@ from collections.abc import Mapping
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+from det.ingestion.iceberg_catalog import LakeHadoopCatalog
 from det.logging import get_logger
 from det.optional_deps import pip_extra_hint
 from det.runtime.lake import LakeRef
-from det.runtime.object_store import gcs_project_from_env, iceberg_gcs_properties
+from det.runtime.object_store import (
+    gcs_project_from_env,
+    iceberg_gcs_properties,
+    iceberg_s3_properties,
+    s3_region_from_env,
+)
 
 logger = get_logger(__name__)
 
@@ -43,12 +49,10 @@ def _env(environ: Mapping[str, str] | None) -> Mapping[str, str]:
 
 def _require_iceberg() -> None:
     try:
-        import pyarrow  # noqa: F401
-        import pyiceberg  # noqa: F401
+        import pyarrow  # noqa: PLC0415, F401
+        import pyiceberg  # noqa: PLC0415, F401
     except ImportError as exc:
-        raise ImportError(
-            f"Iceberg bronze requires the optional extra: {_ICEBERG_HINT}"
-        ) from exc
+        raise ImportError(f"Iceberg bronze requires the optional extra: {_ICEBERG_HINT}") from exc
 
 
 def lake_ref_uri(ref: LakeRef) -> str:
@@ -71,9 +75,7 @@ def catalog_kind_from_env(env: Mapping[str, str] | None = None) -> IcebergCatalo
     raw = (environ.get(ENV_CATALOG) or "").strip().lower()
     if raw:
         if raw not in _KINDS:
-            raise ValueError(
-                f"{ENV_CATALOG} must be one of hadoop|rest|glue, got {raw!r}"
-            )
+            raise ValueError(f"{ENV_CATALOG} must be one of hadoop|rest|glue, got {raw!r}")
         return raw  # type: ignore[return-value]
     if (environ.get(ENV_REST_URI) or "").strip():
         return "rest"
@@ -150,9 +152,7 @@ def _gcp_lakehouse_project(warehouse: str, env: Mapping[str, str]) -> str | None
     return gcs_project_from_env(env)
 
 
-def _gcp_lakehouse_rest_props(
-    uri: str, warehouse: str, env: Mapping[str, str]
-) -> dict[str, Any]:
+def _gcp_lakehouse_rest_props(uri: str, warehouse: str, env: Mapping[str, str]) -> dict[str, Any]:
     """PyIceberg REST props for GCP Lakehouse (ADC + billing project header)."""
     if not _is_gcp_lakehouse_rest_uri(uri):
         return {}
@@ -175,8 +175,6 @@ def _gcp_lakehouse_rest_props(
 
 
 def _file_io_props(warehouse: str, env: Mapping[str, str] | None) -> dict[str, str]:
-    from det.runtime.object_store import iceberg_s3_properties
-
     if warehouse.startswith("s3://"):
         return dict(iceberg_s3_properties(env))
     if warehouse.startswith("gs://"):
@@ -216,13 +214,10 @@ def _is_aws_glue_rest_uri(uri: str) -> bool:
     return host.startswith("glue.") and host.endswith(".amazonaws.com")
 
 
-def _glue_rest_sigv4_props(
-    uri: str, env: Mapping[str, str]
-) -> dict[str, str]:
+def _glue_rest_sigv4_props(uri: str, env: Mapping[str, str]) -> dict[str, str]:
     """PyIceberg REST SigV4 props for AWS Glue Iceberg REST catalogs."""
     if not _is_aws_glue_rest_uri(uri):
         return {}
-    from det.runtime.object_store import s3_region_from_env
 
     props: dict[str, str] = {
         "rest.sigv4-enabled": "true",
@@ -243,7 +238,6 @@ def _glue_rest_sigv4_props(
 def hadoop_catalog(lake: LakeRef, *, env: Mapping[str, str] | None = None) -> Any:
     """DET filesystem catalog (``version-hint.text`` on the table location)."""
     _require_iceberg()
-    from det.ingestion.iceberg_catalog import LakeHadoopCatalog
 
     warehouse = lake_ref_uri(lake)
     props: dict[str, str] = {"warehouse": warehouse}
@@ -251,22 +245,17 @@ def hadoop_catalog(lake: LakeRef, *, env: Mapping[str, str] | None = None) -> An
     return LakeHadoopCatalog("det", **props)
 
 
-def rest_catalog_props(
-    lake: LakeRef, *, env: Mapping[str, str] | None = None
-) -> dict[str, Any]:
+def rest_catalog_props(lake: LakeRef, *, env: Mapping[str, str] | None = None) -> dict[str, Any]:
     """Build PyIceberg REST catalog properties (no network)."""
     environ = _env(env)
     uri = (environ.get(ENV_REST_URI) or "").strip()
     if not uri:
         raise ValueError(
-            f"{ENV_CATALOG}=rest requires {ENV_REST_URI} "
-            "(Iceberg REST catalog endpoint)"
+            f"{ENV_CATALOG}=rest requires {ENV_REST_URI} (Iceberg REST catalog endpoint)"
         )
     explicit_warehouse = (environ.get(ENV_REST_WAREHOUSE) or "").strip()
     lake_uri = lake_ref_uri(lake)
-    warehouse = explicit_warehouse or (
-        lake_uri if not _is_aws_glue_rest_uri(uri) else ""
-    )
+    warehouse = explicit_warehouse or (lake_uri if not _is_aws_glue_rest_uri(uri) else "")
     props: dict[str, Any] = {
         "type": "rest",
         "uri": uri,
@@ -289,11 +278,8 @@ def rest_catalog_props(
     return props
 
 
-def glue_catalog_props(
-    lake: LakeRef, *, env: Mapping[str, str] | None = None
-) -> dict[str, str]:
+def glue_catalog_props(lake: LakeRef, *, env: Mapping[str, str] | None = None) -> dict[str, str]:
     """Build PyIceberg Glue catalog properties (no network)."""
-    from det.runtime.object_store import s3_region_from_env
 
     warehouse = lake_ref_uri(lake)
     if not warehouse.startswith("s3://"):
@@ -317,9 +303,7 @@ def glue_catalog_props(
     return props
 
 
-def resolve_iceberg_catalog(
-    lake: LakeRef, *, env: Mapping[str, str] | None = None
-) -> Any:
+def resolve_iceberg_catalog(lake: LakeRef, *, env: Mapping[str, str] | None = None) -> Any:
     """Return the PyIceberg catalog for bronze/ops writes."""
     _require_iceberg()
     kind = catalog_kind_from_env(env)
@@ -327,7 +311,7 @@ def resolve_iceberg_catalog(
         logger.info("iceberg catalog", kind=kind, warehouse=lake_ref_uri(lake))
         return hadoop_catalog(lake, env=env)
 
-    from pyiceberg.catalog import load_catalog
+    from pyiceberg.catalog import load_catalog  # noqa: PLC0415
 
     if kind == "rest":
         props = rest_catalog_props(lake, env=env)

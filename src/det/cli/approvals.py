@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import typer
@@ -14,7 +15,17 @@ from det.cli.common import (
     _project_root,
     _settings,
 )
-from det.runtime.approval import ENV_APPROVED_BY
+from det.runtime.approval import (
+    ENV_APPROVED_BY,
+    ApprovalError,
+    approved_by_from_env,
+    create_approval,
+    describe_approval_record,
+    list_approval_records,
+    make_plan,
+    plan_from_mapping,
+    release_approval,
+)
 
 
 def _approval_settings(
@@ -72,15 +83,6 @@ def approve_cmd(
     lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
 ) -> None:
     """Create a single-use approval record for a later writing CLI command."""
-    import json
-
-    from det.runtime.approval import (
-        ApprovalError,
-        approved_by_from_env,
-        create_approval,
-        make_plan,
-        plan_from_mapping,
-    )
 
     root = _project_root(project_root)
     settings = _approval_settings(
@@ -143,9 +145,6 @@ def approval_show_cmd(
     lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
 ) -> None:
     """Print one approval record (expired status + heartbeat triage at read time)."""
-    import json
-
-    from det.runtime.approval import ApprovalError, describe_approval_record
 
     root = _project_root(project_root)
     settings = _approval_settings(
@@ -194,9 +193,6 @@ def list_approvals_cmd(
     Pass the same ``--lake-path`` / split roots (or ``DET_LAKE_PATH*``) as the
     claimed writing command so listing hits ``{ops}/approvals/``.
     """
-    import json
-
-    from det.runtime.approval import list_approval_records
 
     if all_ and status:
         raise typer.BadParameter("use --all or --status, not both", param_hint="--all")
@@ -251,14 +247,6 @@ def approval_release_cmd(
     Use the same ``--lake-path`` / split roots (or ``DET_LAKE_PATH*``) as the
     claimed run so release resolves the correct ``{ops}/approvals/`` root.
     """
-    import json
-
-    from det.runtime.approval import (
-        ApprovalError,
-        approved_by_from_env,
-        describe_approval_record,
-        release_approval,
-    )
 
     if not force:
         raise typer.BadParameter(

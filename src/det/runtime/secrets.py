@@ -105,9 +105,7 @@ def resolve_secrets_backend(env: Mapping[str, str] | None = None) -> SecretsBack
     environ = os.environ if env is None else env
     raw = (environ.get("DET_SECRETS_BACKEND") or "env").strip().lower()
     if raw not in _BACKENDS:
-        raise ValueError(
-            f"DET_SECRETS_BACKEND must be one of {', '.join(_BACKENDS)}, got {raw!r}"
-        )
+        raise ValueError(f"DET_SECRETS_BACKEND must be one of {', '.join(_BACKENDS)}, got {raw!r}")
     return raw  # type: ignore[return-value]
 
 
@@ -143,9 +141,7 @@ def looks_like_passwordful_uri(text: str | None) -> bool:
         return False
     if parts.password:
         return True
-    return any(
-        key.lower() == "password" and val for key, val in parse_qsl(parts.query)
-    )
+    return any(key.lower() == "password" and val for key, val in parse_qsl(parts.query))
 
 
 def secret_name_candidates(provider: str) -> tuple[str, str]:
@@ -237,7 +233,8 @@ def resolve_secret(
     if not keys:
         raise ValueError("resolve_secret requires at least one key")
 
-    from det.runtime.settings import get_active_settings
+    # settings imports this module while it is still loading.
+    from det.runtime.settings import get_active_settings  # noqa: PLC0415
 
     settings = get_active_settings()
     if settings is not None and backend is None:
@@ -259,8 +256,7 @@ def resolve_secret(
         )
 
     raise SecretNotSetError(
-        f"secret is not set: tried {', '.join(candidates)} "
-        f"(DET_SECRETS_BACKEND={chosen})"
+        f"secret is not set: tried {', '.join(candidates)} (DET_SECRETS_BACKEND={chosen})"
     )
 
 

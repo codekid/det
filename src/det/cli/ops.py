@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from pathlib import Path as _Path
 
 import typer
 
@@ -24,6 +26,21 @@ from det.cli.common import (
     _settings,
 )
 from det.cli.render_runs import _print_run_list, _print_run_summary
+from det.destinations.models import lake_root
+from det.runtime.approval import lock_release_write_argv
+from det.runtime.config import load_pipeline_config
+from det.runtime.ids import validate_canonical_id
+from det.runtime.lake import open_lake, pick_lake_spec
+from det.runtime.lease import lock_path, open_lease_store, resolve_lease_options
+from det.runtime.lease.dataset_lock import (
+    dataset_lock_path,
+    force_release_dataset_lock,
+)
+from det.runtime.lease.dataset_lock_postgres import PostgresDatasetLockStore
+from det.runtime.lease.postgres_store import PostgresLeaseStore
+from det.runtime.receipts import list_receipts, summarize_receipts
+from det.runtime.receipts_materialize import materialize_receipts
+from det.runtime.settings import DetSettings, use_settings
 
 
 @app.command("runs")
@@ -56,12 +73,6 @@ def runs_cmd(
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
 ) -> None:
     """List extract/load run receipts (observability). Manifest stays the data authority."""
-    import json
-
-    from det.destinations.models import lake_root
-    from det.runtime.config import load_pipeline_config
-    from det.runtime.lake import open_lake, pick_lake_spec
-    from det.runtime.receipts import list_receipts, summarize_receipts
 
     root = _project_root(project_root)
     if pipeline:
@@ -133,8 +144,6 @@ def runs_materialize_cmd(
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
 ) -> None:
     """Project ``{lake}/runs/`` JSON into Iceberg ``ops.run_receipts`` (replace-by-day)."""
-    from det.runtime.lake import open_lake, pick_lake_spec
-    from det.runtime.receipts_materialize import materialize_receipts
 
     root = _project_root(project_root)
     spec = pick_lake_spec(cli_lake_path=lake_path, destination_path=None)
@@ -187,13 +196,12 @@ def biglake_register_cmd(
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Register DET Iceberg tables as BigLake external tables in BigQuery (gs:// lakes)."""
-    from det.runtime.biglake_register import (
+    from det.runtime.biglake_register import (  # noqa: PLC0415
         apply_biglake_register,
         biglake_register_write_argv,
         build_biglake_register_plan,
         format_dry_run,
     )
-    from det.runtime.settings import use_settings
 
     if dry_run == apply:
         raise typer.BadParameter(
@@ -283,14 +291,13 @@ def iceberg_register_cmd(
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Register DET Iceberg tables into REST/Glue catalog (not Hadoop)."""
-    from det.runtime.iceberg_register import (
+    from det.runtime.iceberg_register import (  # noqa: PLC0415
         apply_iceberg_register,
         build_iceberg_register_plan,
         format_dry_run,
         iceberg_register_write_argv,
         with_catalog_target_argv,
     )
-    from det.runtime.settings import use_settings
 
     if dry_run == apply:
         raise typer.BadParameter(
@@ -366,10 +373,6 @@ def lock_show(
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
 ) -> None:
     """Print the lease for a pipeline interval (or 'no lock')."""
-    from det.destinations.models import lake_root
-    from det.runtime.config import load_pipeline_config
-    from det.runtime.lease import lock_path, open_lease_store, resolve_lease_options
-    from det.runtime.settings import DetSettings
 
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
@@ -435,15 +438,6 @@ def lock_release(
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Force-delete an interval lease or bronze-dataset RW lock."""
-    from det.destinations.models import lake_root
-    from det.runtime.approval import lock_release_write_argv
-    from det.runtime.config import load_pipeline_config
-    from det.runtime.ids import validate_canonical_id
-    from det.runtime.lease import lock_path, open_lease_store, resolve_lease_options
-    from det.runtime.lease.dataset_lock import (
-        dataset_lock_path,
-        force_release_dataset_lock,
-    )
 
     if not force:
         raise typer.BadParameter("--force is required to delete a lock", param_hint="--force")
@@ -564,14 +558,6 @@ def lock_init(
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
 ) -> None:
     """Ensure Postgres lease schema/table exist (no-op for lake backend)."""
-    from pathlib import Path as _Path
-
-    from det.runtime.config import load_pipeline_config
-    from det.runtime.lake import open_lake
-    from det.runtime.lease import open_lease_store, resolve_lease_options
-    from det.runtime.lease.dataset_lock_postgres import PostgresDatasetLockStore
-    from det.runtime.lease.postgres_store import PostgresLeaseStore
-    from det.runtime.settings import DetSettings
 
     root = _project_root(project_root)
     settings = DetSettings.from_env(project_root=root)

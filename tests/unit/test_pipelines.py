@@ -3,8 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import structlog
 import yaml
+from typer.testing import CliRunner
 
+from det.cli import app
+from det.logging import configure_logging
 from det.runtime.pipelines import (
     PipelineRefError,
     list_pipeline_ids,
@@ -75,12 +79,6 @@ def test_resolve_project_root_prefers_explicit_then_env(
 
 
 def test_cli_accepts_canonical_id(tmp_path: Path, project_root: Path):
-    import structlog
-    from typer.testing import CliRunner
-
-    from det.cli import app
-    from det.logging import configure_logging
-
     runner = CliRunner()
     try:
         result = runner.invoke(

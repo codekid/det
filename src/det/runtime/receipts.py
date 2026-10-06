@@ -20,6 +20,12 @@ from typing import Any, cast
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from pydantic import ValidationError as PydanticValidationError
 
+from det.errors import (
+    DetConflictError,
+    DetContractError,
+    DetNotFoundError,
+    DetPluginError,
+)
 from det.logging import get_logger, scrub_secrets
 from det.runtime.coerce import CoerceError
 from det.runtime.lake import LakeRef
@@ -99,12 +105,6 @@ def sum_artifact_bytes(artifacts: Sequence[Any] | None) -> int:
 
 def classify_error(exc: BaseException) -> tuple[str, str, str]:
     """Return ``(error_code, error_class, error_message)``; most specific type first."""
-    from det.errors import (
-        DetConflictError,
-        DetContractError,
-        DetNotFoundError,
-        DetPluginError,
-    )
 
     error_class = type(exc).__name__
     message = _scrub_error_message(str(exc))
@@ -165,9 +165,7 @@ def receipt_path(
     attempt_id: str,
 ) -> LakeRef:
     dt = started_at.astimezone(UTC).date().isoformat()
-    interval_key = (
-        f"{to_partition_value(interval_start)}_{to_partition_value(interval_end)}"
-    )
+    interval_key = f"{to_partition_value(interval_start)}_{to_partition_value(interval_end)}"
     name = f"{command}__{interval_key}__{attempt_id}.json"
     return lake / "runs" / f"dt={dt}" / pipeline / name
 
@@ -178,9 +176,7 @@ def _payload(
     error: BaseException | None,
     finished_at: datetime,
 ) -> ReceiptPayload:
-    duration_ms = max(
-        0, int((finished_at - draft.started_at).total_seconds() * 1000)
-    )
+    duration_ms = max(0, int((finished_at - draft.started_at).total_seconds() * 1000))
     body: ReceiptPayload = {
         "receipt_version": RECEIPT_VERSION,
         "lake_layout": int(draft.lake_layout) if draft.lake_layout is not None else 2,

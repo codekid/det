@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 import yaml
 
 from det.mcp.context import PathSandboxError
+from det.mcp.dry_run.catchup import silver_catchup_dry_run as _dry
+from det.mcp.dry_run.catchup import silver_catchup_heal_dry_run as _heal
 from det.mcp.tools import (
     biglake_register_dry_run,
     check,
@@ -25,6 +28,7 @@ from det.mcp.tools import (
     silver_catchup_dry_run,
     summarize_runs,
 )
+from det.runtime.approval import claim_approval, create_approval, prune_write_argv
 from det.runtime.biglake_register import BigLakeRegisterPlan, BigLakeTablePlan
 from det.runtime.meta import to_partition_value
 
@@ -257,8 +261,6 @@ def test_bronze_duckdb_hint(tmp_path: Path):
 
 
 def test_list_runs_and_summarize_never_return_connection(tmp_path: Path):
-    from datetime import UTC, datetime
-
     _write_pipeline(tmp_path)
     dt = datetime.now(UTC).date().isoformat()
     receipt_dir = tmp_path / "lake" / "runs" / f"dt={dt}" / "example_api.events"
@@ -325,7 +327,6 @@ def test_list_approvals_empty_on_tmp_root(tmp_path: Path):
 
 def test_list_approvals_can_surface_a_claimed_record(tmp_path: Path):
     """An agent diagnosing a stuck write needs to see claimed, which is hidden by default."""
-    from det.runtime.approval import claim_approval, create_approval, prune_write_argv
 
     argv = prune_write_argv("example_api.events", "2026-08-01")
     rec = create_approval(tmp_path, command="prune", argv=argv, approved_by="tester")
@@ -353,11 +354,8 @@ def test_catchup_tools_reject_both_pipeline_and_all_pipelines(tmp_path: Path):
         silver_catchup_dry_run(root=tmp_path)
 
 
-def test_silver_catchup_heal_dry_run_mode_a(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_silver_catchup_heal_dry_run_mode_a(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Heal preview: apply plan only; empty holes → nothing_to_do."""
-    from det.mcp.dry_run.catchup import silver_catchup_heal_dry_run as _heal
 
     _write_pipeline(tmp_path)
     monkeypatch.setenv("DET_PROJECT_ROOT", str(tmp_path))
@@ -413,7 +411,6 @@ def test_silver_catchup_dry_run_default_lookback_in_approval_plan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """Omit lookback → routine 48h bound into approval argv (not full census)."""
-    from det.mcp.dry_run.catchup import silver_catchup_dry_run as _dry
 
     _write_pipeline(tmp_path)
     monkeypatch.setenv("DET_PROJECT_ROOT", str(tmp_path))
@@ -443,9 +440,7 @@ def test_silver_catchup_dry_run_default_lookback_in_approval_plan(
     assert "--extract-lookback" not in argv_c
 
 
-def test_biglake_register_dry_run_returns_iam_hint(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_biglake_register_dry_run_returns_iam_hint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """The success path must build an IAM hint and an approval plan.
 
     A gs:// lake cannot be reached from a unit test, so the plan builder is
@@ -463,8 +458,7 @@ def test_biglake_register_dry_run_returns_iam_hint(
                 bq_table="events_v1",
                 table_location="gs://b/lake/bronze/example_api/events_v1",
                 metadata_uri=(
-                    "gs://b/lake/bronze/example_api/events_v1"
-                    "/metadata/00001-abc.metadata.json"
+                    "gs://b/lake/bronze/example_api/events_v1/metadata/00001-abc.metadata.json"
                 ),
                 kind="bronze",
             ),

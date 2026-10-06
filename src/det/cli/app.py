@@ -32,7 +32,7 @@ def main(
         raise typer.BadParameter(str(exc), param_hint="--log-format") from exc
     logger.info("det starting", log_level=log_level)
     print("det: loading plugins…", file=sys.stderr, flush=True)
-    from det.plugins import load_plugins
+    from det.plugins import load_plugins  # noqa: PLC0415
 
     load_plugins()
     logger.info("plugins loaded")

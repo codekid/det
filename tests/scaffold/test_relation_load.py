@@ -9,12 +9,19 @@ import yaml
 
 from det.runtime.config import RelationConfig, load_pipeline_config
 from det.scaffold.dbt import scaffold_dbt
-from det.scaffold.dbt_sql import SpineEntry, relation_chain_for, spine_for_relation
+from det.scaffold.dbt_sql import (
+    SpineEntry,
+    _spine_cte_expr,
+    _spine_meta_entry,
+    relation_chain_for,
+    spine_for_relation,
+)
 from det.scaffold.relation_load import (
     relation_dedupe_key,
     relation_delete_key,
     resolve_relation_materialization,
 )
+from det.validation.jsonschema_validator import load_json_schema
 
 
 def test_resolve_legacy_materialized_only() -> None:
@@ -88,9 +95,7 @@ def test_delete_key_top_level_is_parent_only() -> None:
     assert relation_dedupe_key("id", spine) == ["id", "line_items__sku"]
 
 
-def test_scaffold_parent_replace_and_full_refresh(
-    tmp_path: Path, project_root: Path
-) -> None:
+def test_scaffold_parent_replace_and_full_refresh(tmp_path: Path, project_root: Path) -> None:
     schema_src = project_root / "schemas/example_api/orders/orders.schema.yaml"
     schema_dst = tmp_path / "schemas/example_api/orders/orders.schema.yaml"
     schema_dst.parent.mkdir(parents=True)
@@ -141,9 +146,7 @@ def test_scaffold_parent_replace_and_full_refresh(
     models = tmp_path / "dbt" / "models" / "silver"
     scaffold_dbt(config, project_root=tmp_path, dbt_models_dir=models, warn=False, force=True)
 
-    stg_disc = (models / "stg_example_api__orders__discount_codes.sql").read_text(
-        encoding="utf-8"
-    )
+    stg_disc = (models / "stg_example_api__orders__discount_codes.sql").read_text(encoding="utf-8")
     sil_disc = (models / "silver_example_api__orders__discount_codes.sql").read_text(
         encoding="utf-8"
     )
@@ -151,12 +154,8 @@ def test_scaffold_parent_replace_and_full_refresh(
     assert 'materialized="table"' in sil_disc
     assert "det_catchup" not in sil_disc
 
-    stg_li = (models / "stg_example_api__orders__line_items.sql").read_text(
-        encoding="utf-8"
-    )
-    sil_li = (models / "silver_example_api__orders__line_items.sql").read_text(
-        encoding="utf-8"
-    )
+    stg_li = (models / "stg_example_api__orders__line_items.sql").read_text(encoding="utf-8")
+    sil_li = (models / "silver_example_api__orders__line_items.sql").read_text(encoding="utf-8")
     assert 'materialized="view"' in stg_li
     assert 'materialized="incremental"' in sil_li
     assert "det_catchup" in sil_li
@@ -171,9 +170,9 @@ def test_scaffold_parent_replace_and_full_refresh(
     assert "partition_by=" in sil_li
     assert "line_items__sku" in sil_li
 
-    sil_tax = (
-        models / "silver_example_api__orders__line_items__tax_lines.sql"
-    ).read_text(encoding="utf-8")
+    sil_tax = (models / "silver_example_api__orders__line_items__tax_lines.sql").read_text(
+        encoding="utf-8"
+    )
     assert 'materialized="incremental"' in sil_tax
     # delete key = parent + ancestor spine (line_items__sku), not self grain
     assert 'unique_key=["id", "line_items__sku"]' in sil_tax
@@ -185,13 +184,9 @@ def test_scaffold_parent_replace_and_full_refresh(
     assert '"field": "rate"' in sil_tax
 
     # YAML tests use dedupe grain, not delete_key (would wrongly unique-test parent id)
-    yml = yaml.safe_load(
-        (models / "_silver__models.yml").read_text(encoding="utf-8")
-    )
+    yml = yaml.safe_load((models / "_silver__models.yml").read_text(encoding="utf-8"))
     li_model = next(
-        m
-        for m in yml["models"]
-        if m["name"] == "silver_example_api__orders__line_items"
+        m for m in yml["models"] if m["name"] == "silver_example_api__orders__line_items"
     )
     li_cols = {c["name"]: c for c in li_model["columns"]}
     assert "id" in li_cols and "line_items__sku" in li_cols
@@ -199,9 +194,7 @@ def test_scaffold_parent_replace_and_full_refresh(
     assert "not_null" in li_cols["line_items__sku"]["tests"]
 
     tax_model = next(
-        m
-        for m in yml["models"]
-        if m["name"] == "silver_example_api__orders__line_items__tax_lines"
+        m for m in yml["models"] if m["name"] == "silver_example_api__orders__line_items__tax_lines"
     )
     tax_cols = {c["name"]: c for c in tax_model["columns"]}
     assert "line_items__tax_lines__title" in tax_cols
@@ -213,11 +206,7 @@ def test_spine_helpers_align_with_chain() -> None:
         "line_items": RelationConfig(
             load="parent_replace",
             grain=["sku"],
-            relations={
-                "tax_lines": RelationConfig(
-                    load="parent_replace", grain=["title", "rate"]
-                )
-            },
+            relations={"tax_lines": RelationConfig(load="parent_replace", grain=["title", "rate"])},
         )
     }
     name_parts = ["line_items", "tax_lines"]
@@ -227,12 +216,7 @@ def test_spine_helpers_align_with_chain() -> None:
 
 
 def test_spine_cte_expr_carries_typed_json_path_macro(project_root: Path) -> None:
-    from det.scaffold.dbt_sql import _spine_cte_expr, _spine_meta_entry
-    from det.validation.jsonschema_validator import load_json_schema
-
-    schema = load_json_schema(
-        project_root / "schemas/example_api/orders/orders.schema.yaml"
-    )
+    schema = load_json_schema(project_root / "schemas/example_api/orders/orders.schema.yaml")
     spine = [
         SpineEntry(name="line_items__sku", level_idx=0, kind="grain", field="sku"),
         SpineEntry(
@@ -249,9 +233,7 @@ def test_spine_cte_expr_carries_typed_json_path_macro(project_root: Path) -> Non
         ),
     ]
     path_chain = ["line_items", "tax_lines"]
-    by_field = {
-        e.field: _spine_cte_expr(e, schema=schema, path_chain=path_chain) for e in spine
-    }
+    by_field = {e.field: _spine_cte_expr(e, schema=schema, path_chain=path_chain) for e in spine}
     assert by_field["sku"]["json_path_macro"] == "det_json_path_string"
     assert "det_json_path_string('t0._rel', '$.sku')" in by_field["sku"]["cte_expr"]
     assert by_field["title"]["json_path_macro"] == "det_json_path_string"
@@ -271,7 +253,7 @@ def test_empty_array_clears_top_level_and_nested_children() -> None:
     (id, sku); empty ancestor ``line_items`` clears all nested rows for the parent.
     JSON null (distinct from SQL NULL / ``[]``) must clear the same way.
     """
-    import duckdb
+    import duckdb  # noqa: PLC0415
 
     con = duckdb.connect()
     con.execute(
@@ -334,9 +316,7 @@ def test_empty_array_clears_top_level_and_nested_children() -> None:
         )
         """
     )
-    li = con.execute(
-        "select id, line_items__sku from silver_line_items order by id"
-    ).fetchall()
+    li = con.execute("select id, line_items__sku from silver_line_items order by id").fetchall()
     assert li == [(1, "A"), (3, "B"), (5, "C")]  # id=2 [] and id=4 JSON null cleared
 
     # Nested: empty / JSON-null tax_lines on a line item → clear by (id, sku)
@@ -374,7 +354,6 @@ def test_empty_array_clears_top_level_and_nested_children() -> None:
         """
     )
     tax = con.execute(
-        "select id, line_items__sku, line_items__tax_lines__title "
-        "from silver_tax_lines order by id"
+        "select id, line_items__sku, line_items__tax_lines__title from silver_tax_lines order by id"
     ).fetchall()
     assert tax == [(1, "A", "s")]  # 2/4 ancestor-empty, 3/5 self-empty; no inserts

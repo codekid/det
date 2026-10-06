@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
 import yaml
 
+from det.ingestion.iceberg_writer import load_iceberg_table
 from det.mcp import tools as mcp_tools
 from det.mcp.server import create_server
+from det.runtime.lake import open_lake
+from det.runtime.manifest import read_manifest
+from det.runtime.meta import to_partition_value
 from det.runtime.migrate import BronzeMigrator, MigratePlan
 from det.runtime.runner import PipelineRunner
 
@@ -38,9 +43,7 @@ def _example_pipeline(project_root: Path, tmp_path: Path, *, severity: str = "hi
     return pipe_path
 
 
-def test_migrate_dry_run_reports_plan_without_writing(
-    project_root: Path, tmp_path: Path
-):
+def test_migrate_dry_run_reports_plan_without_writing(project_root: Path, tmp_path: Path):
     pipe_path = _example_pipeline(project_root, tmp_path)
     PipelineRunner(tmp_path).run(pipe_path, interval_start="2026-08-06")
 
@@ -70,9 +73,7 @@ def test_migrate_dry_run_reports_plan_without_writing(
     assert not bronze_v2.exists() or not any(bronze_v2.rglob("data.jsonl"))
 
 
-def test_migrate_dry_run_validation_errors_no_write(
-    project_root: Path, tmp_path: Path
-):
+def test_migrate_dry_run_validation_errors_no_write(project_root: Path, tmp_path: Path):
     """Identity mapper leaves severity; v2 schema requires level → fail, no write."""
     pipe_path = _example_pipeline(project_root, tmp_path)
     PipelineRunner(tmp_path).run(pipe_path, interval_start="2026-08-06")
@@ -108,9 +109,7 @@ def test_migrate_live_still_writes(project_root: Path, tmp_path: Path):
         dry_run=False,
     )
     assert result.rows == 1
-    out = next(
-        (tmp_path / "lake" / "bronze" / "example_api" / "events_level").rglob("data.jsonl")
-    )
+    out = next((tmp_path / "lake" / "bronze" / "example_api" / "events_level").rglob("data.jsonl"))
     assert json.loads(out.read_text(encoding="utf-8").splitlines()[0])["level"] == "high"
 
 
@@ -118,12 +117,12 @@ def test_mcp_migrate_dry_run_tool(project_root: Path, tmp_path: Path, monkeypatc
     monkeypatch.setenv("DET_PROJECT_ROOT", str(tmp_path))
     pipe_dir = tmp_path / "configs" / "pipelines" / "example_api"
     pipe_dir.mkdir(parents=True)
-    schema_v2 = (
-        project_root / "tests/fixtures/example_api/events_level.schema.yaml"
-    ).read_text(encoding="utf-8")
-    schema_v1 = (
-        project_root / "schemas/example_api/events/events.schema.yaml"
-    ).read_text(encoding="utf-8")
+    schema_v2 = (project_root / "tests/fixtures/example_api/events_level.schema.yaml").read_text(
+        encoding="utf-8"
+    )
+    schema_v1 = (project_root / "schemas/example_api/events/events.schema.yaml").read_text(
+        encoding="utf-8"
+    )
     (tmp_path / "schemas/example_api/events").mkdir(parents=True)
     (tmp_path / "schemas/example_api/events/events.schema.yaml").write_text(
         schema_v1, encoding="utf-8"
@@ -188,9 +187,9 @@ def test_mcp_migrate_dry_run_full_validate_requires_confirm(
     monkeypatch.setenv("DET_ALLOW_FULL_VALIDATE", "1")
     pipe_dir = tmp_path / "configs" / "pipelines" / "example_api"
     pipe_dir.mkdir(parents=True)
-    schema_v1 = (
-        project_root / "schemas/example_api/events/events.schema.yaml"
-    ).read_text(encoding="utf-8")
+    schema_v1 = (project_root / "schemas/example_api/events/events.schema.yaml").read_text(
+        encoding="utf-8"
+    )
     (tmp_path / "schemas/example_api/events").mkdir(parents=True)
     (tmp_path / "schemas/example_api/events/events.schema.yaml").write_text(
         schema_v1, encoding="utf-8"
@@ -198,9 +197,9 @@ def test_mcp_migrate_dry_run_full_validate_requires_confirm(
     level_schema = tmp_path / "tests/fixtures/example_api/events_level.schema.yaml"
     level_schema.parent.mkdir(parents=True)
     level_schema.write_text(
-        (
-            project_root / "tests/fixtures/example_api/events_level.schema.yaml"
-        ).read_text(encoding="utf-8"),
+        (project_root / "tests/fixtures/example_api/events_level.schema.yaml").read_text(
+            encoding="utf-8"
+        ),
         encoding="utf-8",
     )
     pipe_path = pipe_dir / "events.yaml"
@@ -253,9 +252,9 @@ def test_mcp_migrate_dry_run_full_validate_requires_env(
     monkeypatch.delenv("DET_ALLOW_FULL_VALIDATE", raising=False)
     pipe_dir = tmp_path / "configs" / "pipelines" / "example_api"
     pipe_dir.mkdir(parents=True)
-    schema_v1 = (
-        project_root / "schemas/example_api/events/events.schema.yaml"
-    ).read_text(encoding="utf-8")
+    schema_v1 = (project_root / "schemas/example_api/events/events.schema.yaml").read_text(
+        encoding="utf-8"
+    )
     (tmp_path / "schemas/example_api/events").mkdir(parents=True)
     (tmp_path / "schemas/example_api/events/events.schema.yaml").write_text(
         schema_v1, encoding="utf-8"
@@ -263,9 +262,9 @@ def test_mcp_migrate_dry_run_full_validate_requires_env(
     level_schema = tmp_path / "tests/fixtures/example_api/events_level.schema.yaml"
     level_schema.parent.mkdir(parents=True)
     level_schema.write_text(
-        (
-            project_root / "tests/fixtures/example_api/events_level.schema.yaml"
-        ).read_text(encoding="utf-8"),
+        (project_root / "tests/fixtures/example_api/events_level.schema.yaml").read_text(
+            encoding="utf-8"
+        ),
         encoding="utf-8",
     )
     pipe_path = pipe_dir / "events.yaml"
@@ -319,9 +318,9 @@ def test_mcp_migrate_dry_run_full_validate_with_gate(
     monkeypatch.setenv("DET_ALLOW_FULL_VALIDATE", "1")
     pipe_dir = tmp_path / "configs" / "pipelines" / "example_api"
     pipe_dir.mkdir(parents=True)
-    schema_v1 = (
-        project_root / "schemas/example_api/events/events.schema.yaml"
-    ).read_text(encoding="utf-8")
+    schema_v1 = (project_root / "schemas/example_api/events/events.schema.yaml").read_text(
+        encoding="utf-8"
+    )
     (tmp_path / "schemas/example_api/events").mkdir(parents=True)
     (tmp_path / "schemas/example_api/events/events.schema.yaml").write_text(
         schema_v1, encoding="utf-8"
@@ -329,9 +328,9 @@ def test_mcp_migrate_dry_run_full_validate_with_gate(
     level_schema = tmp_path / "tests/fixtures/example_api/events_level.schema.yaml"
     level_schema.parent.mkdir(parents=True)
     level_schema.write_text(
-        (
-            project_root / "tests/fixtures/example_api/events_level.schema.yaml"
-        ).read_text(encoding="utf-8"),
+        (project_root / "tests/fixtures/example_api/events_level.schema.yaml").read_text(
+            encoding="utf-8"
+        ),
         encoding="utf-8",
     )
     pipe_path = pipe_dir / "events.yaml"
@@ -381,9 +380,7 @@ def test_mcp_migrate_dry_run_full_validate_with_gate(
     assert out["ok"] is True
 
 
-def test_migrate_dry_run_validate_max_rows_cap(
-    project_root: Path, tmp_path: Path
-):
+def test_migrate_dry_run_validate_max_rows_cap(project_root: Path, tmp_path: Path):
     records = [
         {
             "id": f"e{i}",
@@ -429,9 +426,7 @@ def test_migrate_dry_run_validate_max_rows_cap(
     assert "validate_cap_message" in payload
 
 
-def test_migrate_dry_run_validate_max_rows_rejects_non_positive(
-    project_root: Path, tmp_path: Path
-):
+def test_migrate_dry_run_validate_max_rows_rejects_non_positive(project_root: Path, tmp_path: Path):
     pipe_path = _example_pipeline(project_root, tmp_path)
     PipelineRunner(tmp_path).run(pipe_path, interval_start="2026-08-06")
     with pytest.raises(ValueError, match="validate_max_rows must be >= 1"):
@@ -454,9 +449,7 @@ def test_create_server_registers_migrate_dry_run():
     assert "migrate_dry_run" in names
 
 
-def test_extract_stamps_wire_version_and_migrate_filters(
-    project_root: Path, tmp_path: Path
-):
+def test_extract_stamps_wire_version_and_migrate_filters(project_root: Path, tmp_path: Path):
     pipe_path = _example_pipeline(project_root, tmp_path)
     PipelineRunner(tmp_path).run(pipe_path, interval_start="2026-08-06")
 
@@ -467,7 +460,6 @@ def test_extract_stamps_wire_version_and_migrate_filters(
     assert manifest["wire_version"] == 1
 
     # Sibling partition stamped as wire_version 2 (botched mixed-era tree).
-    import shutil
 
     v1_dir = parts[0].parent.parent  # …/__extract_run_datetime=…
     sibling = v1_dir.parent / "__extract_run_datetime=20990101T000000Z"
@@ -475,9 +467,7 @@ def test_extract_stamps_wire_version_and_migrate_filters(
     man2 = json.loads((sibling / "meta" / "manifest.json").read_text(encoding="utf-8"))
     man2["wire_version"] = 2
     man2["extract_run_datetime"] = "2099-01-01T00:00:00+00:00"
-    (sibling / "meta" / "manifest.json").write_text(
-        json.dumps(man2), encoding="utf-8"
-    )
+    (sibling / "meta" / "manifest.json").write_text(json.dumps(man2), encoding="utf-8")
 
     plan_latest = BronzeMigrator(tmp_path).migrate(
         pipeline=pipe_path,
@@ -523,9 +513,7 @@ def test_extract_stamps_wire_version_and_migrate_filters(
     assert plan_v1.partitions[0].wire_version == 1
 
 
-def test_legacy_manifest_missing_wire_version_defaults_to_1(
-    project_root: Path, tmp_path: Path
-):
+def test_legacy_manifest_missing_wire_version_defaults_to_1(project_root: Path, tmp_path: Path):
     pipe_path = _example_pipeline(project_root, tmp_path)
     PipelineRunner(tmp_path).run(pipe_path, interval_start="2026-08-06")
     man_path = next(
@@ -550,9 +538,7 @@ def test_legacy_manifest_missing_wire_version_defaults_to_1(
     assert plan.partitions[0].wire_version == 1
 
 
-def test_migrate_recreate_iceberg_rejected_for_filesystem(
-    project_root: Path, tmp_path: Path
-):
+def test_migrate_recreate_iceberg_rejected_for_filesystem(project_root: Path, tmp_path: Path):
     pipe_path = _example_pipeline(project_root, tmp_path)
     PipelineRunner(tmp_path).run(pipe_path, interval_start="2026-08-06")
     with pytest.raises(ValueError, match="requires destination.type iceberg"):
@@ -568,9 +554,7 @@ def test_migrate_recreate_iceberg_rejected_for_filesystem(
         )
 
 
-def test_migrate_dry_run_recreate_iceberg_plan_fields(
-    project_root: Path, tmp_path: Path
-):
+def test_migrate_dry_run_recreate_iceberg_plan_fields(project_root: Path, tmp_path: Path):
     pytest.importorskip("pyiceberg")
     pipeline = {
         "name": "example_api.events",
@@ -619,11 +603,8 @@ def test_migrate_dry_run_recreate_iceberg_plan_fields(
     assert plan.table_location is not None
 
 
-def test_migrate_recreate_iceberg_rebuilds_partition_profile(
-    project_root: Path, tmp_path: Path
-):
+def test_migrate_recreate_iceberg_rebuilds_partition_profile(project_root: Path, tmp_path: Path):
     pytest.importorskip("pyiceberg")
-    from det.ingestion.iceberg_writer import load_iceberg_table
 
     lake = str(tmp_path / "lake")
     pipe_extract_run = {
@@ -685,7 +666,6 @@ def test_migrate_recreate_iceberg_rebuilds_partition_profile(
         recreate_iceberg=True,
     )
     assert result.rows >= 1
-    from det.runtime.lake import open_lake
 
     lake_ref = open_lake(lake, tmp_path)
     loc = lake_ref / "bronze" / "example_api" / "events_v1"
@@ -701,8 +681,6 @@ def test_migrate_recreate_iceberg_rebuilds_partition_profile(
 
 def test_migrate_latest_raw_sibling_load_parity(project_root: Path, tmp_path: Path):
     """Default migrate uses latest raw extract and preserves its extract_run id."""
-    from det.runtime.manifest import read_manifest
-    from det.runtime.meta import to_partition_value
 
     pipe_path = _example_pipeline(project_root, tmp_path, severity="high")
     runner = PipelineRunner(tmp_path)
@@ -751,11 +729,7 @@ def test_migrate_latest_raw_sibling_load_parity(project_root: Path, tmp_path: Pa
         / "events_v1"
         / f"__interval_start_datetime={to_partition_value('2026-08-06T00:00:00+00:00')}"
     )
-    run_dirs = sorted(
-        p
-        for p in bronze_run.rglob("__extract_run_datetime=*")
-        if p.is_dir()
-    )
+    run_dirs = sorted(p for p in bronze_run.rglob("__extract_run_datetime=*") if p.is_dir())
     assert len(run_dirs) == 1
     assert to_partition_value(second_run) in run_dirs[0].name
 
@@ -801,9 +775,7 @@ def test_migrate_all_raw_runs_keeps_siblings(project_root: Path, tmp_path: Path)
     )
     assert result.partitions == 2
     bronze_root = tmp_path / "lake" / "bronze" / "example_api" / "events_v1"
-    run_dirs = sorted(
-        p for p in bronze_root.rglob("__extract_run_datetime=*") if p.is_dir()
-    )
+    run_dirs = sorted(p for p in bronze_root.rglob("__extract_run_datetime=*") if p.is_dir())
     assert len(run_dirs) == 2
     assert len({p.name for p in run_dirs}) == 2
 

@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
-from det.runtime.config import apply_overrides, load_pipeline_config
+from det.runtime.config import (
+    BigQueryPartitionConfig,
+    BigQuerySilverConfig,
+    DbtSilverConfig,
+    DestinationConfig,
+    IngestionConfig,
+    PipelineConfig,
+    RelationConfig,
+    apply_overrides,
+    load_pipeline_config,
+)
 from det.sources.base import merge_source_config
 from det.sources.noaa.fatalities import NoaaFatalitiesSource
+from det.sources.noaa.locations import NoaaLocationsSource
 from det.sources.noaa.storm_events import NoaaStormEventsSource
 
 
@@ -22,8 +34,6 @@ def test_fatalities_defaults_use_fatalities_substr():
 
 
 def test_locations_defaults_use_locations_substr():
-    from det.sources.noaa.locations import NoaaLocationsSource
-
     defaults = NoaaLocationsSource().defaults()
     assert defaults["filename_substr"] == "locations-ftp"
     assert defaults["url"] == NoaaStormEventsSource().defaults()["url"]
@@ -44,10 +54,6 @@ def test_load_pipeline_config(project_root):
 
 
 def test_pipeline_config_rejects_unknown_top_level_keys():
-    from pydantic import ValidationError
-
-    from det.runtime.config import PipelineConfig
-
     with pytest.raises(ValidationError, match="typo_key"):
         PipelineConfig.model_validate(
             {
@@ -60,31 +66,21 @@ def test_pipeline_config_rejects_unknown_top_level_keys():
 
 
 def test_iceberg_partition_defaults_to_extract_run():
-    from det.runtime.config import DestinationConfig
-
     dest = DestinationConfig(type="iceberg")
     assert dest.partition == "extract_run"
     assert dest.iceberg_partition == "extract_run"
 
 
 def test_iceberg_partition_none_allowed():
-    from det.runtime.config import DestinationConfig
-
     dest = DestinationConfig(type="iceberg", partition="none")
     assert dest.partition == "none"
 
 
 def test_partition_rejected_on_non_iceberg():
-    from pydantic import ValidationError
-
-    from det.runtime.config import DestinationConfig
-
     with pytest.raises(ValidationError, match="partition"):
         DestinationConfig(type="filesystem", partition="none")
     with pytest.raises(ValidationError, match="partition"):
-        DestinationConfig(
-            type="duckdb", connection="./x.duckdb", partition="extract_run"
-        )
+        DestinationConfig(type="duckdb", connection="./x.duckdb", partition="extract_run")
 
 
 def test_small_pipeline_yamls_use_partition_none(project_root):
@@ -100,10 +96,6 @@ def test_small_pipeline_yamls_use_partition_none(project_root):
 
 
 def test_ingestion_chunk_rows_rejects_zero():
-    from pydantic import ValidationError
-
-    from det.runtime.config import IngestionConfig
-
     with pytest.raises(ValidationError):
         IngestionConfig(chunk_rows=0)
 
@@ -140,9 +132,9 @@ def test_override_requires_assignment_form():
 
 
 def test_in_tree_storm_events_silver_is_incremental(project_root):
-    silver = (
-        project_root / "dbt/models/silver/silver_noaa__storm_events.sql"
-    ).read_text(encoding="utf-8")
+    silver = (project_root / "dbt/models/silver/silver_noaa__storm_events.sql").read_text(
+        encoding="utf-8"
+    )
     assert 'materialized="incremental"' in silver
     assert "det_silver_incremental_filter" in silver
     assert "det_silver_catchup_guard" in silver
@@ -150,9 +142,9 @@ def test_in_tree_storm_events_silver_is_incremental(project_root):
     assert 'unique_key=["__row_hash"]' in silver
     assert "delete+insert" in silver
     assert "incremental_strategy=" in silver
-    macro = (
-        project_root / "dbt/macros/det_silver_incremental_filter.sql"
-    ).read_text(encoding="utf-8")
+    macro = (project_root / "dbt/macros/det_silver_incremental_filter.sql").read_text(
+        encoding="utf-8"
+    )
     assert "is_incremental()" in macro
     assert "DET_CATCHUP_MANIFEST_PATH" in macro
     assert "det_catchup_coverage_predicate" in macro
@@ -160,8 +152,6 @@ def test_in_tree_storm_events_silver_is_incremental(project_root):
 
 
 def test_bigquery_silver_config_defaults_granularity_day():
-    from det.runtime.config import BigQueryPartitionConfig, BigQuerySilverConfig
-
     part = BigQueryPartitionConfig(field="__extract_run_datetime")
     assert part.data_type == "timestamp"
     assert part.granularity == "day"
@@ -179,10 +169,6 @@ def test_bigquery_silver_config_defaults_granularity_day():
 
 
 def test_bigquery_silver_config_int64_rejects_granularity():
-    from pydantic import ValidationError
-
-    from det.runtime.config import BigQueryPartitionConfig
-
     with pytest.raises(ValidationError, match="granularity"):
         BigQueryPartitionConfig(
             field="partition_id",
@@ -195,28 +181,16 @@ def test_bigquery_silver_config_int64_rejects_granularity():
 
 
 def test_bigquery_silver_config_rejects_cluster_by_over_four():
-    from pydantic import ValidationError
-
-    from det.runtime.config import BigQuerySilverConfig
-
     with pytest.raises(ValidationError, match="at most 4"):
         BigQuerySilverConfig(cluster_by=["a", "b", "c", "d", "e"])
 
 
 def test_bigquery_silver_config_require_filter_needs_partition():
-    from pydantic import ValidationError
-
-    from det.runtime.config import BigQuerySilverConfig
-
     with pytest.raises(ValidationError, match="require_partition_filter"):
         BigQuerySilverConfig(require_partition_filter=True)
 
 
 def test_bigquery_layout_rejected_on_view_materialized():
-    from pydantic import ValidationError
-
-    from det.runtime.config import DbtSilverConfig, RelationConfig
-
     with pytest.raises(ValidationError, match="not view"):
         DbtSilverConfig(
             materialized="view",
@@ -232,10 +206,6 @@ def test_bigquery_layout_rejected_on_view_materialized():
 
 
 def test_silver_knobs_reject_unsafe_identifiers():
-    from pydantic import ValidationError
-
-    from det.runtime.config import DbtSilverConfig
-
     with pytest.raises(ValidationError, match="unique_key"):
         DbtSilverConfig(unique_key=["id; drop table"])
     with pytest.raises(ValidationError, match="order_by"):

@@ -29,19 +29,17 @@ from det_env import (
     silver_catchup_pipeline_allowlist,
 )
 
+from det import iter_silver_catchup_holes, run_silver_catchup_heal
+
 PROJECT_ROOT = project_root()
 SCHEDULE = os.environ.get("DET_SILVER_CATCHUP_SCHEDULE", "@daily")
 POOL = os.environ.get("DET_SILVER_CATCHUP_POOL", "default_pool").strip() or "default_pool"
 try:
     MAX_ACTIVE = int(os.environ.get("DET_SILVER_CATCHUP_MAX_ACTIVE", "1"))
 except ValueError as exc:
-    raise ValueError(
-        "DET_SILVER_CATCHUP_MAX_ACTIVE must be an integer >= 1"
-    ) from exc
+    raise ValueError("DET_SILVER_CATCHUP_MAX_ACTIVE must be an integer >= 1") from exc
 if MAX_ACTIVE < 1:
-    raise ValueError(
-        f"DET_SILVER_CATCHUP_MAX_ACTIVE must be an integer >= 1, got {MAX_ACTIVE}"
-    )
+    raise ValueError(f"DET_SILVER_CATCHUP_MAX_ACTIVE must be an integer >= 1, got {MAX_ACTIVE}")
 
 
 @dag(
@@ -56,8 +54,6 @@ if MAX_ACTIVE < 1:
 def det_silver_catchup():
     @task
     def detect_holes() -> list[dict[str, Any]]:
-        from det import iter_silver_catchup_holes
-
         lookback = silver_catchup_lookback()
         allowlist = silver_catchup_pipeline_allowlist()
         holes = list(
@@ -91,8 +87,6 @@ def det_silver_catchup():
         pool_slots=1,
     )
     def heal_one(item: dict[str, Any]) -> dict[str, Any]:
-        from det import run_silver_catchup_heal
-
         pipeline = str(item.get("pipeline") or "").strip()
         if not pipeline:
             raise ValueError("heal_one requires item['pipeline']")

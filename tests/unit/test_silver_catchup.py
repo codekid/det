@@ -3,16 +3,34 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 
 from det.destinations.models import to_partition_value
 from det.errors import DetConflictError
+from det.runtime import silver_catchup as sc
+from det.runtime.approval import (
+    silver_catchup_apply_cli_hint,
+    silver_catchup_cleanup_write_argv,
+    silver_catchup_plan_write_argv,
+)
 from det.runtime.config import load_pipeline_config
+from det.runtime.lake import LakeRef, open_lake
+from det.runtime.manifest import write_manifest
 from det.runtime.settings import DetSettings, use_settings
 from det.runtime.silver_catchup import (
+    DEFAULT_EXTRACT_LOOKBACK,
+    MANIFEST_VERSION,
+    _bq_project_dataset_location,
+    _coverage_key,
+    _runs_jsonl_bytes,
+    assert_catchup_runs_sidecar_matches,
+    catchup_bq_relation,
+    catchup_content_digest,
     catchup_select_from_manifest,
     catchup_vars_from_manifest,
     diff_bronze_silver,
@@ -20,8 +38,13 @@ from det.runtime.silver_catchup import (
     ensure_bq_catchup_external_table,
     list_silver_extract_runs,
     manifest_payload_from_catchup,
+    parse_duration,
+    parse_extract_lookback,
     plan_catchup_manifest,
     read_catchup_manifest,
+    resolve_bq_catchup_cleanup_cutoff,
+    resolve_catchup_candidate_scope,
+    validate_bq_catchup_cleanup_scope,
     write_catchup_manifest,
 )
 
@@ -74,8 +97,6 @@ def _write_bronze_run(
     interval_end: str,
     extract_run: str,
 ) -> Path:
-    from det.runtime.manifest import write_manifest
-
     run_dir = (
         lake
         / "bronze"
@@ -152,10 +173,6 @@ def catchup_root(tmp_path: Path) -> Path:
 
 
 def test_parse_extract_lookback():
-    from datetime import timedelta
-
-    from det.runtime.silver_catchup import parse_extract_lookback
-
     assert parse_extract_lookback("48h") == timedelta(hours=48)
     assert parse_extract_lookback("7d") == timedelta(days=7)
     with pytest.raises(ValueError, match="look like"):
@@ -163,19 +180,12 @@ def test_parse_extract_lookback():
 
 
 def test_resolve_catchup_candidate_scope_defaults_and_rejects():
-    from det.runtime.silver_catchup import (
-        DEFAULT_EXTRACT_LOOKBACK,
-        resolve_catchup_candidate_scope,
-    )
-
     assert resolve_catchup_candidate_scope() == DEFAULT_EXTRACT_LOOKBACK == "48h"
     assert resolve_catchup_candidate_scope(extract_lookback="7d") == "7d"
     assert resolve_catchup_candidate_scope(census=True) is None
     assert resolve_catchup_candidate_scope(interval_start="2026-08-06") is None
     assert (
-        resolve_catchup_candidate_scope(
-            interval_start="2026-08-06", interval_end="2026-08-07"
-        )
+        resolve_catchup_candidate_scope(interval_start="2026-08-06", interval_end="2026-08-07")
         is None
     )
     with pytest.raises(ValueError, match="requires -s/--interval-start"):
@@ -185,14 +195,10 @@ def test_resolve_catchup_candidate_scope_defaults_and_rejects():
     with pytest.raises(ValueError, match="cannot combine"):
         resolve_catchup_candidate_scope(census=True, interval_start="2026-08-06")
     with pytest.raises(ValueError, match="cannot combine"):
-        resolve_catchup_candidate_scope(
-            extract_lookback="48h", interval_start="2026-08-06"
-        )
+        resolve_catchup_candidate_scope(extract_lookback="48h", interval_start="2026-08-06")
 
 
 def test_silver_catchup_plan_write_argv_binds_default_lookback_and_census():
-    from det.runtime.approval import silver_catchup_plan_write_argv
-
     mid = "scm_" + ("ab" * 8)
     digest = "sha256:" + ("0" * 64)
     routine = silver_catchup_plan_write_argv(
@@ -213,11 +219,6 @@ def test_silver_catchup_plan_write_argv_binds_default_lookback_and_census():
 
 
 def test_silver_catchup_apply_cli_hint_includes_scope_flags():
-    from det.runtime.approval import (
-        silver_catchup_apply_cli_hint,
-        silver_catchup_plan_write_argv,
-    )
-
     mid = "scm_" + ("ab" * 8)
     digest = "sha256:" + ("0" * 64)
     argv = silver_catchup_plan_write_argv(
@@ -271,11 +272,8 @@ def test_diff_hole_behind_max_watermark(catchup_root: Path, monkeypatch):
     assert out["stale_siblings_count"] == 0
 
 
-def test_extract_lookback_finds_old_interval_recent_run(
-    catchup_root: Path, monkeypatch
-):
+def test_extract_lookback_finds_old_interval_recent_run(catchup_root: Path, monkeypatch):
     """Mode A: recent extract of an old interval is a hole even if -s would miss it."""
-    from datetime import UTC, datetime, timedelta
 
     lake = catchup_root / "data" / "lake"
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
@@ -284,12 +282,8 @@ def test_extract_lookback_finds_old_interval_recent_run(
     newer_ok = (now - timedelta(minutes=30)).isoformat()
     old_start, old_end = "2026-01-01T00:00:00+00:00", "2026-01-02T00:00:00+00:00"
     new_start, new_end = "2026-09-03T00:00:00+00:00", "2026-09-04T00:00:00+00:00"
-    _write_bronze_run(
-        lake, interval_start=old_start, interval_end=old_end, extract_run=recent
-    )
-    _write_bronze_run(
-        lake, interval_start=new_start, interval_end=new_end, extract_run=newer_ok
-    )
+    _write_bronze_run(lake, interval_start=old_start, interval_end=old_end, extract_run=recent)
+    _write_bronze_run(lake, interval_start=new_start, interval_end=new_end, extract_run=newer_ok)
     db = _silver_db(catchup_root, [(new_start, new_end, newer_ok)])
     settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
         lake_override=str(lake)
@@ -318,17 +312,13 @@ def test_extract_lookback_finds_old_interval_recent_run(
             )
 
 
-def test_extract_lookback_excludes_stale_extract(
-    catchup_root: Path, monkeypatch
-):
+def test_extract_lookback_excludes_stale_extract(catchup_root: Path, monkeypatch):
     """Mode A with a short lookback does not see an old extract_run."""
     lake = catchup_root / "data" / "lake"
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
     old_run = "2026-01-15T12:00:00+00:00"
     old_start, old_end = "2026-01-01T00:00:00+00:00", "2026-01-02T00:00:00+00:00"
-    _write_bronze_run(
-        lake, interval_start=old_start, interval_end=old_end, extract_run=old_run
-    )
+    _write_bronze_run(lake, interval_start=old_start, interval_end=old_end, extract_run=old_run)
     db = _silver_db(catchup_root, [])
     settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
         lake_override=str(lake)
@@ -351,9 +341,7 @@ def test_extract_lookback_excludes_stale_extract(
     assert full["catchup_count"] == 1
 
 
-def test_interval_mode_probes_silver_not_full_scan(
-    catchup_root: Path, monkeypatch
-):
+def test_interval_mode_probes_silver_not_full_scan(catchup_root: Path, monkeypatch):
     """With -s/-e, silver is probed for candidate intervals only."""
     lake = catchup_root / "data" / "lake"
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
@@ -361,12 +349,8 @@ def test_interval_mode_probes_silver_not_full_scan(
     b_start, b_end = "2026-09-02T00:00:00+00:00", "2026-09-03T00:00:00+00:00"
     run_a = "2026-09-01T12:00:00+00:00"
     run_b = "2026-09-02T12:00:00+00:00"
-    _write_bronze_run(
-        lake, interval_start=a_start, interval_end=a_end, extract_run=run_a
-    )
-    _write_bronze_run(
-        lake, interval_start=b_start, interval_end=b_end, extract_run=run_b
-    )
+    _write_bronze_run(lake, interval_start=a_start, interval_end=a_end, extract_run=run_a)
+    _write_bronze_run(lake, interval_start=b_start, interval_end=b_end, extract_run=run_b)
     # Silver has B only; windowing to A should still report A's hole without
     # needing B's silver rows in the probe set for correctness of A.
     db = _silver_db(catchup_root, [(b_start, b_end, run_b)])
@@ -387,21 +371,15 @@ def test_interval_mode_probes_silver_not_full_scan(
     assert out["ok_count"] == 0
 
 
-def test_diff_same_extract_run_timestamp_distinct_intervals(
-    catchup_root: Path, monkeypatch
-):
+def test_diff_same_extract_run_timestamp_distinct_intervals(catchup_root: Path, monkeypatch):
     """Parallel intervals sharing a run clock must not false-negative catch-up."""
     lake = catchup_root / "data" / "lake"
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
     shared_ts = "2026-09-02T12:00:00+00:00"
     a_start, a_end = "2026-09-02T09:00:00+00:00", "2026-09-02T10:00:00+00:00"
     b_start, b_end = "2026-09-02T10:00:00+00:00", "2026-09-02T11:00:00+00:00"
-    _write_bronze_run(
-        lake, interval_start=a_start, interval_end=a_end, extract_run=shared_ts
-    )
-    _write_bronze_run(
-        lake, interval_start=b_start, interval_end=b_end, extract_run=shared_ts
-    )
+    _write_bronze_run(lake, interval_start=a_start, interval_end=a_end, extract_run=shared_ts)
+    _write_bronze_run(lake, interval_start=b_start, interval_end=b_end, extract_run=shared_ts)
     # Silver only covered interval A; interval B must still be a catch-up hole.
     db = _silver_db(catchup_root, [(a_start, a_end, shared_ts)])
     settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
@@ -441,20 +419,11 @@ def test_diff_latest_present_empty_catchup(catchup_root: Path, monkeypatch):
     assert out["catchup_count"] == 0
     assert out["ok_count"] == 1
     assert out["stale_siblings_count"] == 1
-    assert out["stale_siblings_ignored"][0]["extract_run_datetime"].startswith(
-        "2026-09-02T10:00"
-    )
+    assert out["stale_siblings_ignored"][0]["extract_run_datetime"].startswith("2026-09-02T10:00")
 
 
 def test_catchup_digest_normalizes_offset_equivalent_intervals():
     """Digest/sidecar/coverage all UTC-normalize interval bounds."""
-    from det.runtime.lake import open_lake
-    from det.runtime.silver_catchup import (
-        _coverage_key,
-        _runs_jsonl_bytes,
-        assert_catchup_runs_sidecar_matches,
-        catchup_content_digest,
-    )
 
     offset_run = {
         "pipeline": "example_api.events",
@@ -514,9 +483,7 @@ def test_manifest_roundtrip_and_vars(catchup_root: Path, monkeypatch):
     )
     mid = payload["manifest_id"]
     with use_settings(settings):
-        path = write_catchup_manifest(
-            payload, project_root=catchup_root, settings=settings
-        )
+        path = write_catchup_manifest(payload, project_root=catchup_root, settings=settings)
         loaded = read_catchup_manifest(
             manifest_id=mid, project_root=catchup_root, settings=settings
         )
@@ -549,12 +516,8 @@ def test_manifest_roundtrip_and_vars(catchup_root: Path, monkeypatch):
 
     with use_settings(settings):
         with pytest.raises(DetConflictError, match="already exists"):
-            write_catchup_manifest(
-                payload, project_root=catchup_root, settings=settings
-            )
-        still = read_catchup_manifest(
-            manifest_id=mid, project_root=catchup_root, settings=settings
-        )
+            write_catchup_manifest(payload, project_root=catchup_root, settings=settings)
+        still = read_catchup_manifest(manifest_id=mid, project_root=catchup_root, settings=settings)
     assert still == loaded
 
 
@@ -586,26 +549,19 @@ def test_manifest_rejects_incomplete_run_rows(catchup_root: Path, monkeypatch):
             }
         ]
     )
-    from det.runtime.silver_catchup import catchup_content_digest
 
     bad = {**good, "runs": [{**good["runs"][0], "pipeline": ""}]}
     bad["content_digest"] = catchup_content_digest(bad["runs"])
     with use_settings(settings):
         with pytest.raises(ValueError, match="pipeline"):
-            write_catchup_manifest(
-                bad, project_root=catchup_root, settings=settings
-            )
+            write_catchup_manifest(bad, project_root=catchup_root, settings=settings)
         unsupported = {**good, "manifest_version": 99}
         with pytest.raises(ValueError, match="unsupported manifest_version"):
-            write_catchup_manifest(
-                unsupported, project_root=catchup_root, settings=settings
-            )
+            write_catchup_manifest(unsupported, project_root=catchup_root, settings=settings)
 
 
 @pytest.mark.parametrize("bad_version", [True, "1", 1.5])
-def test_manifest_rejects_coerced_manifest_version(
-    catchup_root: Path, monkeypatch, bad_version
-):
+def test_manifest_rejects_coerced_manifest_version(catchup_root: Path, monkeypatch, bad_version):
     lake = catchup_root / "data" / "lake"
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
     settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
@@ -631,8 +587,6 @@ def test_manifest_rejects_coerced_manifest_version(
 
 
 def test_read_catchup_manifest_validates_payload(catchup_root: Path, monkeypatch):
-    from det.runtime.silver_catchup import MANIFEST_VERSION, catchup_content_digest
-
     lake = catchup_root / "data" / "lake"
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
     settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
@@ -680,9 +634,7 @@ def test_read_catchup_manifest_validates_payload(catchup_root: Path, monkeypatch
     )
     with use_settings(settings):
         with pytest.raises(ValueError, match="detected_at"):
-            read_catchup_manifest(
-                manifest_id=bad_mid, project_root=catchup_root, settings=settings
-            )
+            read_catchup_manifest(manifest_id=bad_mid, project_root=catchup_root, settings=settings)
 
     unsupported_mid = "scm_ccddeeff00112233"
     unsupported = {**legacy, "manifest_id": unsupported_mid, "manifest_version": 99}
@@ -698,13 +650,8 @@ def test_read_catchup_manifest_validates_payload(catchup_root: Path, monkeypatch
             )
 
 
-def test_write_catchup_manifest_sidecar_failure_leaves_no_commit(
-    catchup_root: Path, monkeypatch
-):
+def test_write_catchup_manifest_sidecar_failure_leaves_no_commit(catchup_root: Path, monkeypatch):
     """Failed .runs.jsonl write must not leave a committed scm JSON."""
-    from unittest.mock import patch
-
-    from det.runtime.lake import LakeRef
 
     lake = catchup_root / "data" / "lake"
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
@@ -736,27 +683,21 @@ def test_write_catchup_manifest_sidecar_failure_leaves_no_commit(
             patch.object(LakeRef, "create_exclusive", _fail_runs_once),
             pytest.raises(OSError, match="simulated runs write failure"),
         ):
-            write_catchup_manifest(
-                payload, project_root=catchup_root, settings=settings
-            )
+            write_catchup_manifest(payload, project_root=catchup_root, settings=settings)
         assert not scm.exists()
         assert not runs.exists()
         # Retry without the failure injects a full publish.
-        path = write_catchup_manifest(
-            payload, project_root=catchup_root, settings=settings
-        )
+        path = write_catchup_manifest(payload, project_root=catchup_root, settings=settings)
     assert path.exists()
     assert runs.exists()
-    assert read_catchup_manifest(
-        manifest_id=mid, project_root=catchup_root, settings=settings
-    ) is not None
+    assert (
+        read_catchup_manifest(manifest_id=mid, project_root=catchup_root, settings=settings)
+        is not None
+    )
 
 
-def test_write_catchup_manifest_recovers_identical_orphan_sidecar(
-    catchup_root: Path, monkeypatch
-):
+def test_write_catchup_manifest_recovers_identical_orphan_sidecar(catchup_root: Path, monkeypatch):
     """Identical .runs.jsonl without scm JSON is recoverable; different is not."""
-    from det.runtime.silver_catchup import _runs_jsonl_bytes, catchup_content_digest
 
     lake = catchup_root / "data" / "lake"
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
@@ -781,9 +722,7 @@ def test_write_catchup_manifest_recovers_identical_orphan_sidecar(
     assert not (catchup_dir / f"{mid}.json").exists()
 
     with use_settings(settings):
-        path = write_catchup_manifest(
-            payload, project_root=catchup_root, settings=settings
-        )
+        path = write_catchup_manifest(payload, project_root=catchup_root, settings=settings)
         assert path.exists()
         loaded = read_catchup_manifest(
             manifest_id=mid, project_root=catchup_root, settings=settings
@@ -808,9 +747,7 @@ def test_write_catchup_manifest_recovers_identical_orphan_sidecar(
     (catchup_dir / f"{mid}.json").unlink()
     with use_settings(settings):
         with pytest.raises(DetConflictError, match="runs NDJSON already exists"):
-            write_catchup_manifest(
-                other, project_root=catchup_root, settings=settings
-            )
+            write_catchup_manifest(other, project_root=catchup_root, settings=settings)
 
 
 def test_plan_catchup_manifest_single(catchup_root: Path, monkeypatch):
@@ -834,9 +771,7 @@ def test_plan_catchup_manifest_single(catchup_root: Path, monkeypatch):
             analytics_db=db,
         )
     assert planned["dry_run"] is True
-    assert planned["manifest"]["runs"][0]["extract_run_datetime"].startswith(
-        "2026-09-02T12:08"
-    )
+    assert planned["manifest"]["runs"][0]["extract_run_datetime"].startswith("2026-09-02T12:08")
     assert planned["manifest_id"].startswith("scm_")
     assert planned["content_digest"].startswith("sha256:")
     assert planned["manifest_relpath"].endswith(f"{planned['manifest_id']}.json")
@@ -862,9 +797,7 @@ def test_fleet_aggregates_retained_catchup_count(catchup_root: Path, monkeypatch
             "display_truncated": False,
         }
 
-    monkeypatch.setattr(
-        "det.runtime.silver_catchup.diff_bronze_silver", fake_diff
-    )
+    monkeypatch.setattr("det.runtime.silver_catchup.diff_bronze_silver", fake_diff)
     out = diff_bronze_silver_fleet(
         project_root=catchup_root,
         pipelines=["a.events", "b.events"],
@@ -878,9 +811,7 @@ def test_fleet_aggregates_retained_catchup_count(catchup_root: Path, monkeypatch
     assert out["results"][1]["catchup_count"] == 2
 
 
-def test_plan_includes_all_catchup_rows_beyond_display_limit(
-    catchup_root: Path, monkeypatch
-):
+def test_plan_includes_all_catchup_rows_beyond_display_limit(catchup_root: Path, monkeypatch):
     """Apply manifest must not drop holes that exceed the MCP display limit."""
     lake = catchup_root / "data" / "lake"
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
@@ -923,7 +854,6 @@ def test_plan_includes_all_catchup_rows_beyond_display_limit(
 
 def test_lookback_discovers_beyond_display_limit(catchup_root: Path, monkeypatch):
     """Mode A must search the lookback window past --limit (display-only)."""
-    from datetime import UTC, datetime, timedelta
 
     lake = catchup_root / "data" / "lake"
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
@@ -934,9 +864,7 @@ def test_lookback_discovers_beyond_display_limit(catchup_root: Path, monkeypatch
         start = (now - timedelta(days=30) - timedelta(days=i)).isoformat()
         end = (now - timedelta(days=29) - timedelta(days=i)).isoformat()
         extract = (now - timedelta(minutes=n - i)).isoformat()
-        _write_bronze_run(
-            lake, interval_start=start, interval_end=end, extract_run=extract
-        )
+        _write_bronze_run(lake, interval_start=start, interval_end=end, extract_run=extract)
     # Leave one intentional hole: empty silver.
     db = _silver_db(catchup_root, [])
     settings = DetSettings.from_env(project_root=catchup_root).with_overrides(
@@ -958,11 +886,8 @@ def test_lookback_discovers_beyond_display_limit(catchup_root: Path, monkeypatch
     assert out["display_truncated"] is True
 
 
-def test_lookback_expand_across_intervals_beyond_display_limit(
-    catchup_root: Path, monkeypatch
-):
+def test_lookback_expand_across_intervals_beyond_display_limit(catchup_root: Path, monkeypatch):
     """Sibling expand must not stop after 200 rows when many intervals are touched."""
-    from datetime import UTC, datetime, timedelta
 
     lake = catchup_root / "data" / "lake"
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
@@ -970,9 +895,7 @@ def test_lookback_expand_across_intervals_beyond_display_limit(
     intervals = 50
     siblings = 5
     for i in range(intervals):
-        start = (now - timedelta(days=100 + i)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        start = (now - timedelta(days=100 + i)).replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
         for j in range(siblings):
             extract = (now - timedelta(hours=1) - timedelta(minutes=i * siblings + j)).isoformat()
@@ -1029,9 +952,7 @@ def test_duckdb_coverage_query_fails_closed_on_missing_interval_columns(
         catchup_root / "configs" / "pipelines" / "example_api" / "events.yaml"
     )
     with pytest.raises(ValueError, match="coverage query failed"):
-        list_silver_extract_runs(
-            config, project_root=catchup_root, analytics_db=db
-        )
+        list_silver_extract_runs(config, project_root=catchup_root, analytics_db=db)
 
     _write_bronze_run(
         lake,
@@ -1052,9 +973,7 @@ def test_duckdb_coverage_query_fails_closed_on_missing_interval_columns(
             )
 
 
-def test_complete_diff_rejects_unavailable_silver_coverage(
-    catchup_root: Path, monkeypatch
-):
+def test_complete_diff_rejects_unavailable_silver_coverage(catchup_root: Path, monkeypatch):
     """Missing DuckDB analytics must not become zero coverage on apply."""
     lake = catchup_root / "data" / "lake"
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
@@ -1086,9 +1005,7 @@ def test_complete_diff_rejects_unavailable_silver_coverage(
             )
 
 
-def test_list_silver_extract_runs_bigquery_note_without_project(
-    catchup_root: Path, monkeypatch
-):
+def test_list_silver_extract_runs_bigquery_note_without_project(catchup_root: Path, monkeypatch):
     monkeypatch.setenv("DET_DBT_TARGET", "bigquery")
     monkeypatch.delenv("DET_GCP_PROJECT", raising=False)
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
@@ -1102,11 +1019,7 @@ def test_list_silver_extract_runs_bigquery_note_without_project(
     assert "DET_GCP_PROJECT" in note
 
 
-def test_list_silver_extract_runs_bigquery_mocked_client(
-    catchup_root: Path, monkeypatch
-):
-    from unittest.mock import MagicMock, patch
-
+def test_list_silver_extract_runs_bigquery_mocked_client(catchup_root: Path, monkeypatch):
     monkeypatch.setenv("DET_DBT_TARGET", "bigquery")
     monkeypatch.setenv("DET_GCP_PROJECT", "proj-test")
     config = load_pipeline_config(
@@ -1147,19 +1060,14 @@ def test_ensure_bq_catchup_external_table_requires_gs():
 
 
 def test_catchup_bq_relation_is_manifest_scoped():
-    from det.runtime.silver_catchup import catchup_bq_relation
-
     mid = "scm_" + ("cd" * 8)
-    assert catchup_bq_relation(
-        project="proj", dataset="analytics", manifest_id=mid
-    ) == f"`proj.analytics._det_catchup_runs_{mid}`"
+    assert (
+        catchup_bq_relation(project="proj", dataset="analytics", manifest_id=mid)
+        == f"`proj.analytics._det_catchup_runs_{mid}`"
+    )
 
 
 def test_parse_duration_shared_with_lookback():
-    from datetime import timedelta
-
-    from det.runtime.silver_catchup import parse_duration, parse_extract_lookback
-
     assert parse_duration("30d", what="older-than") == timedelta(days=30)
     assert parse_extract_lookback("48h") == parse_duration("48h", what="extract lookback")
     with pytest.raises(ValueError, match="older-than"):
@@ -1167,23 +1075,17 @@ def test_parse_duration_shared_with_lookback():
 
 
 def test_validate_bq_catchup_cleanup_scope():
-    from det.runtime.silver_catchup import validate_bq_catchup_cleanup_scope
-
     validate_bq_catchup_cleanup_scope(
         manifest_id="scm_" + ("ab" * 8), older_than=None, list_mode=False
     )
-    validate_bq_catchup_cleanup_scope(
-        manifest_id=None, older_than="7d", list_mode=False
-    )
+    validate_bq_catchup_cleanup_scope(manifest_id=None, older_than="7d", list_mode=False)
     validate_bq_catchup_cleanup_scope(
         manifest_id=None,
         older_than=None,
         created_before="2026-08-28T12:00:00+00:00",
         list_mode=False,
     )
-    validate_bq_catchup_cleanup_scope(
-        manifest_id=None, older_than="7d", list_mode=True
-    )
+    validate_bq_catchup_cleanup_scope(manifest_id=None, older_than="7d", list_mode=True)
     with pytest.raises(ValueError, match="cannot combine"):
         validate_bq_catchup_cleanup_scope(
             manifest_id="scm_" + ("ab" * 8), older_than="7d", list_mode=False
@@ -1196,9 +1098,7 @@ def test_validate_bq_catchup_cleanup_scope():
             list_mode=False,
         )
     with pytest.raises(ValueError, match="exactly one"):
-        validate_bq_catchup_cleanup_scope(
-            manifest_id=None, older_than=None, list_mode=False
-        )
+        validate_bq_catchup_cleanup_scope(manifest_id=None, older_than=None, list_mode=False)
     with pytest.raises(ValueError, match="--list cannot combine"):
         validate_bq_catchup_cleanup_scope(
             manifest_id="scm_" + ("ab" * 8), older_than=None, list_mode=True
@@ -1206,10 +1106,6 @@ def test_validate_bq_catchup_cleanup_scope():
 
 
 def test_resolve_bq_catchup_cleanup_cutoff_freezes_relative_duration():
-    from datetime import UTC, datetime, timedelta
-
-    from det.runtime.silver_catchup import resolve_bq_catchup_cleanup_cutoff
-
     now = datetime(2026, 9, 4, 12, 0, tzinfo=UTC)
     cutoff, iso, older = resolve_bq_catchup_cleanup_cutoff(older_than="7d", now=now)
     assert older == "7d"
@@ -1217,16 +1113,12 @@ def test_resolve_bq_catchup_cleanup_cutoff_freezes_relative_duration():
     assert cutoff == datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
     # Later "now" with the frozen ISO must not move the cutoff.
     later = now + timedelta(days=3)
-    cutoff2, iso2, _ = resolve_bq_catchup_cleanup_cutoff(
-        created_before=iso, now=later
-    )
+    cutoff2, iso2, _ = resolve_bq_catchup_cleanup_cutoff(created_before=iso, now=later)
     assert iso2 == iso
     assert cutoff2 == cutoff
 
 
 def test_bq_project_dataset_location_requires_project(monkeypatch: pytest.MonkeyPatch):
-    from det.runtime.silver_catchup import _bq_project_dataset_location
-
     monkeypatch.delenv("DET_GCP_PROJECT", raising=False)
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
     with pytest.raises(ValueError, match="DET_GCP_PROJECT"):
@@ -1265,10 +1157,6 @@ class _FakeBqClient:
 
 
 def test_list_bq_catchup_external_tables_age_filter(monkeypatch: pytest.MonkeyPatch):
-    from datetime import UTC, datetime, timedelta
-
-    from det.runtime import silver_catchup as sc
-
     mid_old = "scm_" + ("11" * 8)
     mid_new = "scm_" + ("22" * 8)
     mid_skip = "scm_" + ("33" * 8)
@@ -1299,8 +1187,6 @@ def test_list_bq_catchup_external_tables_age_filter(monkeypatch: pytest.MonkeyPa
 
 
 def test_drop_bq_catchup_external_table_not_found_ok(monkeypatch: pytest.MonkeyPatch):
-    from det.runtime import silver_catchup as sc
-
     mid = "scm_" + ("44" * 8)
     client = _FakeBqClient([])
     monkeypatch.setenv("DET_GCP_PROJECT", "proj")
@@ -1315,11 +1201,6 @@ def test_drop_bq_catchup_external_table_not_found_ok(monkeypatch: pytest.MonkeyP
 def test_plan_and_apply_bq_catchup_cleanup_older_than(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    from datetime import UTC, datetime, timedelta
-
-    from det.runtime import silver_catchup as sc
-    from det.runtime.approval import silver_catchup_cleanup_write_argv
-
     mid = "scm_" + ("55" * 8)
     now = datetime(2026, 9, 4, 12, 0, tzinfo=UTC)
     old_created = now - timedelta(days=30)
@@ -1332,9 +1213,7 @@ def test_plan_and_apply_bq_catchup_cleanup_older_than(
     monkeypatch.setenv("DET_GCP_PROJECT", "proj")
     monkeypatch.setenv("DET_BQ_DATASET", "analytics")
     monkeypatch.setattr(sc, "_bq_client", lambda: (client, "proj", "analytics", "US"))
-    monkeypatch.setattr(
-        sc, "_bq_project_dataset_location", lambda: ("proj", "analytics", "US")
-    )
+    monkeypatch.setattr(sc, "_bq_project_dataset_location", lambda: ("proj", "analytics", "US"))
 
     planned = sc.plan_bq_catchup_cleanup(older_than="7d", now=now)
     assert planned["mode"] == "created_before"
@@ -1344,17 +1223,13 @@ def test_plan_and_apply_bq_catchup_cleanup_older_than(
     assert planned["targets"][0]["manifest_id"] == mid
 
     # Approval argv binds the frozen cutoff, not the relative duration.
-    argv = silver_catchup_cleanup_write_argv(
-        created_before=planned["created_before"]
-    )
+    argv = silver_catchup_cleanup_write_argv(created_before=planned["created_before"])
     assert "--created-before" in argv
     assert "7d" not in argv
 
     # Apply with the bound cutoff still selects the same table even if "now" moved.
     later = now + timedelta(days=10)
-    applied = sc.apply_bq_catchup_cleanup(
-        created_before=planned["created_before"], now=later
-    )
+    applied = sc.apply_bq_catchup_cleanup(created_before=planned["created_before"], now=later)
     assert applied["dropped_count"] == 1
     assert applied["created_before"] == planned["created_before"]
     assert client.deleted == [table_id]
@@ -1366,15 +1241,11 @@ def test_plan_and_apply_bq_catchup_cleanup_older_than(
 
 
 def test_plan_bq_catchup_cleanup_single_missing(monkeypatch: pytest.MonkeyPatch):
-    from det.runtime import silver_catchup as sc
-
     mid = "scm_" + ("66" * 8)
     client = _FakeBqClient([])
     monkeypatch.setenv("DET_GCP_PROJECT", "proj")
     monkeypatch.setattr(sc, "_bq_client", lambda: (client, "proj", "analytics", "US"))
-    monkeypatch.setattr(
-        sc, "_bq_project_dataset_location", lambda: ("proj", "analytics", "US")
-    )
+    monkeypatch.setattr(sc, "_bq_project_dataset_location", lambda: ("proj", "analytics", "US"))
 
     planned = sc.plan_bq_catchup_cleanup(manifest_id=mid)
     assert planned["mode"] == "manifest_id"

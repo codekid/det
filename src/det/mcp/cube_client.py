@@ -15,6 +15,7 @@ from urllib.parse import urljoin
 import requests
 
 from det.mcp.context import project_root
+from det.mcp.errors import sanitize_detail
 from det.mcp.inspect import clamp_sample_limit
 
 DEFAULT_BASE_URL = "http://localhost:4000"
@@ -115,8 +116,6 @@ def _request(
             timeout=settings["timeout_sec"],
         )
     except requests.RequestException as exc:
-        from det.mcp.errors import sanitize_detail
-
         return _unavailable(settings, sanitize_detail(exc))
     if resp.status_code >= 500 or resp.status_code in {401, 403, 404}:
         if resp.status_code in {401, 403}:

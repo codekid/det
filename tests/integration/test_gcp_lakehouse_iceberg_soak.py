@@ -16,6 +16,8 @@ import yaml
 
 from det.ingestion.iceberg_catalog_factory import ENV_CATALOG, resolve_iceberg_catalog
 from det.ingestion.iceberg_writer import scan_iceberg_rows
+from det.runtime.config import load_pipeline_config
+from det.runtime.ids import sql_names_for_config
 from det.runtime.lake import ENV_LAKE_MODE, open_lake
 from det.runtime.runner import PipelineRunner
 
@@ -112,9 +114,6 @@ def test_gcp_lakehouse_greenfield_rest_write(
     runner = PipelineRunner(project_root=tmp_path)
     result = runner.run(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
     assert result.rows == SOAK_ROWS
-
-    from det.runtime.config import load_pipeline_config
-    from det.runtime.ids import sql_names_for_config
 
     config = load_pipeline_config(pipe)
     ns, table = sql_names_for_config(config)

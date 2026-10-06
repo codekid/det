@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import threading
 import time
+from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+import yaml
 
 from det.runtime.lake import clear_memory_lakes, open_lake
 from det.runtime.lease import LeaseFencedError, LeaseHeldError
@@ -22,8 +25,11 @@ from det.runtime.lease.dataset_lock import (
     release_dataset_lock,
     resolve_dataset_lock_wait_sec,
 )
+from det.runtime.lease.dataset_lock import dataset_exclusive_lock as real_exclusive_lock
 from det.runtime.lease.dataset_lock_postgres import PostgresDatasetLockStore
 from det.runtime.lease.store import ResolvedLeaseOptions
+from det.runtime.migrate import BronzeMigrator, MigratePlan
+from det.runtime.runner import PipelineRunner
 
 
 class _StopAfterPurge(Exception):
@@ -289,11 +295,6 @@ def test_recreate_exclusive_before_purge_order(
     tmp_path: Path, project_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
     pytest.importorskip("pyiceberg")
-    from contextlib import contextmanager
-
-    import yaml
-
-    from det.runtime.migrate import BronzeMigrator
 
     schema_src = project_root / "schemas/example_api/events/events.schema.yaml"
     schema_dst = tmp_path / "schemas/example_api/events/events.schema.yaml"
@@ -320,12 +321,9 @@ def test_recreate_exclusive_before_purge_order(
         ),
         encoding="utf-8",
     )
-    from det.runtime.runner import PipelineRunner
 
     runner = PipelineRunner(tmp_path)
     runner.extract(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
-
-    from det.runtime.lease.dataset_lock import dataset_exclusive_lock as real_exclusive_lock
 
     order: list[str] = []
 
@@ -363,9 +361,6 @@ def test_recreate_exclusive_before_purge_order(
 
 def test_migrate_dry_run_reports_dataset_exclusive(project_root: Path, tmp_path: Path):
     pytest.importorskip("pyiceberg")
-    import yaml
-
-    from det.runtime.migrate import BronzeMigrator, MigratePlan
 
     pipe_path = tmp_path / "iceberg.yaml"
     pipe_path.write_text(
@@ -376,9 +371,7 @@ def test_migrate_dry_run_reports_dataset_exclusive(project_root: Path, tmp_path:
                     "type": "example_api.events",
                     "overrides": {"fixture_records": [{"id": "e1"}]},
                 },
-                "schema": str(
-                    project_root / "schemas/example_api/events/events.schema.yaml"
-                ),
+                "schema": str(project_root / "schemas/example_api/events/events.schema.yaml"),
                 "destination": {
                     "type": "iceberg",
                     "path": str(tmp_path / "lake"),
@@ -533,8 +526,6 @@ def test_resolve_dataset_lock_wait_sec() -> None:
 
 
 def test_open_dataset_lock_store_lake_and_errors(tmp_path: Path):
-    from dataclasses import replace
-
     lake = _lake(tmp_path)
     lake_store = open_dataset_lock_store(lake, _opts())
     assert isinstance(lake_store, LakeDatasetLockStore)
@@ -558,8 +549,6 @@ def test_open_dataset_lock_store_lake_and_errors(tmp_path: Path):
 
 
 def test_postgres_dataset_lock_store_rejects_unsafe_idents() -> None:
-    from det.runtime.lease.dataset_lock_postgres import PostgresDatasetLockStore
-
     with pytest.raises(ValueError, match="postgres dataset lock schema"):
         PostgresDatasetLockStore(
             resolve_secret=lambda _k: "postgres://x",
@@ -571,12 +560,8 @@ def test_postgres_dataset_lock_store_rejects_unsafe_idents() -> None:
 def test_nested_dataset_shared_lock_reentrant(tmp_path: Path):
     lake = _lake(tmp_path)
     dataset_id = "example_api.events_v1"
-    with dataset_shared_lock(
-        lake, dataset_id, command="load", options=_opts()
-    ) as outer:
-        with dataset_shared_lock(
-            lake, dataset_id, command="load", options=_opts()
-        ) as inner:
+    with dataset_shared_lock(lake, dataset_id, command="load", options=_opts()) as outer:
+        with dataset_shared_lock(lake, dataset_id, command="load", options=_opts()) as inner:
             assert inner is outer
 
 
@@ -597,9 +582,7 @@ def test_exclusive_raises_when_same_dataset_already_held(tmp_path: Path):
 
 def test_exclusive_allowed_for_different_dataset_while_one_held(tmp_path: Path):
     lake = _lake(tmp_path)
-    with dataset_shared_lock(
-        lake, "example_api.events_v1", command="load", options=_opts()
-    ):
+    with dataset_shared_lock(lake, "example_api.events_v1", command="load", options=_opts()):
         with dataset_exclusive_lock(
             lake,
             "example_api.orders_v1",
@@ -610,9 +593,7 @@ def test_exclusive_allowed_for_different_dataset_while_one_held(tmp_path: Path):
             assert handle is not None
 
 
-def test_dataset_exclusive_lock_disabled(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-):
+def test_dataset_exclusive_lock_disabled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("DET_LOCK", "0")
     lake = _lake(tmp_path)
     with dataset_exclusive_lock(

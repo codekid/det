@@ -4,9 +4,20 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
-from det.runtime.check import check_pipeline_config, check_project, has_errors, has_warnings
+from det.runtime.check import (
+    _lake_mode_findings,
+    check_pipeline_config,
+    check_project,
+    has_errors,
+    has_warnings,
+)
+from det.runtime.config import load_pipeline_config
 from det.runtime.discovery import PluginLoadError
+from det.runtime.lake import LakeRootSpecs
+from det.scaffold.check_dbt import check_pipeline_config_with_dbt
+from det.scaffold.dbt import scaffold_dbt
 
 
 def _write_pipeline(
@@ -125,10 +136,6 @@ def test_missing_dbt_models_warning(tmp_path: Path):
 
 
 def test_scaffold_sql_stale_when_lookback_changes(tmp_path: Path):
-    from det.runtime.config import load_pipeline_config
-    from det.scaffold.check_dbt import check_pipeline_config_with_dbt
-    from det.scaffold.dbt import scaffold_dbt
-
     path = _write_pipeline(tmp_path, with_dbt=True)
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     doc["dbt"] = {
@@ -194,9 +201,7 @@ def test_passwordless_dsn_in_config_is_a_warning(tmp_path: Path):
     )
     findings = check_pipeline_config(path, project_root=tmp_path)
     assert not has_errors(findings)
-    assert any(
-        f.code == "secret_in_config" and f.severity == "warning" for f in findings
-    )
+    assert any(f.code == "secret_in_config" and f.severity == "warning" for f in findings)
 
 
 def test_connection_env_is_clean(tmp_path: Path):
@@ -302,8 +307,6 @@ def test_lake_cloud_experimental_warning(tmp_path: Path, monkeypatch):
 
 def test_lake_cloud_experimental_split_roots(tmp_path: Path, monkeypatch):
     """Split cloud lakes must reach lake_cloud_experimental with spec bound."""
-    from det.runtime.check import _lake_mode_findings
-    from det.runtime.lake import LakeRootSpecs
 
     _write_pipeline(tmp_path)
     monkeypatch.delenv("DET_LAKE_LAYOUT", raising=False)
@@ -331,9 +334,7 @@ def test_lake_cloud_experimental_split_roots(tmp_path: Path, monkeypatch):
     assert cloud[0].path == "s3://ci-bronze"
 
 
-def test_approval_recommended_cloud_lake_when_gate_off(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_approval_recommended_cloud_lake_when_gate_off(tmp_path: Path, monkeypatch) -> None:
     _write_pipeline(tmp_path)
     monkeypatch.setenv("DET_LAKE_MODE", "cloud")
     monkeypatch.setenv("DET_LAKE_PATH", "s3://bucket/det-lake")
@@ -345,9 +346,7 @@ def test_approval_recommended_cloud_lake_when_gate_off(
     assert any(f.code == "approval_recommended_cloud_lake" for f in findings)
 
 
-def test_approval_recommended_cloud_lake_skipped_for_local(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_approval_recommended_cloud_lake_skipped_for_local(tmp_path: Path, monkeypatch) -> None:
     _write_pipeline(tmp_path)
     monkeypatch.setenv("DET_LAKE_MODE", "local")
     monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path / "data" / "lake"))
@@ -377,9 +376,7 @@ def test_iceberg_glue_requires_s3_is_error(tmp_path: Path, monkeypatch):
     assert any(f.code == "iceberg_glue_requires_s3" for f in findings)
 
 
-def test_iceberg_glue_split_checks_bronze_not_destination_path(
-    tmp_path: Path, monkeypatch
-):
+def test_iceberg_glue_split_checks_bronze_not_destination_path(tmp_path: Path, monkeypatch):
     """Layout 2: glue probes bronze root, not pipeline destination.path."""
     _write_pipeline(tmp_path)
     monkeypatch.setenv("DET_ICEBERG_CATALOG", "glue")
@@ -428,10 +425,6 @@ def test_full_validate_gated_skipped_when_env_set(tmp_path: Path, monkeypatch) -
 
 
 def test_ingestion_library_dlt_rejected(tmp_path: Path):
-    from pydantic import ValidationError
-
-    from det.runtime.config import load_pipeline_config
-
     path = _write_pipeline(tmp_path)
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     data["ingestion"] = {"library": "dlt"}

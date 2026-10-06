@@ -16,6 +16,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from det.runtime import secrets as secrets_mod
 from det.runtime.approval_store.constants import (
     DEFAULT_APPROVAL_BACKEND,
     DEFAULT_APPROVAL_PG_DSN_ENV,
@@ -105,15 +106,12 @@ def _env_file_lookup(
             return None
 
         # Lazy import keeps secrets._read_secrets_file private to that module.
-        from det.runtime import secrets as secrets_mod
 
         file_env = dict(environ)
         if secrets_file is not None:
             file_env["DET_SECRETS_FILE"] = str(secrets_file)
         try:
-            values = secrets_mod._read_secrets_file(
-                env=file_env, project_root=project_root
-            )
+            values = secrets_mod._read_secrets_file(env=file_env, project_root=project_root)
         except secrets_mod.SecretError:
             cache.put(name, None)
             raise
@@ -235,8 +233,7 @@ class DetSettings:
             or DEFAULT_LOCK_PG_DSN_ENV,
             lock_pg_schema=(environ.get("DET_LOCK_PG_SCHEMA") or "").strip()
             or DEFAULT_LOCK_PG_SCHEMA,
-            lock_pg_table=(environ.get("DET_LOCK_PG_TABLE") or "").strip()
-            or DEFAULT_LOCK_PG_TABLE,
+            lock_pg_table=(environ.get("DET_LOCK_PG_TABLE") or "").strip() or DEFAULT_LOCK_PG_TABLE,
             approval_backend=parse_approval_backend(environ.get("DET_APPROVAL_BACKEND"))
             or DEFAULT_APPROVAL_BACKEND,
             approval_pg_dsn_env=(environ.get("DET_APPROVAL_PG_DSN_ENV") or "").strip()
@@ -369,17 +366,13 @@ class DetSettings:
             if secrets_ttl_sec is not None and int(secrets_ttl_sec) < 0:
                 raise ValueError("secrets TTL must be >= 0")
             kwargs["secrets_ttl_sec"] = (
-                DEFAULT_CACHE_TTL_SEC
-                if secrets_ttl_sec is None
-                else int(secrets_ttl_sec)
+                DEFAULT_CACHE_TTL_SEC if secrets_ttl_sec is None else int(secrets_ttl_sec)
             )
         if resolve_secret is not _MISSING:
             cache = _SecretCache()
             ttl = kwargs.get("secrets_ttl_sec", self.secrets_ttl_sec)
             kwargs["_secret_cache"] = cache
-            kwargs["resolve_secret"] = _caching_lookup(
-                resolve_secret, ttl_sec=ttl, cache=cache
-            )
+            kwargs["resolve_secret"] = _caching_lookup(resolve_secret, ttl_sec=ttl, cache=cache)
         return replace(self, **kwargs)
 
     def clear_secret_cache(self) -> None:

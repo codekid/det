@@ -3,24 +3,40 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from det.destinations.models import bronze_dataset_dir, duckdb_connection_path, postgres_dsn
+from det.destinations.models import (
+    bronze_dataset_dir,
+    duckdb_connection_path,
+    lake_root,
+    postgres_dsn,
+)
+from det.ingestion.iceberg_catalog_factory import lake_ref_uri
+from det.ingestion.iceberg_writer import (
+    _jsonable_cell,
+    list_iceberg_extract_runs,
+    load_iceberg_table,
+    scan_iceberg_rows,
+)
 from det.mcp.errors import sanitize_detail
 from det.optional_deps import require_duckdb
 from det.plugins import load_plugins
 from det.runtime.coerce import CoerceError, coerce_record
 from det.runtime.config import PipelineConfig, resolve_path
+from det.runtime.ids import sql_names_for_config
 from det.runtime.lake import LakeRef
 from det.runtime.manifest import is_committed_raw_dir
 from det.runtime.manifest import read_manifest as read_raw_manifest
-from det.runtime.meta import resolve_interval
+from det.runtime.meta import identity_iso, resolve_interval
 from det.runtime.naming import apply_naming
+from det.runtime.object_store import configure_duckdb_s3
 from det.runtime.registry import get_source
 from det.runtime.secrets import SecretError
+from det.runtime.silver_catchup.ids import parse_duration
 from det.sources.base import merge_source_config
 from det.validation.jsonschema_validator import load_json_schema
 
@@ -65,9 +81,7 @@ def _iter_load_rows(
     errors: list[dict[str, Any]] = []
     seen = 0
     truncated = False
-    for source_row in source.records_from_raw(
-        config=effective, raw_dir=run_dir, manifest=manifest
-    ):
+    for source_row in source.records_from_raw(config=effective, raw_dir=run_dir, manifest=manifest):
         if seen >= limit:
             truncated = True
             break
@@ -156,9 +170,7 @@ def sample_raw(
     root: Path | None = None,
 ) -> dict[str, Any]:
     if stage not in {"wire", "rows", "named", "coerced"}:
-        raise ValueError(
-            f"stage must be one of wire|rows|named|coerced, got {stage!r}"
-        )
+        raise ValueError(f"stage must be one of wire|rows|named|coerced, got {stage!r}")
     base = _root(root)
     config, _ = _load_pipeline(pipeline, base)
     capped = clamp_sample_limit(limit)
@@ -185,9 +197,7 @@ def sample_raw(
             "truncated": truncated,
         }
 
-    rows, errors, truncated = _iter_load_rows(
-        config, root=base, run=run, limit=capped, stage=stage
-    )
+    rows, errors, truncated = _iter_load_rows(config, root=base, run=run, limit=capped, stage=stage)
     return {
         "pipeline": config.name,
         "stage": stage,
@@ -259,9 +269,7 @@ def validate_sample(
     valid_rows: list[dict[str, Any]] = []
     truncated = False
 
-    for source_row in source.records_from_raw(
-        config=effective, raw_dir=run_dir, manifest=manifest
-    ):
+    for source_row in source.records_from_raw(config=effective, raw_dir=run_dir, manifest=manifest):
         if checked >= capped:
             truncated = True
             break
@@ -270,9 +278,7 @@ def validate_sample(
         try:
             named = apply_naming(source_row.data, config.bronze.naming)
         except Exception as exc:
-            coerce_errors.append(
-                {"index": idx, "path": [], "message": f"naming: {exc}"}
-            )
+            coerce_errors.append({"index": idx, "path": [], "message": f"naming: {exc}"})
             if len(coerce_errors) + len(schema_errors) >= err_cap:
                 break
             continue
@@ -436,7 +442,6 @@ _DEFAULT_ICEBERG_SAMPLE_LOOKBACK = "7d"
 
 def _iceberg_sample_scan_uri(location: LakeRef) -> str:
     """Path/URI DuckDB ``iceberg_scan`` accepts (local path or s3://)."""
-    from det.ingestion.iceberg_catalog_factory import lake_ref_uri
 
     if location.is_local:
         return str(location.to_path().resolve())
@@ -451,8 +456,6 @@ def _iceberg_sample_bound_note(bound: str) -> str:
 
 
 def _jsonable_sample_row(row: dict[str, Any]) -> dict[str, Any]:
-    from det.ingestion.iceberg_writer import _jsonable_cell
-
     return {k: _jsonable_cell(v) for k, v in row.items()}
 
 
@@ -465,8 +468,6 @@ def _sample_bronze_duckdb(
     interval_end: str | None,
     extract_run_datetime: str | None,
 ) -> dict[str, Any]:
-    from det.runtime.ids import sql_names_for_config
-
     db_path = duckdb_connection_path(config.destination, root)
     schema, table = sql_names_for_config(config)
     qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
@@ -510,11 +511,7 @@ def _sample_bronze_duckdb(
                 "errors": [{"message": f"table not found: {schema}.{table}"}],
                 "truncated": False,
             }
-        sql = (
-            f"select * from {qualified}{where} "
-            f"order by __extract_run_datetime "
-            f"limit ?"
-        )
+        sql = f"select * from {qualified}{where} order by __extract_run_datetime limit ?"
         result = con.execute(sql, [*params, limit + 1])
         cols = [d[0] for d in result.description]
         fetched = result.fetchall()
@@ -538,8 +535,6 @@ def _sample_bronze_postgres(
     interval_end: str | None,
     extract_run_datetime: str | None,
 ) -> dict[str, Any]:
-    from det.runtime.ids import sql_names_for_config
-
     _ = root
     schema, table = sql_names_for_config(config)
     qualified = f"{_quote_ident(schema)}.{_quote_ident(table)}"
@@ -553,7 +548,7 @@ def _sample_bronze_postgres(
         "note": note,
     }
     try:
-        import psycopg
+        import psycopg  # noqa: PLC0415
     except ImportError:
         return {
             **base_out,
@@ -561,8 +556,7 @@ def _sample_bronze_postgres(
             "errors": [
                 {
                     "message": (
-                        'Postgres inspect requires the optional extra: '
-                        'pip install -e ".[postgres]"'
+                        'Postgres inspect requires the optional extra: pip install -e ".[postgres]"'
                     )
                 }
             ],
@@ -584,11 +578,7 @@ def _sample_bronze_postgres(
         extract_run_datetime=extract_run_datetime,
     )
     where = where_duck.replace("?", "%s")
-    sql = (
-        f"select * from {qualified}{where} "
-        f"order by __extract_run_datetime "
-        f"limit %s"
-    )
+    sql = f"select * from {qualified}{where} order by __extract_run_datetime limit %s"
     _ro = "-c default_transaction_read_only=on"
     with psycopg.connect(dsn, options=_ro) as conn:
         with conn.cursor() as cur:
@@ -632,13 +622,6 @@ def _sample_bronze_iceberg_pyiceberg(
     base_out: dict[str, Any],
 ) -> dict[str, Any]:
     """gs:// fallback: bounded PyIceberg parquet read (no DuckDB iceberg_scan)."""
-    from det.destinations.models import lake_root
-    from det.ingestion.iceberg_writer import (
-        list_iceberg_extract_runs,
-        load_iceberg_table,
-        scan_iceberg_rows,
-    )
-    from det.runtime.ids import sql_names_for_config
 
     schema, table = sql_names_for_config(config)
     location = bronze_dataset_dir(config, root)
@@ -709,13 +692,6 @@ def _sample_bronze_iceberg(
     extract_run_datetime: str | None,
 ) -> dict[str, Any]:
     """Sample Iceberg bronze via DuckDB ``iceberg_scan`` (PyIceberg on gs://)."""
-    from datetime import UTC, datetime
-
-    from det.destinations.models import lake_root
-    from det.ingestion.iceberg_writer import list_iceberg_extract_runs, load_iceberg_table
-    from det.runtime.ids import sql_names_for_config
-    from det.runtime.meta import identity_iso
-    from det.runtime.silver_catchup.ids import parse_duration
 
     schema, table = sql_names_for_config(config)
     location = bronze_dataset_dir(config, root)
@@ -732,9 +708,7 @@ def _sample_bronze_iceberg(
     extract_run_since: str | None = None
     bound = "caller filters"
     if not caller_filtered:
-        lookback = parse_duration(
-            _DEFAULT_ICEBERG_SAMPLE_LOOKBACK, what="iceberg sample lookback"
-        )
+        lookback = parse_duration(_DEFAULT_ICEBERG_SAMPLE_LOOKBACK, what="iceberg sample lookback")
         since_dt = datetime.now(UTC) - lookback
         extract_run_since = identity_iso(since_dt)
         lookback_label = _DEFAULT_ICEBERG_SAMPLE_LOOKBACK
@@ -811,14 +785,10 @@ def _sample_bronze_iceberg(
             extract_run_since=extract_run_since,
         )
         order_sql = " order by __extract_run_datetime" if order else ""
-        sql = (
-            f"select * from iceberg_scan('{scan_sql}'){where}{order_sql} limit ?"
-        )
+        sql = f"select * from iceberg_scan('{scan_sql}'){where}{order_sql} limit ?"
         con = duckdb.connect()
         try:
             if scan_uri.startswith("s3://"):
-                from det.runtime.object_store import configure_duckdb_s3
-
                 configure_duckdb_s3(con)
             else:
                 con.execute("INSTALL iceberg")
@@ -828,9 +798,7 @@ def _sample_bronze_iceberg(
             fetched = result.fetchall()
         finally:
             con.close()
-        return [
-            _jsonable_sample_row(dict(zip(cols, row, strict=True))) for row in fetched
-        ]
+        return [_jsonable_sample_row(dict(zip(cols, row, strict=True))) for row in fetched]
 
     # Prefer equality / interval filters with ORDER BY; lookback alone skips ORDER BY.
     order = caller_filtered

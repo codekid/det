@@ -13,6 +13,9 @@ from collections.abc import Callable, Iterable
 from datetime import date, datetime
 from typing import Any
 
+import pendulum
+from pendulum import DateTime
+
 from det.ingestion.chunks import iter_chunks
 from det.ingestion.iceberg_catalog_factory import (
     ensure_iceberg_namespace,
@@ -29,7 +32,7 @@ from det.logging import get_logger
 from det.optional_deps import pip_extra_hint
 from det.runtime.config import IcebergPartition
 from det.runtime.lake import LakeRef
-from det.runtime.meta import identity_iso
+from det.runtime.meta import identity_iso, resolve_interval, to_interval_datetime
 from det.runtime.sql_types import (
     bronze_iceberg_columns,
     incompatible_column_error,
@@ -57,16 +60,14 @@ __all__ = [
 
 def _require_iceberg() -> None:
     try:
-        import pyarrow  # noqa: F401
-        import pyiceberg  # noqa: F401
+        import pyarrow  # noqa: PLC0415, F401
+        import pyiceberg  # noqa: PLC0415, F401
     except ImportError as exc:
-        raise ImportError(
-            f"Iceberg bronze requires the optional extra: {_ICEBERG_HINT}"
-        ) from exc
+        raise ImportError(f"Iceberg bronze requires the optional extra: {_ICEBERG_HINT}") from exc
 
 
 def _pyiceberg_type(type_name: str):
-    from pyiceberg.types import (
+    from pyiceberg.types import (  # noqa: PLC0415
         BooleanType,
         DateType,
         DoubleType,
@@ -96,7 +97,7 @@ def _pyiceberg_type(type_name: str):
 
 
 def _live_type_name(field_type: object) -> str:
-    from pyiceberg.types import (
+    from pyiceberg.types import (  # noqa: PLC0415
         BooleanType,
         DateType,
         DoubleType,
@@ -130,8 +131,8 @@ def _live_type_name(field_type: object) -> str:
 
 
 def iceberg_schema_from_columns(columns: list[tuple[str, str]]):
-    from pyiceberg.schema import Schema
-    from pyiceberg.types import NestedField
+    from pyiceberg.schema import Schema  # noqa: PLC0415
+    from pyiceberg.types import NestedField  # noqa: PLC0415
 
     fields = [
         NestedField(i, name, _pyiceberg_type(typ), required=False)
@@ -147,12 +148,12 @@ def partition_spec_for(mode: IcebergPartition, schema):
     (same grain as raw hive; inspect/prune keys).
     ``none`` — unpartitioned.
     """
-    from pyiceberg.partitioning import (
+    from pyiceberg.partitioning import (  # noqa: PLC0415
         UNPARTITIONED_PARTITION_SPEC,
         PartitionField,
         PartitionSpec,
     )
-    from pyiceberg.transforms import IdentityTransform
+    from pyiceberg.transforms import IdentityTransform  # noqa: PLC0415
 
     if mode == "none":
         return UNPARTITIONED_PARTITION_SPEC
@@ -201,7 +202,7 @@ def purge_iceberg_table(
     Idempotent when the table/hint is already absent. Hint-only drop is not
     enough — orphan metadata/data would block a clean recreate.
     """
-    from pyiceberg.exceptions import NoSuchTableError
+    from pyiceberg.exceptions import NoSuchTableError  # noqa: PLC0415
 
     _require_iceberg()
     catalog = resolve_iceberg_catalog(lake)
@@ -222,9 +223,6 @@ def purge_iceberg_table(
 
 
 def _as_utc_datetime(value: Any) -> datetime | None:
-    import pendulum
-    from pendulum import DateTime
-
     if value is None:
         return None
     if isinstance(value, DateTime):
@@ -273,7 +271,7 @@ def _chunk_to_arrow(
     columns: list[tuple[str, str]],
     pa_schema: Any,
 ) -> Any:
-    import pyarrow as pa
+    import pyarrow as pa  # noqa: PLC0415
 
     arrays = []
     by_name = dict(columns)
@@ -285,7 +283,7 @@ def _chunk_to_arrow(
 
 
 def _run_filter(identity: tuple[str, str, str]):
-    from pyiceberg.expressions import And, EqualTo
+    from pyiceberg.expressions import And, EqualTo  # noqa: PLC0415
 
     start, end, run = identity
     # Stubs for EqualTo/And are incomplete across pyiceberg versions.
@@ -307,16 +305,14 @@ def ensure_iceberg_table(
     partition: IcebergPartition = "extract_run",
     table_properties: dict[str, str] | None = None,
 ) -> Any:
-    from pyiceberg.exceptions import NoSuchTableError
+    from pyiceberg.exceptions import NoSuchTableError  # noqa: PLC0415
 
     schema = iceberg_schema_from_columns(columns)
     maybe_bind_location(catalog, identifier, location)
     try:
         table = catalog.load_table(identifier)
     except NoSuchTableError:
-        ensure_iceberg_namespace(
-            catalog, identifier[0], table_location=location
-        )
+        ensure_iceberg_namespace(catalog, identifier[0], table_location=location)
         props = dict(table_properties or {})
         return catalog.create_table(
             identifier,
@@ -369,7 +365,7 @@ def load_iceberg_table(
     table: str,
     table_location: LakeRef,
 ) -> Any | None:
-    from pyiceberg.exceptions import NoSuchTableError
+    from pyiceberg.exceptions import NoSuchTableError  # noqa: PLC0415
 
     _require_iceberg()
     catalog = resolve_iceberg_catalog(lake)
@@ -628,9 +624,7 @@ def _scan_row_filter(
     extract_run_since: str | None = None,
 ) -> Any:
     """Build a PyIceberg BooleanExpression, or None for an unfiltered scan."""
-    from pyiceberg.expressions import And, EqualTo, GreaterThanOrEqual, LessThan
-
-    from det.runtime.meta import resolve_interval, to_interval_datetime
+    from pyiceberg.expressions import And, EqualTo, GreaterThanOrEqual, LessThan  # noqa: PLC0415
 
     parts: list[Any] = []
     if interval_start is not None:
@@ -654,9 +648,9 @@ def _scan_row_filter(
 
 def _apply_residual_filter(piece: Any, residual: Any, iceberg_schema: Any) -> Any:
     """Apply a scan-task residual predicate to an Arrow table (no-op if always true)."""
-    from pyiceberg.expressions import AlwaysFalse, AlwaysTrue
-    from pyiceberg.expressions.visitors import bind, rewrite_not
-    from pyiceberg.io.pyarrow import expression_to_pyarrow
+    from pyiceberg.expressions import AlwaysFalse, AlwaysTrue  # noqa: PLC0415
+    from pyiceberg.expressions.visitors import bind, rewrite_not  # noqa: PLC0415
+    from pyiceberg.io.pyarrow import expression_to_pyarrow  # noqa: PLC0415
 
     if residual is None or residual == AlwaysTrue():
         return piece
@@ -679,8 +673,8 @@ def _read_planned_parquet(
     Applies each task's residual row filter to the full file before counting
     rows toward ``limit``. Stops once ``limit`` matching rows are collected.
     """
-    import pyarrow as pa
-    import pyarrow.parquet as pq
+    import pyarrow as pa  # noqa: PLC0415
+    import pyarrow.parquet as pq  # noqa: PLC0415
 
     iceberg_schema = ice_table.schema()
     target = iceberg_schema.as_arrow()
@@ -726,7 +720,6 @@ def scan_iceberg_rows(
     extract_run_since: str | None = None,
 ) -> list[dict[str, Any]]:
     """Bounded row sample: push filters into Iceberg scan, stop at ``limit``."""
-    from det.runtime.meta import resolve_interval, to_interval_datetime
 
     row_filter = _scan_row_filter(
         interval_start=interval_start,
@@ -745,9 +738,7 @@ def scan_iceberg_rows(
     window: tuple[str, str] | None = None
     if interval_start is not None:
         window = resolve_interval(interval_start, interval_end)
-    want_run = (
-        to_interval_datetime(extract_run_datetime) if extract_run_datetime else None
-    )
+    want_run = to_interval_datetime(extract_run_datetime) if extract_run_datetime else None
     since = identity_iso(extract_run_since) if extract_run_since else None
     matched: list[dict[str, Any]] = []
     for row in rows:

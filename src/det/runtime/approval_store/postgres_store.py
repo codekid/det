@@ -9,6 +9,9 @@ from typing import Any
 
 from det.logging import get_logger
 from det.optional_deps import pip_extra_hint
+from det.runtime.approval import ApprovalError, effective_status, utcnow
+from det.runtime.approval import _iso as approval_iso
+from det.runtime.approval import _parse_iso as approval_parse
 from det.runtime.approval_store.enrich import DEFAULT_HEARTBEAT_INTERVAL_SEC
 from det.runtime.ids import require_sql_ident
 from det.runtime.secrets import DSN_KEYS
@@ -21,7 +24,7 @@ SecretLookup = Callable[[str], str | None]
 
 def _import_psycopg():
     try:
-        import psycopg
+        import psycopg  # noqa: PLC0415
     except ImportError as exc:
         raise ImportError(
             f"postgres approval backend requires the optional extra: {pip_extra_hint('postgres')}"
@@ -30,20 +33,14 @@ def _import_psycopg():
 
 
 def _iso(dt: datetime) -> str:
-    from det.runtime.approval import _iso as approval_iso
-
     return approval_iso(dt)
 
 
 def _utcnow() -> datetime:
-    from det.runtime.approval import utcnow
-
     return utcnow()
 
 
 def _parse_iso(value: str) -> datetime:
-    from det.runtime.approval import _parse_iso as approval_parse
-
     return approval_parse(value)
 
 
@@ -171,8 +168,6 @@ class PostgresApprovalStore:
         return rec
 
     def create(self, record: dict[str, Any]) -> dict[str, Any]:
-        from det.runtime.approval import ApprovalError
-
         self.ensure()
         psycopg = _import_psycopg()
         with psycopg.connect(self._dsn()) as conn:
@@ -209,12 +204,8 @@ class PostgresApprovalStore:
         return record
 
     def load(self, approval_id: str) -> dict[str, Any]:
-        from det.runtime.approval import ApprovalError
-
         if not approval_id.startswith("apr_") or "/" in approval_id or "\\" in approval_id:
-            raise ApprovalError(
-                "approval_not_found", f"invalid approval id {approval_id!r}"
-            )
+            raise ApprovalError("approval_not_found", f"invalid approval id {approval_id!r}")
         self.ensure()
         psycopg = _import_psycopg()
         with psycopg.connect(self._dsn()) as conn:
@@ -225,9 +216,7 @@ class PostgresApprovalStore:
                 )
                 row = cur.fetchone()
                 if row is None:
-                    raise ApprovalError(
-                        "approval_not_found", f"no approval file for {approval_id}"
-                    )
+                    raise ApprovalError("approval_not_found", f"no approval file for {approval_id}")
                 cols = [d.name for d in cur.description]
                 return self._row_to_record(dict(zip(cols, row, strict=True)))
 
@@ -237,8 +226,6 @@ class PostgresApprovalStore:
         statuses: Sequence[str] | None = None,
         now: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        from det.runtime.approval import effective_status
-
         self.ensure()
         psycopg = _import_psycopg()
         wanted = set(statuses) if statuses is not None else None
@@ -262,8 +249,6 @@ class PostgresApprovalStore:
         now: datetime | None = None,
         heartbeat_interval_sec: int = DEFAULT_HEARTBEAT_INTERVAL_SEC,
     ) -> dict[str, Any]:
-        from det.runtime.approval import ApprovalError, effective_status
-
         self.ensure()
         stamp = now or _utcnow()
         psycopg = _import_psycopg()
@@ -275,17 +260,13 @@ class PostgresApprovalStore:
                 )
                 row = cur.fetchone()
                 if row is None:
-                    raise ApprovalError(
-                        "approval_not_found", f"no approval file for {approval_id}"
-                    )
+                    raise ApprovalError("approval_not_found", f"no approval file for {approval_id}")
                 cols = [d.name for d in cur.description]
                 rec = self._row_to_record(dict(zip(cols, row, strict=True)))
                 status = effective_status(rec, now=stamp)
                 if status != "unused":
                     raise ApprovalError(
-                        "approval_in_flight"
-                        if status == "claimed"
-                        else f"approval_{status}",
+                        "approval_in_flight" if status == "claimed" else f"approval_{status}",
                         f"approval {approval_id} is {status}",
                     )
                 cur.execute(
@@ -327,8 +308,6 @@ class PostgresApprovalStore:
         *,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        from det.runtime.approval import ApprovalError, effective_status
-
         self.ensure()
         stamp = now or _utcnow()
         psycopg = _import_psycopg()
@@ -340,16 +319,12 @@ class PostgresApprovalStore:
                 )
                 row = cur.fetchone()
                 if row is None:
-                    raise ApprovalError(
-                        "approval_not_found", f"no approval file for {approval_id}"
-                    )
+                    raise ApprovalError("approval_not_found", f"no approval file for {approval_id}")
                 cols = [d.name for d in cur.description]
                 rec = self._row_to_record(dict(zip(cols, row, strict=True)))
                 status = effective_status(rec, now=stamp)
                 if status not in {"unused", "claimed"}:
-                    raise ApprovalError(
-                        f"approval_{status}", f"approval {approval_id} is {status}"
-                    )
+                    raise ApprovalError(f"approval_{status}", f"approval {approval_id} is {status}")
                 cur.execute(
                     f"""
                     UPDATE {self._qual}
@@ -372,8 +347,6 @@ class PostgresApprovalStore:
         released_by: str,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        from det.runtime.approval import ApprovalError, effective_status
-
         self.ensure()
         stamp = now or _utcnow()
         psycopg = _import_psycopg()
@@ -385,9 +358,7 @@ class PostgresApprovalStore:
                 )
                 row = cur.fetchone()
                 if row is None:
-                    raise ApprovalError(
-                        "approval_not_found", f"no approval file for {approval_id}"
-                    )
+                    raise ApprovalError("approval_not_found", f"no approval file for {approval_id}")
                 cols = [d.name for d in cur.description]
                 rec = self._row_to_record(dict(zip(cols, row, strict=True)))
                 status = effective_status(rec, now=stamp)
@@ -437,8 +408,6 @@ class PostgresApprovalStore:
         *,
         now: datetime | None = None,
     ) -> dict[str, Any]:
-        from det.runtime.approval import ApprovalError
-
         self.ensure()
         stamp = now or _utcnow()
         psycopg = _import_psycopg()

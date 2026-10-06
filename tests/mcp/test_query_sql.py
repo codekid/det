@@ -4,6 +4,7 @@ from pathlib import Path
 
 import duckdb
 
+from det.mcp.errors import sanitize_detail
 from det.mcp.query_sql import query_analytics
 
 
@@ -105,8 +106,7 @@ def test_query_analytics_blocks_read_csv_via_cte(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("DET_ANALYTICS_DUCKDB", raising=False)
     _analytics_db(tmp_path)
     out = query_analytics(
-        "WITH x AS (SELECT * FROM read_csv('/etc/passwd')) "
-        "SELECT * FROM gold.gold_yearly_damage",
+        "WITH x AS (SELECT * FROM read_csv('/etc/passwd')) SELECT * FROM gold.gold_yearly_damage",
         warehouse="analytics",
         root=tmp_path,
     )
@@ -148,8 +148,7 @@ def test_query_analytics_duckdb_connection_lockdown(tmp_path: Path, monkeypatch)
     # tries to read a local file via the DuckDB engine.  We verify the engine
     # itself blocks it (query_failed, not a successful read).
     out = query_analytics(
-        f"SELECT * FROM gold.gold_yearly_damage WHERE 1 = "
-        f"(SELECT COUNT(*) FROM '{secret}')",
+        f"SELECT * FROM gold.gold_yearly_damage WHERE 1 = (SELECT COUNT(*) FROM '{secret}')",
         warehouse="analytics",
         root=tmp_path,
     )
@@ -185,9 +184,8 @@ def test_query_analytics_caps_limit(tmp_path: Path, monkeypatch):
 # Error sanitization
 # --------------------------------------------------------------------------- #
 
-def test_sanitize_detail_strips_abs_path():
-    from det.mcp.errors import sanitize_detail
 
+def test_sanitize_detail_strips_abs_path():
     class FakeExc(Exception):
         pass
 
@@ -197,8 +195,6 @@ def test_sanitize_detail_strips_abs_path():
 
 
 def test_sanitize_detail_strips_sql_trailer():
-    from det.mcp.errors import sanitize_detail
-
     class FakeExc(Exception):
         pass
 
