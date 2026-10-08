@@ -11,7 +11,9 @@
 
 services:
   minio:
-    image: quay.io/minio/minio:latest
+    # Upstream quay.io/minio/* rejects anonymous pulls; pgsty/minio is a
+    # drop-in AGPL community build (server + mc in one image).
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
@@ -27,7 +29,7 @@ services:
       start_period: 5s
 
   setup_bucket:
-    image: quay.io/minio/mc:latest
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
     depends_on:
       minio:
         condition: service_healthy
