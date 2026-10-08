@@ -16,18 +16,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 from det.destinations.models import bronze_dataset_dir, raw_dataset_dir
-from det.ingestion.iceberg_catalog_factory import (
-    ENV_CATALOG,
-    ENV_REST_URI,
-    catalog_kind_from_env,
-)
 from det.plugins import load_plugins
 from det.runtime.approval import require_approvals_enabled
 from det.runtime.config import load_pipeline, load_pipeline_config, resolve_path
 from det.runtime.discovery import PluginLoadError
 from det.runtime.dlt_hygiene import dlt_hygiene_message, lake_dlt_path_hits
 from det.runtime.full_validate import ENV_ALLOW_FULL_VALIDATE, full_validate_allowed
-from det.runtime.iceberg_register import _lake_uri_str, _require_register_catalog
 from det.runtime.ids import dbt_model_slug
 from det.runtime.lake import (
     ENV_LAKE_PATH_BRONZE,
@@ -398,6 +392,13 @@ def check_project(
 def _lake_mode_findings(project_root: Path) -> list[Finding]:
     """Validate DET_LAKE_MODE / Iceberg catalog env against the resolved lake URI."""
 
+    # Optional iceberg extra (factory → catalog → pyiceberg) — keep off ``import det``.
+    from det.ingestion.iceberg_catalog_factory import (  # noqa: PLC0415
+        ENV_CATALOG,
+        ENV_REST_URI,
+        catalog_kind_from_env,
+    )
+
     findings: list[Finding] = []
     try:
         mode = lake_mode_from_env()
@@ -584,6 +585,12 @@ def _lake_mode_findings(project_root: Path) -> list[Finding]:
 
 def _iceberg_glue_lake_findings(project_root: Path) -> list[Finding]:
     """Glue catalog needs s3:// for each lake URI registration would use."""
+
+    # iceberg_register imports iceberg_catalog (pyiceberg) — keep off ``import det``.
+    from det.runtime.iceberg_register import (  # noqa: PLC0415
+        _lake_uri_str,
+        _require_register_catalog,
+    )
 
     root = project_root.resolve()
     environ = dict(os.environ)

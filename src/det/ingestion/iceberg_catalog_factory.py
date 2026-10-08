@@ -13,7 +13,6 @@ from collections.abc import Mapping
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-from det.ingestion.iceberg_catalog import LakeHadoopCatalog
 from det.logging import get_logger
 from det.optional_deps import pip_extra_hint
 from det.runtime.lake import LakeRef
@@ -238,6 +237,8 @@ def _glue_rest_sigv4_props(uri: str, env: Mapping[str, str]) -> dict[str, str]:
 def hadoop_catalog(lake: LakeRef, *, env: Mapping[str, str] | None = None) -> Any:
     """DET filesystem catalog (``version-hint.text`` on the table location)."""
     _require_iceberg()
+    # Optional iceberg extra — keep off the base ``import det`` path.
+    from det.ingestion.iceberg_catalog import LakeHadoopCatalog  # noqa: PLC0415
 
     warehouse = lake_ref_uri(lake)
     props: dict[str, str] = {"warehouse": warehouse}
