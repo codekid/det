@@ -1185,6 +1185,64 @@ def test_ensure_bq_catchup_native_table_drops_external_before_load(
     job.result.assert_called_once()
 
 
+def test_ensure_bq_catchup_native_table_not_found_then_load(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    pytest.importorskip("google.api_core")
+    from google.api_core.exceptions import NotFound  # noqa: PLC0415
+
+    mid = "scm_" + ("33" * 8)
+    bigquery = MagicMock()
+    bigquery.SchemaField = lambda name, typ: (name, typ)
+    bigquery.SourceFormat.NEWLINE_DELIMITED_JSON = "NEWLINE_DELIMITED_JSON"
+    bigquery.WriteDisposition.WRITE_TRUNCATE = "WRITE_TRUNCATE"
+    bigquery.LoadJobConfig = MagicMock(return_value=MagicMock())
+    client = MagicMock()
+    job = MagicMock()
+    client.load_table_from_file.return_value = job
+    client.get_table.side_effect = NotFound("missing")
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.bq_heal.require_bigquery",
+        lambda: bigquery,
+    )
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.bq_heal._bq_client",
+        lambda: (client, "proj", "analytics", "US"),
+    )
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.bq_heal._ensure_bq_dataset",
+        lambda *a, **k: None,
+    )
+    ensure_bq_catchup_native_table(runs_bytes=b"{}\n", manifest_id=mid)
+    client.delete_table.assert_not_called()
+    client.load_table_from_file.assert_called_once()
+
+
+def test_ensure_bq_catchup_native_table_get_table_errors_propagate(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    mid = "scm_" + ("44" * 8)
+    bigquery = MagicMock()
+    bigquery.SchemaField = lambda name, typ: (name, typ)
+    client = MagicMock()
+    client.get_table.side_effect = PermissionError("denied")
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.bq_heal.require_bigquery",
+        lambda: bigquery,
+    )
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.bq_heal._bq_client",
+        lambda: (client, "proj", "analytics", "US"),
+    )
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.bq_heal._ensure_bq_dataset",
+        lambda *a, **k: None,
+    )
+    with pytest.raises(PermissionError, match="denied"):
+        ensure_bq_catchup_native_table(runs_bytes=b"{}\n", manifest_id=mid)
+    client.load_table_from_file.assert_not_called()
+
+
 def test_catchup_bq_relation_is_manifest_scoped():
     mid = "scm_" + ("cd" * 8)
     assert (

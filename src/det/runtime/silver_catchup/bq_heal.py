@@ -232,9 +232,12 @@ def ensure_bq_catchup_native_table(*, runs_bytes: bytes, manifest_id: str) -> st
     table_name = catchup_bq_external_table_name(mid)
     table_id = f"{project}.{dataset}.{table_name}"
     schema = _catchup_runs_schema(bigquery)
+    # google.api_core ships with google-cloud-bigquery (require_bigquery above).
+    from google.api_core.exceptions import NotFound  # noqa: PLC0415
+
     try:
         existing = client.get_table(table_id)
-    except Exception:
+    except NotFound:
         existing = None
     if existing is not None and _bq_table_is_external(existing):
         # External metadata cannot be WRITE_TRUNCATE-loaded into a native table.
