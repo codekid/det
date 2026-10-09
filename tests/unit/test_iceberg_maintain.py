@@ -323,6 +323,22 @@ def test_render_spark_sql_duration_hours_and_zorder():
     assert stmts[2] == ("CALL lake.system.rewrite_manifests(table => 'bronze_acme.feed_v1')")
 
 
+def test_render_spark_sql_rejects_invalid_z_order_ident():
+    with pytest.raises(ValueError, match="z_order"):
+        render_iceberg_maintain_spark_sql(
+            _actionable_plan(
+                table_properties={},
+                maintain={
+                    "expire": False,
+                    "expire_older_than": None,
+                    "rewrite_data": True,
+                    "remove_orphans_older_than": None,
+                    "z_order": ["lat; DROP TABLE t"],
+                },
+            )
+        )
+
+
 def test_render_spark_sql_skips_expire_when_disabled_or_window_missing():
     no_expire = render_iceberg_maintain_spark_sql(
         _actionable_plan(

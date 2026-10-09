@@ -318,6 +318,12 @@ def render_iceberg_maintain_spark_sql(
 
     if maintain.rewrite_data:
         if maintain.z_order:
+            for col in maintain.z_order:
+                if not _CATALOG_IDENT.fullmatch(str(col)):
+                    raise ValueError(
+                        f"maintain.z_order entries must be simple SQL identifiers, "
+                        f"got {col!r}"
+                    )
             cols = ", ".join(maintain.z_order)
             stmts.append(
                 f"CALL {cat}.system.rewrite_data_files("
