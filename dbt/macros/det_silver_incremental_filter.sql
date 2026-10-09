@@ -3,8 +3,8 @@
   Match coverage keys from the immutable catch-up manifest.
 
   DuckDB: read_json(DET_CATCHUP_MANIFEST_PATH) + unnest runs.
-  BigQuery: EXISTS against DET_CATCHUP_BQ_RELATION (external table over
-  sibling .runs.jsonl on GCS; set by det dbt --catchup).
+  BigQuery: EXISTS against DET_CATCHUP_BQ_RELATION (set by det dbt --catchup;
+  external table for gs:// ops, native load for local/s3:// ops).
 -#}
   {%- if alias -%}{%- set p = alias ~ '.' -%}{%- else -%}{%- set p = '' -%}{%- endif -%}
   {%- if target.name == 'bigquery' -%}
@@ -12,7 +12,7 @@
     {%- if not bq_rel -%}
       {{ exceptions.raise_compiler_error(
         "BigQuery catch-up requires DET_CATCHUP_BQ_RELATION "
-        "(det dbt --catchup on a gs:// ops lake)."
+        "(set by det dbt --catchup)."
       ) }}
     {%- endif -%}
     exists (

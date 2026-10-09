@@ -36,6 +36,8 @@ from det.runtime.silver_catchup import (
     diff_bronze_silver,
     diff_bronze_silver_fleet,
     ensure_bq_catchup_external_table,
+    ensure_bq_catchup_native_table,
+    ensure_bq_catchup_runs_relation,
     list_silver_extract_runs,
     manifest_payload_from_catchup,
     parse_duration,
@@ -1057,6 +1059,130 @@ def test_ensure_bq_catchup_external_table_requires_gs():
             runs_uri="/tmp/local.runs.jsonl",
             manifest_id="scm_" + ("ab" * 8),
         )
+
+
+def test_ensure_bq_catchup_runs_relation_gs_delegates_to_external(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    mid = "scm_" + ("ab" * 8)
+    seen: dict[str, str] = {}
+
+    def _fake_external(*, runs_uri: str, manifest_id: str) -> str:
+        seen["runs_uri"] = runs_uri
+        seen["manifest_id"] = manifest_id
+        return f"`p.d._det_catchup_runs_{manifest_id}`"
+
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.bq_heal.ensure_bq_catchup_external_table",
+        _fake_external,
+    )
+    out = ensure_bq_catchup_runs_relation(
+        runs_ref=f"gs://bucket/ops/silver_catchup/{mid}.runs.jsonl",
+        manifest_id=mid,
+    )
+    assert seen["runs_uri"].startswith("gs://")
+    assert out.endswith(f"_det_catchup_runs_{mid}`")
+
+
+def test_ensure_bq_catchup_runs_relation_local_loads_native(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    mid = "scm_" + ("ef" * 8)
+    runs_path = tmp_path / f"{mid}.runs.jsonl"
+    body = _runs_jsonl_bytes(
+        [
+            {
+                "pipeline": "noaa.storm_events",
+                "interval_start": "2026-01-01T00:00:00+00:00",
+                "interval_end": "2026-01-02T00:00:00+00:00",
+                "extract_run_datetime": "2026-01-01T12:00:00+00:00",
+            }
+        ]
+    )
+    runs_path.write_bytes(body)
+    seen: dict[str, object] = {}
+
+    def _fake_native(*, runs_bytes: bytes, manifest_id: str) -> str:
+        seen["bytes"] = runs_bytes
+        seen["manifest_id"] = manifest_id
+        return f"`p.d._det_catchup_runs_{manifest_id}`"
+
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.bq_heal.ensure_bq_catchup_native_table",
+        _fake_native,
+    )
+    out = ensure_bq_catchup_runs_relation(runs_ref=str(runs_path), manifest_id=mid)
+    assert seen["bytes"] == body
+    assert seen["manifest_id"] == mid
+    assert mid in out
+
+
+def test_ensure_bq_catchup_native_table_load_job(monkeypatch: pytest.MonkeyPatch):
+    mid = "scm_" + ("11" * 8)
+    bigquery = MagicMock()
+    bigquery.SchemaField = lambda name, typ: (name, typ)
+    bigquery.SourceFormat.NEWLINE_DELIMITED_JSON = "NEWLINE_DELIMITED_JSON"
+    bigquery.WriteDisposition.WRITE_TRUNCATE = "WRITE_TRUNCATE"
+    bigquery.LoadJobConfig = MagicMock(return_value=MagicMock())
+    client = MagicMock()
+    job = MagicMock()
+    client.load_table_from_file.return_value = job
+    # Existing native table: keep it; WRITE_TRUNCATE replaces atomically.
+    client.get_table.return_value = MagicMock(external_data_configuration=None)
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.bq_heal.require_bigquery",
+        lambda: bigquery,
+    )
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.bq_heal._bq_client",
+        lambda: (client, "proj", "analytics", "US"),
+    )
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.bq_heal._ensure_bq_dataset",
+        lambda *a, **k: None,
+    )
+    relation = ensure_bq_catchup_native_table(
+        runs_bytes=b'{"pipeline":"p"}\n',
+        manifest_id=mid,
+    )
+    assert relation == f"`proj.analytics._det_catchup_runs_{mid}`"
+    client.delete_table.assert_not_called()
+    client.create_table.assert_not_called()
+    client.load_table_from_file.assert_called_once()
+    job_config = bigquery.LoadJobConfig.call_args.kwargs
+    assert job_config["write_disposition"] == "WRITE_TRUNCATE"
+    job.result.assert_called_once()
+
+
+def test_ensure_bq_catchup_native_table_drops_external_before_load(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    mid = "scm_" + ("22" * 8)
+    bigquery = MagicMock()
+    bigquery.SchemaField = lambda name, typ: (name, typ)
+    bigquery.SourceFormat.NEWLINE_DELIMITED_JSON = "NEWLINE_DELIMITED_JSON"
+    bigquery.WriteDisposition.WRITE_TRUNCATE = "WRITE_TRUNCATE"
+    bigquery.LoadJobConfig = MagicMock(return_value=MagicMock())
+    client = MagicMock()
+    job = MagicMock()
+    client.load_table_from_file.return_value = job
+    client.get_table.return_value = MagicMock(external_data_configuration=object())
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.bq_heal.require_bigquery",
+        lambda: bigquery,
+    )
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.bq_heal._bq_client",
+        lambda: (client, "proj", "analytics", "US"),
+    )
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.bq_heal._ensure_bq_dataset",
+        lambda *a, **k: None,
+    )
+    ensure_bq_catchup_native_table(runs_bytes=b"{}\n", manifest_id=mid)
+    client.delete_table.assert_called_once()
+    client.load_table_from_file.assert_called_once()
+    job.result.assert_called_once()
 
 
 def test_catchup_bq_relation_is_manifest_scoped():

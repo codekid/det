@@ -455,32 +455,51 @@ def test_run_dbt_catchup_reads_manifest_from_resolved_lake(
     assert captured_env.get("DET_CATCHUP_MANIFEST_PATH") == str(scm_path.resolve())
 
 
-def test_run_dbt_catchup_refuses_bigquery_on_local_lake(
+def test_run_dbt_catchup_bigquery_local_lake_sets_bq_relation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    """Local ops + BQ: load path sets DET_CATCHUP_BQ_RELATION (no GCS require)."""
     monkeypatch.delenv("DET_LAKE_PATH", raising=False)
+    monkeypatch.setenv("DET_GCP_PROJECT", "proj-test")
+    monkeypatch.setenv("DET_BQ_DATASET", "analytics")
     dbt_dir = tmp_path / "dbt"
     dbt_dir.mkdir()
     (dbt_dir / "dbt_project.yml").write_text("name: x\n", encoding="utf-8")
     lake = tmp_path / "lake"
     mid = "scm_" + ("cd" * 8)
-    (lake / "ops" / "silver_catchup").mkdir(parents=True)
+    catchup_dir = lake / "ops" / "silver_catchup"
+    catchup_dir.mkdir(parents=True)
+    runs = [
+        {
+            "pipeline": "noaa.storm_events",
+            "extract_run_datetime": "2026-08-06T12:00:00+00:00",
+            "interval_start": "2026-08-06T00:00:00+00:00",
+            "interval_end": "2026-08-07T00:00:00+00:00",
+        }
+    ]
+    digest = catchup_content_digest(runs)
     manifest = {
         "manifest_version": 1,
         "manifest_id": mid,
-        "content_digest": "sha256:" + ("1" * 64),
-        "runs": [
-            {
-                "pipeline": "noaa.storm_events",
-                "extract_run_datetime": "2026-08-06T12:00:00+00:00",
-                "interval_start": "2026-08-06T00:00:00+00:00",
-                "interval_end": "2026-08-07T00:00:00+00:00",
-            }
-        ],
+        "content_digest": digest,
+        "runs": runs,
     }
-    (lake / "ops" / "silver_catchup" / f"{mid}.json").write_text(
+    (catchup_dir / f"{mid}.json").write_text(
         __import__("json").dumps(manifest), encoding="utf-8"
     )
+    (catchup_dir / f"{mid}.runs.jsonl").write_bytes(_runs_jsonl_bytes(runs))
+    captured_env: dict[str, str] = {}
+    ensure_seen: dict[str, object] = {}
+
+    def _fake_subprocess(argv, *, cwd, env):
+        captured_env.update(env)
+        return 0, ""
+
+    def _fake_ensure(*, runs_ref, manifest_id: str) -> str:
+        ensure_seen["runs_ref"] = str(runs_ref)
+        ensure_seen["manifest_id"] = manifest_id
+        return f"`proj-test.analytics._det_catchup_runs_{manifest_id}`"
+
     with (
         patch(
             "det.runtime.silver_catchup.read_catchup_manifest",
@@ -490,7 +509,18 @@ def test_run_dbt_catchup_refuses_bigquery_on_local_lake(
             "det.runtime.silver_catchup.catchup_select_from_manifest",
             return_value=["silver_noaa__storm_events"],
         ),
-        pytest.raises(ValueError, match="GCS ops lake"),
+        patch(
+            "det.runtime.silver_catchup.ensure_bq_catchup_runs_relation",
+            side_effect=_fake_ensure,
+        ),
+        patch(
+            "det.runtime.dbt_runner.find_dbt_executable",
+            return_value="dbt",
+        ),
+        patch(
+            "det.runtime.dbt_runner._run_dbt_subprocess",
+            side_effect=_fake_subprocess,
+        ),
     ):
         run_dbt(
             project_root=tmp_path,
@@ -498,8 +528,14 @@ def test_run_dbt_catchup_refuses_bigquery_on_local_lake(
             catchup_manifest=mid,
             lake_path=lake,
             target="bigquery",
-            dry_run=True,
+            dry_run=False,
         )
+    assert ensure_seen["manifest_id"] == mid
+    assert mid in str(ensure_seen["runs_ref"])
+    assert (
+        captured_env.get("DET_CATCHUP_BQ_RELATION")
+        == f"`proj-test.analytics._det_catchup_runs_{mid}`"
+    )
 
 
 def test_run_dbt_catchup_bigquery_gcs_sets_bq_relation(
@@ -555,8 +591,8 @@ def test_run_dbt_catchup_bigquery_gcs_sets_bq_relation(
         captured_env.update(env)
         return 0, ""
 
-    def _fake_ensure(*, runs_uri: str, manifest_id: str) -> str:
-        ensure_seen["runs_uri"] = runs_uri
+    def _fake_ensure(*, runs_ref, manifest_id: str) -> str:
+        ensure_seen["runs_ref"] = str(runs_ref)
         ensure_seen["manifest_id"] = manifest_id
         return f"`proj-test.analytics._det_catchup_runs_{manifest_id}`"
 
@@ -578,7 +614,7 @@ def test_run_dbt_catchup_bigquery_gcs_sets_bq_relation(
             return_value=_FakeRef(runs_uri, text=runs_body),
         ),
         patch(
-            "det.runtime.silver_catchup.ensure_bq_catchup_external_table",
+            "det.runtime.silver_catchup.ensure_bq_catchup_runs_relation",
             side_effect=_fake_ensure,
         ),
         patch(
@@ -601,7 +637,7 @@ def test_run_dbt_catchup_bigquery_gcs_sets_bq_relation(
 
     vars_json = result.command[result.command.index("--vars") + 1]
     assert "det_catchup_by_pipeline" not in vars_json
-    assert ensure_seen["runs_uri"] == runs_uri
+    assert ensure_seen["runs_ref"] == runs_uri
     assert ensure_seen["manifest_id"] == mid
     assert captured_env.get("DET_CATCHUP_MANIFEST_PATH") == scm_uri
     assert (

@@ -1,4 +1,4 @@
-"""Unit tests for Mode A silver catch-up SemVer ops."""
+"""Unit tests for silver catch-up SemVer ops (Mode A + CatchupScope Mode B)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from det.runtime.silver_catchup_ops import (
+    CatchupScope,
     SilverCatchupHole,
     iter_silver_catchup_holes,
     run_silver_catchup_heal,
@@ -24,8 +25,23 @@ def test_silver_catchup_hole_to_dict():
         "pipeline": "noaa.storm_events",
         "catchup_count": 2,
         "extract_lookback": "48h",
+        "candidate_mode": "extract_lookback",
         "actionable": True,
     }
+
+
+def test_catchup_scope_factories():
+    assert CatchupScope.lookback().mode == "lookback"
+    assert CatchupScope.lookback("7d").extract_lookback == "7d"
+    assert CatchupScope.census().candidate_mode() == "full"
+    scoped = CatchupScope.interval("2026-01-01", "2026-02-01")
+    assert scoped.candidate_mode() == "interval"
+    assert scoped.diff_kwargs()["interval_start"] == "2026-01-01"
+    assert CatchupScope.census().diff_kwargs()["extract_lookback"] is None
+    with pytest.raises(ValueError, match="48h|7d"):
+        CatchupScope.lookback("nope")
+    with pytest.raises(ValueError, match="non-empty start"):
+        CatchupScope.interval("")
 
 
 def test_iter_silver_catchup_holes_yields_only_positive_counts(
@@ -142,6 +158,128 @@ def test_iter_silver_catchup_holes_dedupes_aliases_after_resolve(
 def test_iter_rejects_bad_lookback(tmp_path: Path):
     with pytest.raises(ValueError, match="48h|7d"):
         list(iter_silver_catchup_holes(tmp_path, extract_lookback="nope"))
+
+
+def test_iter_rejects_scope_and_extract_lookback(tmp_path: Path):
+    with pytest.raises(ValueError, match="not both"):
+        list(
+            iter_silver_catchup_holes(
+                tmp_path,
+                extract_lookback="48h",
+                scope=CatchupScope.census(),
+            )
+        )
+
+
+def test_resolve_ops_scope_rejects_unknown_mode(tmp_path: Path):
+    bad = CatchupScope(mode="census")  # type: ignore[arg-type]
+    object.__setattr__(bad, "mode", "nope")
+    with pytest.raises(ValueError, match="lookback, interval, or census"):
+        list(iter_silver_catchup_holes(tmp_path, scope=bad))
+
+
+def test_iter_silver_catchup_holes_census_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    class _Resolved:
+        def __init__(self, canonical_id: str):
+            self.canonical_id = canonical_id
+
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup_ops.resolve_pipeline_ref",
+        lambda pipe, project_root=None: _Resolved(pipe),
+    )
+    seen: dict[str, object] = {}
+
+    def fake_diff(pipeline: str, **kwargs):
+        seen.update(kwargs)
+        return {
+            "pipeline": pipeline,
+            "catchup_count": 1,
+            "extract_lookback": None,
+            "candidate_mode": "full",
+        }
+
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.diff_bronze_silver", fake_diff
+    )
+    holes = list(
+        iter_silver_catchup_holes(
+            tmp_path,
+            pipelines=["a.one"],
+            scope=CatchupScope.census(),
+        )
+    )
+    assert len(holes) == 1
+    assert holes[0].candidate_mode == "full"
+    assert holes[0].extract_lookback == ""
+    assert seen.get("extract_lookback") is None
+    assert seen.get("complete") is True
+
+
+def test_run_silver_catchup_heal_census_passes_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    class _Resolved:
+        canonical_id = "noaa.storm_events"
+        path = tmp_path / "pipe.yaml"
+
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup_ops.resolve_pipeline_ref",
+        lambda *a, **k: _Resolved(),
+    )
+    plan_kw: dict[str, object] = {}
+    diffs = iter(
+        [
+            {"catchup_count": 1, "candidate_mode": "full"},
+            {"catchup_count": 0, "candidate_mode": "full"},
+        ]
+    )
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.diff_bronze_silver",
+        lambda *a, **k: next(diffs),
+    )
+    mid = "scm_" + ("aa" * 8)
+
+    def _plan(**kwargs):
+        plan_kw.update(kwargs)
+        return {
+            "manifest_id": mid,
+            "content_digest": "sha256:" + ("0" * 64),
+            "manifest": {
+                "manifest_id": mid,
+                "runs": [
+                    {
+                        "interval_start": "2026-01-01T00:00:00+00:00",
+                        "interval_end": "2026-01-02T00:00:00+00:00",
+                        "extract_run_datetime": "2026-01-01T12:00:00+00:00",
+                    }
+                ],
+                "content_digest": "sha256:" + ("0" * 64),
+            },
+            "diff": {"catchup_count": 1},
+        }
+
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.plan_catchup_manifest", _plan
+    )
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup.write_catchup_manifest",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "det.runtime.silver_catchup_ops.run_dbt",
+        lambda **kwargs: MagicMock(returncode=0),
+    )
+    out = run_silver_catchup_heal(
+        tmp_path,
+        pipeline="noaa.storm_events",
+        scope=CatchupScope.census(),
+    )
+    assert out["skipped"] is False
+    assert out["candidate_mode"] == "full"
+    assert out["extract_lookback"] is None
+    assert plan_kw.get("extract_lookback") is None
 
 
 def test_run_silver_catchup_heal_skips_when_empty(

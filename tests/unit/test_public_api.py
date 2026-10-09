@@ -26,6 +26,9 @@ def test_version_and_lake_layout() -> None:
     assert det.LAKE_LAYOUT == 2
     assert "LakeRoots" in det.__all__
     assert "resolve_lake_roots" in det.__all__
+    assert "CatchupScope" in det.__all__
+    assert "DEFAULT_EXTRACT_LOOKBACK" in det.__all__
+    assert det.CatchupScope.census().candidate_mode() == "full"
 
 
 def test_load_pipeline_exported() -> None:

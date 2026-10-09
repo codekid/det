@@ -23,6 +23,8 @@ from det.runtime.silver_catchup.bq_heal import (
     catchup_bq_external_table_name,
     catchup_bq_relation,
     ensure_bq_catchup_external_table,
+    ensure_bq_catchup_native_table,
+    ensure_bq_catchup_runs_relation,
 )
 from det.runtime.silver_catchup.diff import (
     diff_bronze_silver,
@@ -115,6 +117,8 @@ __all__ = [
     "diff_bronze_silver_fleet",
     "drop_bq_catchup_external_table",
     "ensure_bq_catchup_external_table",
+    "ensure_bq_catchup_native_table",
+    "ensure_bq_catchup_runs_relation",
     "list_bq_catchup_external_tables",
     "list_silver_extract_runs",
     "load_catchup_runs_from_jsonl",

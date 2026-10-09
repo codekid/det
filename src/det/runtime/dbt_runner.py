@@ -311,15 +311,6 @@ def run_dbt(
     if catchup and (resolved_target or "").strip() == "bigquery":
         if catchup_mid is None or catchup_digest is None:
             raise ValueError("catch-up requires --catchup-manifest <scm_…>")
-        manifest_path = silver_catchup.catchup_manifest_file_path(
-            manifest_id=catchup_mid, project_root=root, lake_path=catchup_lake
-        )
-        manifest_uri = str(manifest_path)
-        if not manifest_uri.startswith("gs://"):
-            raise ValueError(
-                "BigQuery catch-up requires a GCS ops lake (gs:// scm path); "
-                f"got {manifest_uri!r}. Local-lake → BQ heal is unsupported."
-            )
         runs_path = silver_catchup.catchup_runs_file_path(
             manifest_id=catchup_mid, project_root=root, lake_path=catchup_lake
         )
@@ -344,8 +335,9 @@ def run_dbt(
                 project=project, dataset=dataset, manifest_id=catchup_mid
             )
         else:
-            env["DET_CATCHUP_BQ_RELATION"] = silver_catchup.ensure_bq_catchup_external_table(
-                runs_uri=str(runs_path),
+            # gs:// → external table; local / s3:// → native load from bytes.
+            env["DET_CATCHUP_BQ_RELATION"] = silver_catchup.ensure_bq_catchup_runs_relation(
+                runs_ref=runs_path,
                 manifest_id=catchup_mid,
             )
 
