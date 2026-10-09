@@ -237,7 +237,7 @@ Operator reference DAG (example only — not scaffolded into embedder trees):
 - Log SQL without executing:
   `DET_ICEBERG_MAINTAIN_SUBMIT=det.runtime.iceberg_maintain_submit:submit_log_spark_sql`
 
-### Silver catch-up Mode A (external Airflow)
+### Silver catch-up (external Airflow)
 
 Detect bronze↔silver holes and heal with the same SemVer APIs the operator
 reference DAG uses (Tier 1 — copy/adapt `dags/det_silver_catchup_dag.py`):
@@ -245,17 +245,24 @@ reference DAG uses (Tier 1 — copy/adapt `dags/det_silver_catchup_dag.py`):
 ```python
 from pathlib import Path
 
-from det import iter_silver_catchup_holes, run_silver_catchup_heal
+from det import CatchupScope, iter_silver_catchup_holes, run_silver_catchup_heal
 
 root = Path(".")
-for hole in iter_silver_catchup_holes(root, extract_lookback="48h"):
+# Mode A (default 48h) — omit scope or pass CatchupScope.lookback("48h")
+for hole in iter_silver_catchup_holes(root):
+    run_silver_catchup_heal(root, pipeline=hole.pipeline)
+
+# Mode B full-lake audit (intentional — CatchupScope.census())
+for hole in iter_silver_catchup_holes(root, scope=CatchupScope.census()):
     run_silver_catchup_heal(
-        root, pipeline=hole.pipeline, extract_lookback=hole.extract_lookback
+        root, pipeline=hole.pipeline, scope=CatchupScope.census()
     )
 ```
 
-Default lookback is `48h` (Mode A). Census / interval windows stay CLI/MCP
-Advanced. Trusted ops paths should not set `DET_REQUIRE_APPROVAL=1`.
+Omit `scope` for Mode A lookback `48h`. Mode B requires `CatchupScope.census()`
+or `.interval(...)`. CLI `det silver-catchup heal` stays Mode A–only; Advanced
+plan/apply remain on CLI/MCP. Trusted ops paths should not set
+`DET_REQUIRE_APPROVAL=1`.
 
 Concurrency (leases, processes vs threads): [api.md § Concurrency](api.md#concurrency).
 

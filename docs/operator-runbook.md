@@ -39,7 +39,7 @@ Both profiles use **lake layout 2** only.
 | **Bronze** | Iceberg (recommended) or JSONL (`filesystem`) | Iceberg; optional REST/Glue catalog |
 | **Leases** | Lake locks on | Lake locks; Postgres lock backend optional |
 | **Analytics** | Local DuckDB | DuckDB and/or BigQuery (`DET_DBT_TARGET`) |
-| **Catch-up** | Unused | Mode A lookback and/or BQ heal on `gs://` ops ([silver-catchup.md](silver-catchup.md)) |
+| **Catch-up** | Unused | Mode A lookback and/or BQ heal (ops local / `s3://` / `gs://`) ([silver-catchup.md](silver-catchup.md)) |
 | **Orchestration** | CLI | Airflow Compose, ops dbt (`tag:ops`), optional Cube |
 
 ### Try-it (layout 2 derived)

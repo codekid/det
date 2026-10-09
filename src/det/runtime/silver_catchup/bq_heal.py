@@ -1,25 +1,24 @@
-"""Bronze ↔ silver catch-up: latest-per-interval diff, ops manifest, dbt vars.
+"""Bronze ↔ silver catch-up: BigQuery silver coverage + catch-up relation helpers.
 
-Correctness grain: for each interval, the latest bronze ``__extract_run_datetime``
-must appear in silver for that same ``(interval_start, interval_end)``. Coverage
-keys are ``(interval_start, interval_end, extract_run_datetime)`` — run timestamps
-alone are not unique across intervals. Older siblings are informational only.
-Catch-up heals via an **immutable** ops manifest pair
-(``ops/silver_catchup/<manifest_id>.json`` + ``.runs.jsonl``) and one
-``det dbt --catchup`` build (DuckDB ``read_json`` or BigQuery external table on
-GCS; not full-refresh).
+Correctness grain lives in ``diff`` / ``manifest``. This module lists silver
+coverage keys from BigQuery and registers the per-manifest runs relation used
+by ``det dbt --catchup`` (GCS external table over ``gs://`` NDJSON, or a native
+table loaded from local / ``s3://`` ops bytes).
 """
 
 from __future__ import annotations
 
+import io
 import os
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from det.logging import get_logger
 from det.optional_deps import require_bigquery, try_import_bigquery
 from det.runtime.config import PipelineConfig
+from det.runtime.lake import LakeRef
 from det.runtime.silver_catchup.ids import (
     _MANIFEST_ID_RE,
     _SILVER_PROBE_CHUNK,
@@ -163,6 +162,15 @@ def _manifest_id_from_catchup_table_name(table_id: str) -> str | None:
     return suffix
 
 
+def _catchup_runs_schema(bigquery: Any) -> list[Any]:
+    return [
+        bigquery.SchemaField("pipeline", "STRING"),
+        bigquery.SchemaField("interval_start", "STRING"),
+        bigquery.SchemaField("interval_end", "STRING"),
+        bigquery.SchemaField("extract_run_datetime", "STRING"),
+    ]
+
+
 def ensure_bq_catchup_external_table(*, runs_uri: str, manifest_id: str) -> str:
     """Create/replace a manifest-scoped external table over GCS NDJSON.
 
@@ -173,8 +181,8 @@ def ensure_bq_catchup_external_table(*, runs_uri: str, manifest_id: str) -> str:
     uri = str(runs_uri or "").strip()
     if not uri.startswith("gs://"):
         raise ValueError(
-            "BigQuery catch-up requires a gs:// runs NDJSON URI "
-            f"(got {uri!r}). Use a GCS ops lake; local-lake → BQ heal is unsupported."
+            "BigQuery catch-up external tables require a gs:// runs NDJSON URI "
+            f"(got {uri!r}). Use ensure_bq_catchup_runs_relation for local/s3 ops."
         )
     mid = validate_catchup_manifest_id(manifest_id)
     client, project, dataset, location = _bq_client()
@@ -185,12 +193,7 @@ def ensure_bq_catchup_external_table(*, runs_uri: str, manifest_id: str) -> str:
     table_id = f"{project}.{dataset}.{table_name}"
     external_config = bigquery.ExternalConfig("NEWLINE_DELIMITED_JSON")
     external_config.source_uris = [uri]
-    external_config.schema = [
-        bigquery.SchemaField("pipeline", "STRING"),
-        bigquery.SchemaField("interval_start", "STRING"),
-        bigquery.SchemaField("interval_end", "STRING"),
-        bigquery.SchemaField("extract_run_datetime", "STRING"),
-    ]
+    external_config.schema = _catchup_runs_schema(bigquery)
     table = bigquery.Table(table_id, schema=external_config.schema)
     table.external_data_configuration = external_config
     client.delete_table(table_id, not_found_ok=True)
@@ -203,6 +206,92 @@ def ensure_bq_catchup_external_table(*, runs_uri: str, manifest_id: str) -> str:
         manifest_id=mid,
     )
     return relation
+
+
+def _bq_table_is_external(table: Any) -> bool:
+    return getattr(table, "external_data_configuration", None) is not None
+
+
+def ensure_bq_catchup_native_table(*, runs_bytes: bytes, manifest_id: str) -> str:
+    """Create/replace a native table by loading catch-up runs NDJSON bytes.
+
+    Used when ops is local or ``s3://`` (BigQuery cannot open those URIs as
+    external NDJSON). Same table naming as the GCS external path.
+
+    Existing **native** tables are left in place and replaced via
+    ``WRITE_TRUNCATE`` (BigQuery applies the load atomically). An existing
+    **external** table at the same id is dropped first so the load creates a
+    native relation — external ensure keeps its own delete+create path.
+    """
+    mid = validate_catchup_manifest_id(manifest_id)
+    payload = bytes(runs_bytes or b"")
+    client, project, dataset, location = _bq_client()
+    bigquery = require_bigquery()
+
+    _ensure_bq_dataset(client, project, dataset, location)
+    table_name = catchup_bq_external_table_name(mid)
+    table_id = f"{project}.{dataset}.{table_name}"
+    schema = _catchup_runs_schema(bigquery)
+    # google.api_core ships with google-cloud-bigquery (require_bigquery above).
+    from google.api_core.exceptions import NotFound  # noqa: PLC0415
+
+    try:
+        existing = client.get_table(table_id)
+    except NotFound:
+        existing = None
+    if existing is not None and _bq_table_is_external(existing):
+        # External metadata cannot be WRITE_TRUNCATE-loaded into a native table.
+        client.delete_table(table_id, not_found_ok=True)
+    # Native (or missing): load with WRITE_TRUNCATE creates or atomically replaces.
+    job_config = bigquery.LoadJobConfig(
+        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+        write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+        schema=schema,
+    )
+    job = client.load_table_from_file(
+        io.BytesIO(payload),
+        table_id,
+        job_config=job_config,
+        location=location,
+    )
+    job.result()
+    relation = catchup_bq_relation(project=project, dataset=dataset, manifest_id=mid)
+    logger.info(
+        "silver catchup BQ native table ready",
+        relation=relation,
+        bytes=len(payload),
+        manifest_id=mid,
+    )
+    return relation
+
+
+def ensure_bq_catchup_runs_relation(
+    *,
+    runs_ref: LakeRef | str,
+    manifest_id: str,
+) -> str:
+    """Register the catch-up runs relation for ``DET_CATCHUP_BQ_RELATION``.
+
+    ``gs://`` → external table over the URI. Local / ``s3://`` → load NDJSON
+    bytes into a native table with the same name.
+    """
+    if isinstance(runs_ref, LakeRef):
+        uri = str(runs_ref)
+        if uri.startswith("gs://"):
+            return ensure_bq_catchup_external_table(
+                runs_uri=uri, manifest_id=manifest_id
+            )
+        return ensure_bq_catchup_native_table(
+            runs_bytes=runs_ref.read_bytes(),
+            manifest_id=manifest_id,
+        )
+    uri = str(runs_ref or "").strip()
+    if uri.startswith("gs://"):
+        return ensure_bq_catchup_external_table(runs_uri=uri, manifest_id=manifest_id)
+    return ensure_bq_catchup_native_table(
+        runs_bytes=Path(uri).read_bytes(),
+        manifest_id=manifest_id,
+    )
 
 
 def _ensure_bq_dataset(client: Any, project: str, dataset_id: str, location: str) -> None:

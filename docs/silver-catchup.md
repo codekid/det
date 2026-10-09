@@ -12,12 +12,13 @@ heal SQL engine and optional BQ cleanup differ.
 
 | Supported | Not supported |
 | --- | --- |
-| DuckDB analytics (`DET_ANALYTICS_DUCKDB`) for **diff/plan** and **heal** | BigQuery catch-up from a **local** (non-`gs://`) ops lake |
-| BigQuery silver when `DET_DBT_TARGET=bigquery` and ops/scm is on **GCS** (`gs://`) | `s3://` ops + BigQuery heal |
+| DuckDB analytics (`DET_ANALYTICS_DUCKDB`) for **diff/plan** and **heal** | — |
+| BigQuery silver when `DET_DBT_TARGET=bigquery` with ops on **GCS** (`gs://` external table), **local**, or **`s3://`** (native load of `.runs.jsonl`) | Inlining heal sets into dbt `--vars` |
 
 Bronze may still be Iceberg/GCS/filesystem. Diff/plan follow `DET_DBT_TARGET`
 (DuckDB file vs BigQuery silver). Heal uses the same tiny pointer vars; the SQL
-engine differs (DuckDB `read_json` vs BigQuery external table over sibling NDJSON).
+engine differs (DuckDB `read_json` vs BigQuery relation over sibling NDJSON —
+external table on `gs://`, load job for local/`s3://` ops).
 
 ## Correctness grain
 
@@ -46,6 +47,11 @@ Same membership rule either way; only which bronze intervals are considered
 pass `--census` (CLI) or `census=true` (MCP) for Mode B full lake. Mode A cannot
 combine with `--census` or `-s`/`-e`. Diff JSON includes `candidate_mode`
 (`extract_lookback` \| `interval` \| `full`).
+
+**SemVer library path:** `CatchupScope.lookback(...)` (default when omitted),
+`.census()`, or `.interval(start, end)` on `iter_silver_catchup_holes` /
+`run_silver_catchup_heal`. Full-lake requires constructing `.census()` — there
+is no bare `census=` bool on the library API. CLI `heal` remains Mode A–only.
 
 Mode A discovers **all** bronze extract runs in the lookback window up to the
 apply safety cap (`100_000`), independent of `--limit`. `--limit` only truncates
@@ -132,9 +138,9 @@ Use when Mode A is not enough: `--census` / `-s`/`-e`, fleet
    sets `DET_CATCHUP_MANIFEST_PATH` and tiny `--vars`
    (`det_catchup`, `det_catchup_manifest_id`).
    - **DuckDB:** macros `read_json` the scm `.json`.
-   - **BigQuery:** requires `gs://` scm path; registers external table
-     `_det_catchup_runs_<scm_…>` over the sibling `.runs.jsonl`; sets
-     `DET_CATCHUP_BQ_RELATION`. Local-lake → BQ raises.
+   - **BigQuery:** registers `_det_catchup_runs_<scm_…>` from the sibling
+     `.runs.jsonl` (external table when ops is `gs://`; native load for local
+     / `s3://` ops); sets `DET_CATCHUP_BQ_RELATION`.
 5. **Verify:** `det silver-catchup verify` with the **same** scope flags;
    `catchup_count` should be 0 (exit 1 otherwise).
 6. **BQ cleanup (optional):** each BigQuery heal registers

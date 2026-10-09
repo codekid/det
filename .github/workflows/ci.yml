@@ -17,7 +17,9 @@ jobs:
         python-version: ["3.12", "3.13"]
     services:
       postgres:
-        image: postgres:16
+        # Public ECR mirror of Docker Hub library/postgres — avoids Hub anonymous
+        # pull rate limits (toomanyrequests) on GitHub-hosted runners.
+        image: public.ecr.aws/docker/library/postgres:16
         env:
           POSTGRES_USER: det
           POSTGRES_PASSWORD: det
@@ -67,12 +69,26 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Start MinIO + Polaris
+        id: soak_minio_polaris
         # Shared MinIO for -m minio and -m polaris (docker/polaris-minio).
         # compose --wait treats one-shot exits (setup_bucket, polaris-setup) as
         # failure even when ExitCode is 0, so wait only on long-running daemons
         # then run catalog bootstrap and assert its exit code.
+        # Soft-fail when Docker Hub rate-limits pgsty/minio or apache/polaris —
+        # a later step clears soak env so those tests skip instead of red CI.
+        continue-on-error: true
         run: |
           COMPOSE="docker compose -f docker/polaris-minio/docker-compose.yml"
+          for attempt in 1 2 3; do
+            if $COMPOSE pull minio setup_bucket polaris; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "compose pull failed after retries" >&2
+              exit 1
+            fi
+            sleep $((attempt * 30))
+          done
           if ! $COMPOSE up -d --wait minio polaris; then
             echo "compose --wait (minio/polaris) failed; dumping logs" >&2
             $COMPOSE ps -a >&2 || true
@@ -95,12 +111,33 @@ jobs:
           echo "minio/polaris failed to become healthy" >&2
           $COMPOSE logs >&2 || true
           exit 1
-      - name: Start fake-gcs-server
-        # STORAGE_EMULATOR_HOST-compatible (same env as localgcp GCS).
+      - name: Disable MinIO/Polaris soaks if compose unavailable
+        if: steps.soak_minio_polaris.outcome != 'success'
         run: |
+          echo "::warning::MinIO/Polaris images unavailable (often Docker Hub rate limit); skipping -m minio/-m polaris"
+          echo "AWS_ENDPOINT_URL=" >> "$GITHUB_ENV"
+          echo "DET_ICEBERG_REST_URI=" >> "$GITHUB_ENV"
+          echo "DET_ICEBERG_REST_WAREHOUSE=" >> "$GITHUB_ENV"
+          echo "DET_ICEBERG_REST_CREDENTIAL=" >> "$GITHUB_ENV"
+      - name: Start fake-gcs-server
+        id: soak_gcs
+        # STORAGE_EMULATOR_HOST-compatible (same env as localgcp GCS).
+        continue-on-error: true
+        run: |
+          GCS_IMG=fsouza/fake-gcs-server:latest
+          for attempt in 1 2 3; do
+            if docker pull "$GCS_IMG"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "docker pull $GCS_IMG failed after retries" >&2
+              exit 1
+            fi
+            sleep $((attempt * 30))
+          done
           docker run -d --name det-gcs \
             -p 4443:4443 \
-            fsouza/fake-gcs-server:latest \
+            "$GCS_IMG" \
             -scheme http -port 4443 -external-url http://127.0.0.1:4443
           for i in $(seq 1 30); do
             if curl -sf "http://127.0.0.1:4443/storage/v1/b"; then
@@ -112,6 +149,11 @@ jobs:
           echo "fake-gcs failed to become healthy" >&2
           docker logs det-gcs >&2 || true
           exit 1
+      - name: Disable GCS soak if emulator unavailable
+        if: steps.soak_gcs.outcome != 'success'
+        run: |
+          echo "::warning::fake-gcs-server unavailable (often Docker Hub rate limit); skipping -m gcs"
+          echo "STORAGE_EMULATOR_HOST=" >> "$GITHUB_ENV"
       - name: Install
         # mcp + examples/duckdb/scaffold: product extras; dbt + postgres match prod.
         # s3 + gcs + iceberg: object-lake soaks.

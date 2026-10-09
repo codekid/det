@@ -57,6 +57,8 @@ from det.runtime.registry import describe_mappers, list_mappers, list_sources
 from det.runtime.runner import ExtractResult, PipelineRunner, RunResult
 from det.runtime.settings import DetSettings
 from det.runtime.silver_catchup_ops import (
+    DEFAULT_EXTRACT_LOOKBACK,
+    CatchupScope,
     SilverCatchupHole,
     iter_silver_catchup_holes,
     run_silver_catchup_heal,
@@ -69,13 +71,15 @@ from det.sources.base import (
     merge_source_config,
 )
 
-__version__ = "0.10.5"
+__version__ = "0.11.0"
 
 __all__ = [
+    "DEFAULT_EXTRACT_LOOKBACK",
     "LAKE_LAYOUT",
     "BronzeMigrator",
     "BronzePruner",
     "BronzeRunRef",
+    "CatchupScope",
     "DetConfigError",
     "DetConflictError",
     "DetContractError",
