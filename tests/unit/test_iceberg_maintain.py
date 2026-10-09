@@ -344,6 +344,33 @@ def test_sql_string_escapes_backslash_and_apostrophe():
     ]
 
 
+def test_render_spark_sql_rejects_invalid_schema_or_table():
+    with pytest.raises(ValueError, match="sql_schema"):
+        render_iceberg_maintain_spark_sql(
+            _actionable_plan(
+                sql_schema="bronze; DROP",
+                table_properties={},
+                maintain={
+                    "expire": False,
+                    "expire_older_than": None,
+                    "remove_orphans_older_than": None,
+                },
+            )
+        )
+    with pytest.raises(ValueError, match="sql_table"):
+        render_iceberg_maintain_spark_sql(
+            _actionable_plan(
+                sql_table="feed-v1",
+                table_properties={},
+                maintain={
+                    "expire": False,
+                    "expire_older_than": None,
+                    "remove_orphans_older_than": None,
+                },
+            )
+        )
+
+
 def test_render_spark_sql_rejects_invalid_z_order_ident():
     with pytest.raises(ValueError, match="z_order"):
         render_iceberg_maintain_spark_sql(

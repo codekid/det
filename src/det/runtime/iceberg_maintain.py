@@ -24,7 +24,7 @@ from det.runtime.config import (
     PipelineConfig,
     load_pipeline_config,
 )
-from det.runtime.ids import sql_names_for_config
+from det.runtime.ids import require_sql_ident, sql_names_for_config
 from det.runtime.pipelines import list_pipeline_ids, resolve_pipeline_ref
 
 ENV_EXPIRE_OLDER_THAN = "DET_ICEBERG_MAINTAIN_EXPIRE_OLDER_THAN"
@@ -298,7 +298,9 @@ def render_iceberg_maintain_spark_sql(
         raise ValueError(reason)
 
     cat = _spark_catalog(catalog, environ)
-    table_ref = f"{resolved.sql_schema}.{resolved.sql_table}"
+    schema = require_sql_ident(resolved.sql_schema, what="sql_schema")
+    table = require_sql_ident(resolved.sql_table, what="sql_table")
+    table_ref = f"{schema}.{table}"
     qualified = f"{cat}.{table_ref}"
     maintain = resolved.maintain
     stmts: list[str] = []
