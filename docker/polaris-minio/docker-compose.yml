@@ -66,7 +66,8 @@ services:
       start_period: 20s
 
   polaris-setup:
-    image: alpine/curl:latest
+    # public ECR alpine (not alpine/curl on Docker Hub) to avoid Hub rate limits in CI.
+    image: public.ecr.aws/docker/library/alpine:3.20
     depends_on:
       polaris:
         condition: service_healthy
@@ -79,12 +80,13 @@ services:
         {"storageType":"S3","endpoint":"http://127.0.0.1:9000","endpointInternal":"http://minio:9000","pathStyleAccess":true,"allowedLocations":["s3://det-ci/"]}
     volumes:
       # Match upstream Polaris getting-started: writable mount so scripts are
-      # runnable; bootstrap is pure sh+curl (no apk/jq) for alpine/curl.
+      # runnable; apk installs curl once (image has no curl preinstalled).
       - ./scripts:/polaris
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -eu
+        apk add --no-cache curl >/dev/null
         . /polaris/obtain-token.sh
         sh /polaris/create-catalog.sh POLARIS "$$TOKEN"
         HTTP=$$(curl -sS -o /tmp/grants.out -w "%{http_code}" \

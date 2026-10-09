@@ -73,8 +73,20 @@ jobs:
         # compose --wait treats one-shot exits (setup_bucket, polaris-setup) as
         # failure even when ExitCode is 0, so wait only on long-running daemons
         # then run catalog bootstrap and assert its exit code.
+        # Pull with backoff: pgsty/minio + apache/polaris still live on Docker Hub
+        # and Hub anonymous rate limits abort GHA runners before pytest.
         run: |
           COMPOSE="docker compose -f docker/polaris-minio/docker-compose.yml"
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if $COMPOSE pull minio setup_bucket polaris; then
+              break
+            fi
+            if [ "$attempt" -eq 8 ]; then
+              echo "compose pull failed after retries" >&2
+              exit 1
+            fi
+            sleep $((attempt * 20))
+          done
           if ! $COMPOSE up -d --wait minio polaris; then
             echo "compose --wait (minio/polaris) failed; dumping logs" >&2
             $COMPOSE ps -a >&2 || true
@@ -100,9 +112,20 @@ jobs:
       - name: Start fake-gcs-server
         # STORAGE_EMULATOR_HOST-compatible (same env as localgcp GCS).
         run: |
+          GCS_IMG=fsouza/fake-gcs-server:latest
+          for attempt in 1 2 3 4 5 6; do
+            if docker pull "$GCS_IMG"; then
+              break
+            fi
+            if [ "$attempt" -eq 6 ]; then
+              echo "docker pull $GCS_IMG failed after retries" >&2
+              exit 1
+            fi
+            sleep $((attempt * 20))
+          done
           docker run -d --name det-gcs \
             -p 4443:4443 \
-            fsouza/fake-gcs-server:latest \
+            "$GCS_IMG" \
             -scheme http -port 4443 -external-url http://127.0.0.1:4443
           for i in $(seq 1 30); do
             if curl -sf "http://127.0.0.1:4443/storage/v1/b"; then
