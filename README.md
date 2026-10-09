@@ -150,9 +150,11 @@ metastores (`rest` / `glue`), see [docs/iceberg-catalog.md](docs/iceberg-catalog
 Publish existing Hadoop tables with `det iceberg-register --dry-run` then
 `--apply` (exactly one required) after switching catalog — see
 [docs/iceberg-catalog.md](docs/iceberg-catalog.md). Snapshot GC / compact is
-**external** (plan API + Spark SQL via `render_iceberg_maintain_spark_sql`; the
-`det_iceberg_maintain` DAG does not GC unless you set
-`DET_ICEBERG_MAINTAIN_SUBMIT`) — see [docs/iceberg-catalog.md](docs/iceberg-catalog.md).
+**external** (plan API + Spark SQL via `render_iceberg_maintain_spark_sql`). The
+`det_iceberg_maintain` DAG only GCs when `DET_ICEBERG_MAINTAIN_SUBMIT` points at
+a hook that **executes** those statements (e.g. `spark.sql`); the documented
+reference hook `det.runtime.iceberg_maintain_submit:submit_log_spark_sql` only
+prints/logs SQL. See [docs/iceberg-catalog.md](docs/iceberg-catalog.md).
 
 | `destination.type` | Bronze |
 | --- | --- |
