@@ -2,12 +2,13 @@
 
 DET does not expire/compact or mutate live properties. Embedders and the
 operator Airflow reference DAG call :func:`iter_iceberg_maintain_plans` and
-submit to Spark/Athena themselves.
+submit Spark SQL (see :func:`render_iceberg_maintain_spark_sql`) themselves.
 """
 
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,16 +32,24 @@ ENV_EXPIRE = "DET_ICEBERG_MAINTAIN_EXPIRE"
 ENV_REWRITE_DATA = "DET_ICEBERG_MAINTAIN_REWRITE_DATA"
 ENV_REWRITE_MANIFESTS = "DET_ICEBERG_MAINTAIN_REWRITE_MANIFESTS"
 ENV_REMOVE_ORPHANS_OLDER_THAN = "DET_ICEBERG_MAINTAIN_REMOVE_ORPHANS_OLDER_THAN"
+ENV_SPARK_CATALOG = "DET_ICEBERG_SPARK_CATALOG"
+DEFAULT_SPARK_CATALOG = "iceberg"
+
+_DURATION = re.compile(r"^(\d+)([HhDd])$")
+_CATALOG_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 __all__ = [
+    "DEFAULT_SPARK_CATALOG",
     "ENV_EXPIRE",
     "ENV_EXPIRE_OLDER_THAN",
     "ENV_REMOVE_ORPHANS_OLDER_THAN",
     "ENV_REWRITE_DATA",
     "ENV_REWRITE_MANIFESTS",
+    "ENV_SPARK_CATALOG",
     "IcebergMaintainPlan",
     "fleet_maintain_defaults",
     "iter_iceberg_maintain_plans",
+    "render_iceberg_maintain_spark_sql",
     "resolve_maintain_config",
 ]
 
@@ -201,3 +210,137 @@ def iter_iceberg_maintain_plans(
             actionable=actionable,
             skip_reason=skip_reason,
         )
+
+
+def _spark_catalog(catalog: str | None, environ: Mapping[str, str] | None) -> str:
+    env = os.environ if environ is None else environ
+    raw = (catalog if catalog is not None else env.get(ENV_SPARK_CATALOG) or "").strip()
+    name = raw or DEFAULT_SPARK_CATALOG
+    if not _CATALOG_IDENT.fullmatch(name):
+        raise ValueError(
+            f"Spark catalog must be a simple SQL identifier, got {name!r} "
+            f"(set {ENV_SPARK_CATALOG} or pass catalog=)"
+        )
+    return name
+
+
+def _duration_to_spark_interval(duration: str) -> str:
+    """Map DET ``Nh`` / ``Nd`` to a Spark interval expression."""
+    text = str(duration).strip()
+    match = _DURATION.fullmatch(text)
+    if not match:
+        raise ValueError(f"maintain duration must look like '48h' or '7d', got {duration!r}")
+    amount = int(match.group(1))
+    if amount < 1:
+        raise ValueError(f"maintain duration must be >= 1, got {duration!r}")
+    unit = "HOURS" if match.group(2).upper() == "H" else "DAYS"
+    return f"INTERVAL {amount} {unit}"
+
+
+def _sql_string(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _plan_from_mapping(plan: Mapping[str, Any]) -> IcebergMaintainPlan:
+    maintain_raw = plan.get("maintain") or {}
+    if isinstance(maintain_raw, IcebergMaintainConfig):
+        maintain = maintain_raw
+    elif isinstance(maintain_raw, Mapping):
+        maintain = IcebergMaintainConfig.model_validate(dict(maintain_raw))
+    else:
+        raise TypeError(f"plan['maintain'] must be a mapping, got {type(maintain_raw)}")
+    props = plan.get("table_properties") or {}
+    if not isinstance(props, Mapping):
+        raise TypeError(f"plan['table_properties'] must be a mapping, got {type(props)}")
+    schema = str(plan.get("sql_schema") or "").strip()
+    table = str(plan.get("sql_table") or "").strip()
+    if not schema or not table:
+        raise ValueError("plan requires non-empty sql_schema and sql_table")
+    kind_raw = plan.get("catalog_kind") or "hadoop"
+    kind: IcebergCatalogKind
+    if kind_raw in {"hadoop", "rest", "glue"}:
+        kind = kind_raw  # type: ignore[assignment]
+    else:
+        raise ValueError(f"unsupported catalog_kind {kind_raw!r}")
+    return IcebergMaintainPlan(
+        pipeline=str(plan.get("pipeline") or ""),
+        sql_schema=schema,
+        sql_table=table,
+        table_properties={str(k): str(v) for k, v in props.items()},
+        maintain=maintain,
+        catalog_kind=kind,
+        actionable=bool(plan.get("actionable")),
+        skip_reason=(
+            None
+            if plan.get("skip_reason") is None
+            else str(plan.get("skip_reason"))
+        ),
+    )
+
+
+def render_iceberg_maintain_spark_sql(
+    plan: IcebergMaintainPlan | Mapping[str, Any],
+    *,
+    catalog: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Render Apache Spark Iceberg procedure SQL for one maintain plan.
+
+    Pure string generation — does not open a Spark session. Non-actionable plans
+    (``hadoop`` / unset catalog) raise ``ValueError`` with ``skip_reason``.
+    Athena/Trino callers should adapt the statements.
+    """
+    resolved = plan if isinstance(plan, IcebergMaintainPlan) else _plan_from_mapping(plan)
+    if not resolved.actionable:
+        reason = resolved.skip_reason or "plan is not actionable"
+        raise ValueError(reason)
+
+    cat = _spark_catalog(catalog, environ)
+    table_ref = f"{resolved.sql_schema}.{resolved.sql_table}"
+    qualified = f"{cat}.{table_ref}"
+    maintain = resolved.maintain
+    stmts: list[str] = []
+
+    if resolved.table_properties:
+        props_sql = ", ".join(
+            f"{_sql_string(key)}={_sql_string(value)}"
+            for key, value in sorted(resolved.table_properties.items())
+        )
+        stmts.append(f"ALTER TABLE {qualified} SET TBLPROPERTIES ({props_sql})")
+
+    if maintain.expire and maintain.expire_older_than:
+        interval = _duration_to_spark_interval(maintain.expire_older_than)
+        stmts.append(
+            f"CALL {cat}.system.expire_snapshots("
+            f"table => {_sql_string(table_ref)}, "
+            f"older_than => current_timestamp() - {interval})"
+        )
+
+    if maintain.rewrite_data:
+        if maintain.z_order:
+            cols = ", ".join(maintain.z_order)
+            stmts.append(
+                f"CALL {cat}.system.rewrite_data_files("
+                f"table => {_sql_string(table_ref)}, "
+                f"strategy => {_sql_string('sort')}, "
+                f"sort_order => {_sql_string(f'zorder({cols})')})"
+            )
+        else:
+            stmts.append(
+                f"CALL {cat}.system.rewrite_data_files(table => {_sql_string(table_ref)})"
+            )
+
+    if maintain.rewrite_manifests:
+        stmts.append(
+            f"CALL {cat}.system.rewrite_manifests(table => {_sql_string(table_ref)})"
+        )
+
+    if maintain.remove_orphans_older_than:
+        interval = _duration_to_spark_interval(maintain.remove_orphans_older_than)
+        stmts.append(
+            f"CALL {cat}.system.remove_orphan_files("
+            f"table => {_sql_string(table_ref)}, "
+            f"older_than => current_timestamp() - {interval})"
+        )
+
+    return stmts

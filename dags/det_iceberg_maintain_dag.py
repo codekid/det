@@ -5,13 +5,20 @@ Calls ``iter_iceberg_maintain_plans`` (SemVer). Does **not** run Spark/Athena
 itself. Optional ``DET_ICEBERG_MAINTAIN_SUBMIT`` is ``module:function`` that
 receives **one** actionable plan dict per mapped task.
 
+Reference log-only hook (prints Spark SQL; does not GC)::
+
+    DET_ICEBERG_MAINTAIN_SUBMIT=det.runtime.iceberg_maintain_submit:submit_log_spark_sql
+
+Replace that with a function that runs
+``render_iceberg_maintain_spark_sql(plan)`` via ``spark.sql``.
+
 Concurrency: mapped submits use ``max_active_tis_per_dag`` (default 4 via
 ``DET_ICEBERG_MAINTAIN_MAX_ACTIVE``) and optional Airflow pool
 ``DET_ICEBERG_MAINTAIN_POOL`` (default ``default_pool``; create a dedicated
 ``iceberg_maintain`` pool in prod).
 
-Without a submit hook, only ``build_plans`` runs (logs and succeeds).
-Hadoop / unset catalog → plans with ``actionable=False`` (not mapped).
+Without a submit hook, only ``build_plans`` runs (logs and succeeds) — **no
+fleet GC**. Hadoop / unset catalog → plans with ``actionable=False`` (not mapped).
 """
 
 from __future__ import annotations

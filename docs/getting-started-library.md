@@ -212,26 +212,30 @@ Cube Core over ops metrics remains an operator/optional add-on — not scaffolde
 
 ### Iceberg maintain (external runner)
 
-DET does not expire/compact Iceberg tables. Declare knobs under
-`destination.iceberg` (see [iceberg-catalog.md](iceberg-catalog.md)), then wire
-plans into **your** Airflow/Spark job:
+DET does not expire/compact Iceberg tables (physical GC). Declare knobs under
+`destination.iceberg` (see [iceberg-catalog.md](iceberg-catalog.md)), render
+Spark SQL, and run it on **your** cluster:
 
 ```python
 from pathlib import Path
 
-from det import iter_iceberg_maintain_plans
+from det import iter_iceberg_maintain_plans, render_iceberg_maintain_spark_sql
 
 for plan in iter_iceberg_maintain_plans(Path(".")):
     if not plan.actionable:
         continue  # hadoop / unset catalog
-    # Your submit: SET TBLPROPERTIES from plan.table_properties;
-    # expire/rewrite/orphans from plan.maintain
+    for stmt in render_iceberg_maintain_spark_sql(plan):
+        spark.sql(stmt)  # your SparkSession
 ```
 
 Operator reference DAG (example only — not scaffolded into embedder trees):
 `dags/det_iceberg_maintain_dag.py` maps one submit per actionable plan with
 `DET_ICEBERG_MAINTAIN_MAX_ACTIVE` (default 4). Hook signature:
 `module:function(plan: dict)`.
+
+- Unset submit → plan-only (no GC).
+- Log SQL without executing:
+  `DET_ICEBERG_MAINTAIN_SUBMIT=det.runtime.iceberg_maintain_submit:submit_log_spark_sql`
 
 ### Silver catch-up Mode A (external Airflow)
 

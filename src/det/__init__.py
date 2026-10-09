@@ -29,7 +29,11 @@ from det.runtime.check import (
     has_warnings,
 )
 from det.runtime.config import PipelineConfig, load_pipeline, load_pipeline_config
-from det.runtime.iceberg_maintain import IcebergMaintainPlan, iter_iceberg_maintain_plans
+from det.runtime.iceberg_maintain import (
+    IcebergMaintainPlan,
+    iter_iceberg_maintain_plans,
+    render_iceberg_maintain_spark_sql,
+)
 from det.runtime.lake import LakeRef, LakeRoots, open_lake, resolve_lake_roots
 from det.runtime.layout import LAKE_LAYOUT
 from det.runtime.lease import (
@@ -65,7 +69,7 @@ from det.sources.base import (
     merge_source_config,
 )
 
-__version__ = "0.10.4"
+__version__ = "0.10.5"
 
 __all__ = [
     "LAKE_LAYOUT",
@@ -113,6 +117,7 @@ __all__ = [
     "inspect_lease",
     "iter_iceberg_maintain_plans",
     "iter_silver_catchup_holes",
+    "render_iceberg_maintain_spark_sql",
     "list_mappers",
     "list_receipts",
     "list_sources",
