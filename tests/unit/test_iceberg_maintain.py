@@ -17,6 +17,7 @@ from det.runtime.config import (
 )
 from det.runtime.iceberg_maintain import (
     IcebergMaintainPlan,
+    _sql_string,
     fleet_maintain_defaults,
     iter_iceberg_maintain_plans,
     render_iceberg_maintain_spark_sql,
@@ -321,6 +322,26 @@ def test_render_spark_sql_duration_hours_and_zorder():
         "sort_order => 'zorder(lat, lon)')"
     )
     assert stmts[2] == ("CALL lake.system.rewrite_manifests(table => 'bronze_acme.feed_v1')")
+
+
+def test_sql_string_escapes_backslash_and_apostrophe():
+    assert _sql_string(r"a\b'c") == r"'a\\b''c'"
+    stmts = render_iceberg_maintain_spark_sql(
+        _actionable_plan(
+            table_properties={"path.style": r"C:\data"},
+            maintain={
+                "expire": False,
+                "expire_older_than": None,
+                "remove_orphans_older_than": None,
+            },
+        )
+    )
+    assert stmts == [
+        (
+            "ALTER TABLE iceberg.bronze_acme.feed_v1 SET TBLPROPERTIES "
+            r"('path.style'='C:\\data')"
+        )
+    ]
 
 
 def test_render_spark_sql_rejects_invalid_z_order_ident():

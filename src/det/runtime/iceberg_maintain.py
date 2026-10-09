@@ -238,7 +238,9 @@ def _duration_to_spark_interval(duration: str) -> str:
 
 
 def _sql_string(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
+    # Escape \ before ' so Spark stores supplied characters literally
+    # (backslash escapes in string literals depending on parser settings).
+    return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
 
 
 def _plan_from_mapping(plan: Mapping[str, Any]) -> IcebergMaintainPlan:
