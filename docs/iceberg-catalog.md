@@ -187,16 +187,19 @@ files after many writes:
 
 `det prune` is different: it removes **logical** bronze extract-run siblings DET
 tracks. Snapshot GC only happens when something executes Iceberg procedures
-(Spark/Athena) against `rest` / `glue`. **DET never runs those procedures
-in-process.**
+(Spark/Athena) — **DET never runs those in-process.** Spark can target any
+catalog it is configured with (including Hadoop). DET's plan API still marks
+unset/`hadoop` plans `actionable=False`, so the reference renderer and DAG
+mapped submits only accept `rest` / `glue` plans.
 
 ### Plan API + reference Spark SQL
 
 SemVer: `iter_iceberg_maintain_plans(project_root)` returns per-pipeline plans
-(`actionable=False` when catalog is unset/`hadoop`).
+(`actionable=False` when catalog is unset/`hadoop` — DET gating for the
+reference path, not a Spark limitation).
 
-`render_iceberg_maintain_spark_sql(plan)` turns one actionable plan (object or
-DAG dict) into Apache Spark Iceberg `CALL … system.*` / `ALTER TABLE … SET
+`render_iceberg_maintain_spark_sql(plan)` turns one **actionable** plan (object
+or DAG dict) into Apache Spark Iceberg `CALL … system.*` / `ALTER TABLE … SET
 TBLPROPERTIES` statements. Catalog name defaults to `iceberg`, override with
 `DET_ICEBERG_SPARK_CATALOG` or `catalog=`. Athena/Trino: adapt the statements.
 
