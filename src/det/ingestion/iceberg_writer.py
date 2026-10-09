@@ -29,7 +29,7 @@ from det.ingestion.sql_replace import (
     resolve_run_identity,
 )
 from det.logging import get_logger
-from det.optional_deps import pip_extra_hint
+from det.optional_deps import require_iceberg as _require_iceberg
 from det.runtime.config import IcebergPartition
 from det.runtime.lake import LakeRef
 from det.runtime.meta import identity_iso, resolve_interval, to_interval_datetime
@@ -45,7 +45,6 @@ logger = get_logger(__name__)
 _START = "__interval_start_datetime"
 _END = "__interval_end_datetime"
 _RUN = "__extract_run_datetime"
-_ICEBERG_HINT = pip_extra_hint("iceberg")
 
 # Re-export for callers that imported these from iceberg_writer.
 __all__ = [
@@ -56,14 +55,6 @@ __all__ = [
     "resolve_iceberg_catalog",
     "write_iceberg_table",
 ]
-
-
-def _require_iceberg() -> None:
-    try:
-        import pyarrow  # noqa: PLC0415, F401
-        import pyiceberg  # noqa: PLC0415, F401
-    except ImportError as exc:
-        raise ImportError(f"Iceberg bronze requires the optional extra: {_ICEBERG_HINT}") from exc
 
 
 def _pyiceberg_type(type_name: str):

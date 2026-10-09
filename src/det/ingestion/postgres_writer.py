@@ -12,6 +12,7 @@ from det.ingestion.sql_replace import (
     resolve_run_identity,
 )
 from det.logging import get_logger
+from det.optional_deps import require_psycopg
 from det.runtime.lease import advisory_lock_keys
 from det.runtime.sql_types import bronze_sql_columns, quote_ident
 
@@ -25,13 +26,8 @@ def _cell(value: Any) -> Any:
 
 
 def _import_psycopg():
-    try:
-        import psycopg  # noqa: PLC0415
-    except ImportError as exc:
-        raise ImportError(
-            'Postgres destination requires the optional extra: pip install -e ".[postgres]"'
-        ) from exc
-    return psycopg
+    # Thin wrapper so tests can monkeypatch this module attribute.
+    return require_psycopg()
 
 
 def write_postgres_table(

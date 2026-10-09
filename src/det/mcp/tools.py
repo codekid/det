@@ -10,8 +10,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import det.ingestion.iceberg_writer as iceberg_writer
 from det.destinations.models import bronze_dataset_dir, lake_root, lake_roots_for, raw_dataset_dir
-from det.ingestion.iceberg_writer import list_iceberg_extract_runs, load_iceberg_table
 from det.mcp import _helpers as h
 from det.mcp import airflow_inspect as af
 from det.mcp.context import PathSandboxError, resolve_under_root
@@ -208,7 +208,7 @@ def list_bronze_partitions(
         dataset_dir = bronze_dataset_dir(config, base)
         capped = max(1, min(int(limit), DEFAULT_LIST_LIMIT))
         try:
-            ice = load_iceberg_table(
+            ice = iceberg_writer.load_iceberg_table(
                 lake=lake_root(dest, base),
                 namespace=sql_schema,
                 table=sql_table,
@@ -224,7 +224,9 @@ def list_bronze_partitions(
                 "runs": [],
                 "note": str(exc),
             }
-        runs_raw = list_iceberg_extract_runs(ice, limit=capped) if ice is not None else []
+        runs_raw = (
+            iceberg_writer.list_iceberg_extract_runs(ice, limit=capped) if ice is not None else []
+        )
         runs = [
             {
                 "interval_start": start,

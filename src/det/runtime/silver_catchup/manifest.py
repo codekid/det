@@ -26,10 +26,6 @@ from det.runtime.lake import LakeRef
 from det.runtime.limits import DEFAULT_LIST_LIMIT
 from det.runtime.pipelines import resolve_pipeline_ref
 from det.runtime.settings import DetSettings
-from det.runtime.silver_catchup.diff import (
-    diff_bronze_silver,
-    diff_bronze_silver_fleet,
-)
 from det.runtime.silver_catchup.ids import (
     MANIFEST_VERSION,
     _norm_ts,
@@ -68,9 +64,7 @@ def load_catchup_runs_from_jsonl(runs_path: LakeRef) -> list[CatchupSidecarRunRo
                 f"catch-up runs NDJSON line {line_no} is not JSON: {runs_path}"
             ) from exc
         if not isinstance(raw, dict):
-            raise ValueError(
-                f"catch-up runs NDJSON line {line_no} must be an object: {runs_path}"
-            )
+            raise ValueError(f"catch-up runs NDJSON line {line_no} must be an object: {runs_path}")
         rows.append(cast(CatchupSidecarRunRow, raw))
     return rows
 
@@ -101,9 +95,7 @@ def _coerce_catchup_run_row(raw: object, *, where: str) -> CatchupRunRow:
     if not isinstance(raw, Mapping):
         raise ValueError(f"catch-up {where} must be an object")
     return {
-        "pipeline": _require_nonempty(
-            raw.get("pipeline"), where=where, field="pipeline"
-        ),
+        "pipeline": _require_nonempty(raw.get("pipeline"), where=where, field="pipeline"),
         "interval_start": _require_nonempty(
             _norm_ts(raw.get("interval_start")),
             where=where,
@@ -119,9 +111,7 @@ def _coerce_catchup_run_row(raw: object, *, where: str) -> CatchupRunRow:
             where=where,
             field="extract_run_datetime",
         ),
-        "detected_at": _require_nonempty(
-            raw.get("detected_at"), where=where, field="detected_at"
-        ),
+        "detected_at": _require_nonempty(raw.get("detected_at"), where=where, field="detected_at"),
     }
 
 
@@ -142,8 +132,7 @@ def _coerce_catchup_manifest_payload(
         # bool is a subclass of int; reject it along with str/float coercion.
         if type(version_raw) is not int:
             raise ValueError(
-                f"catch-up {source} manifest_version must be an int, "
-                f"got {version_raw!r}"
+                f"catch-up {source} manifest_version must be an int, got {version_raw!r}"
             )
         version = version_raw
     if version != MANIFEST_VERSION:
@@ -154,16 +143,11 @@ def _coerce_catchup_manifest_payload(
     runs_raw = raw.get("runs")
     if not isinstance(runs_raw, list):
         raise ValueError(f"catch-up {source} runs must be a list")
-    runs = [
-        _coerce_catchup_run_row(row, where=f"runs[{i}]")
-        for i, row in enumerate(runs_raw)
-    ]
+    runs = [_coerce_catchup_run_row(row, where=f"runs[{i}]") for i, row in enumerate(runs_raw)]
     return {
         "manifest_version": version,
         "manifest_id": validate_catchup_manifest_id(str(raw.get("manifest_id") or "")),
-        "content_digest": validate_catchup_content_digest(
-            str(raw.get("content_digest") or "")
-        ),
+        "content_digest": validate_catchup_content_digest(str(raw.get("content_digest") or "")),
         "updated_at": str(raw.get("updated_at") or ""),
         "runs": runs,
     }
@@ -223,15 +207,11 @@ def write_catchup_manifest(
             f"payload has {digest}, runs hash to {live}"
         )
     mid = body["manifest_id"]
-    ops = resolve_ops_lake(
-        project_root=project_root, settings=settings, lake_path=lake_path
-    )
+    ops = resolve_ops_lake(project_root=project_root, settings=settings, lake_path=lake_path)
     path = catchup_manifest_ref(ops, mid)
     runs_path = catchup_runs_ref(ops, mid)
     if path.exists():
-        raise DetConflictError(
-            f"catch-up manifest already exists (immutable): {path}"
-        )
+        raise DetConflictError(f"catch-up manifest already exists (immutable): {path}")
     serialized = (json.dumps(body, indent=2, sort_keys=True) + "\n").encode("utf-8")
     runs_bytes = _runs_jsonl_bytes(body["runs"])
     try:
@@ -246,9 +226,7 @@ def write_catchup_manifest(
     try:
         path.create_exclusive(serialized)
     except FileExistsError as exc:
-        raise DetConflictError(
-            f"catch-up manifest already exists (immutable): {path}"
-        ) from exc
+        raise DetConflictError(f"catch-up manifest already exists (immutable): {path}") from exc
     n_runs = len(body["runs"])
     logger.info(
         "silver catchup manifest written",
@@ -269,9 +247,7 @@ def read_catchup_manifest(
 ) -> CatchupManifestPayload | None:
     """Load one immutable catch-up manifest by id."""
     mid = validate_catchup_manifest_id(manifest_id)
-    ops = resolve_ops_lake(
-        project_root=project_root, settings=settings, lake_path=lake_path
-    )
+    ops = resolve_ops_lake(project_root=project_root, settings=settings, lake_path=lake_path)
     path = catchup_manifest_ref(ops, mid)
     if not path.exists():
         return None
@@ -355,6 +331,9 @@ def plan_catchup_manifest(
     """
     _ = limit
     root = project_root.resolve()
+    # Package lookup so monkeypatch on det.runtime.silver_catchup.* applies.
+    from det.runtime import silver_catchup as _sc  # noqa: PLC0415
+
     mid = (
         validate_catchup_manifest_id(manifest_id)
         if manifest_id is not None
@@ -362,7 +341,7 @@ def plan_catchup_manifest(
     )
     rel = "/".join((*CATCHUP_DIR, f"{mid}.json"))
     if all_pipelines:
-        fleet = diff_bronze_silver_fleet(
+        fleet = _sc.diff_bronze_silver_fleet(
             project_root=root,
             interval_start=interval_start,
             interval_end=interval_end,
@@ -374,9 +353,7 @@ def plan_catchup_manifest(
             raise ValueError(
                 "catch-up plan is truncated; refuse to build an incomplete apply manifest"
             )
-        payload = manifest_payload_from_catchup(
-            fleet.get("catchup_runs") or [], manifest_id=mid
-        )
+        payload = manifest_payload_from_catchup(fleet.get("catchup_runs") or [], manifest_id=mid)
         return {
             "dry_run": True,
             "diff": fleet,
@@ -393,7 +370,7 @@ def plan_catchup_manifest(
         }
     if pipeline is None:
         raise ValueError("pipeline is required unless all_pipelines=True")
-    one = diff_bronze_silver(
+    one = _sc.diff_bronze_silver(
         pipeline,
         project_root=root,
         interval_start=interval_start,
@@ -403,12 +380,8 @@ def plan_catchup_manifest(
         complete=True,
     )
     if one.get("truncated"):
-        raise ValueError(
-            "catch-up plan is truncated; refuse to build an incomplete apply manifest"
-        )
-    payload = manifest_payload_from_catchup(
-        one.get("catchup_runs") or [], manifest_id=mid
-    )
+        raise ValueError("catch-up plan is truncated; refuse to build an incomplete apply manifest")
+    payload = manifest_payload_from_catchup(one.get("catchup_runs") or [], manifest_id=mid)
     return {
         "dry_run": True,
         "diff": one,
@@ -417,10 +390,5 @@ def plan_catchup_manifest(
         "content_digest": payload["content_digest"],
         "manifest_relpath": rel,
         "candidate_mode": one.get("candidate_mode"),
-        **(
-            {"extract_lookback": one["extract_lookback"]}
-            if one.get("extract_lookback")
-            else {}
-        ),
+        **({"extract_lookback": one["extract_lookback"]} if one.get("extract_lookback") else {}),
     }
-

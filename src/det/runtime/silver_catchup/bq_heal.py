@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from det.logging import get_logger
+from det.optional_deps import require_bigquery, try_import_bigquery
 from det.runtime.config import PipelineConfig
 from det.runtime.silver_catchup.ids import (
     _MANIFEST_ID_RE,
@@ -53,11 +54,8 @@ def _list_silver_extract_runs_bigquery(
         )
     if intervals is not None and len(intervals) == 0:
         return set(), None
-    try:
-        from google.cloud import (  # noqa: PLC0415
-            bigquery,  # pyright: ignore[reportAttributeAccessIssue]
-        )
-    except ImportError:
+    bigquery = try_import_bigquery()
+    if bigquery is None:
         return (
             set(),
             "catch-up silver coverage uses BigQuery; "
@@ -139,13 +137,9 @@ def _bq_project_dataset_location() -> tuple[str, str, str]:
 
 def _bq_client() -> tuple[Any, str, str, str]:
     try:
-        from google.cloud import (  # noqa: PLC0415
-            bigquery,  # pyright: ignore[reportAttributeAccessIssue]
-        )
+        bigquery = require_bigquery()
     except ImportError as exc:
-        raise RuntimeError(
-            'google-cloud-bigquery is required. Install: uv pip install -e ".[bigquery]"'
-        ) from exc
+        raise RuntimeError(str(exc)) from exc
     project, dataset, location = _bq_project_dataset_location()
     return bigquery.Client(project=project), project, dataset, location
 
@@ -184,9 +178,7 @@ def ensure_bq_catchup_external_table(*, runs_uri: str, manifest_id: str) -> str:
         )
     mid = validate_catchup_manifest_id(manifest_id)
     client, project, dataset, location = _bq_client()
-    from google.cloud import (  # noqa: PLC0415
-        bigquery,  # pyright: ignore[reportAttributeAccessIssue]
-    )
+    bigquery = require_bigquery()
 
     _ensure_bq_dataset(client, project, dataset, location)
     table_name = catchup_bq_external_table_name(mid)
@@ -214,10 +206,7 @@ def ensure_bq_catchup_external_table(*, runs_uri: str, manifest_id: str) -> str:
 
 
 def _ensure_bq_dataset(client: Any, project: str, dataset_id: str, location: str) -> None:
-    from google.cloud import (  # noqa: PLC0415
-        bigquery,  # pyright: ignore[reportAttributeAccessIssue]
-    )
-
+    bigquery = require_bigquery()
     ref = bigquery.Dataset(f"{project}.{dataset_id}")
     ref.location = location
     try:

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from det.logging import get_logger
-from det.optional_deps import pip_extra_hint
+from det.optional_deps import require_psycopg
 from det.runtime.ids import require_sql_ident
 from det.runtime.lease._common import (
     Lease,
@@ -32,13 +32,7 @@ SecretLookup = Callable[[str], str | None]
 
 
 def _import_psycopg():
-    try:
-        import psycopg  # noqa: PLC0415
-    except ImportError as exc:
-        raise ImportError(
-            f"postgres lease backend requires the optional extra: {pip_extra_hint('postgres')}"
-        ) from exc
-    return psycopg
+    return require_psycopg()
 
 
 class PostgresLeaseStore:

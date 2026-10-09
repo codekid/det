@@ -9,6 +9,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+import det.ingestion.iceberg_writer as iceberg_writer
 from det.destinations.models import (
     bronze_dataset_dir,
     duckdb_connection_path,
@@ -16,14 +17,8 @@ from det.destinations.models import (
     postgres_dsn,
 )
 from det.ingestion.iceberg_catalog_factory import lake_ref_uri
-from det.ingestion.iceberg_writer import (
-    _jsonable_cell,
-    list_iceberg_extract_runs,
-    load_iceberg_table,
-    scan_iceberg_rows,
-)
 from det.mcp.errors import sanitize_detail
-from det.optional_deps import require_duckdb
+from det.optional_deps import require_duckdb, require_psycopg
 from det.plugins import load_plugins
 from det.runtime.coerce import CoerceError, coerce_record
 from det.runtime.config import PipelineConfig, resolve_path
@@ -456,7 +451,7 @@ def _iceberg_sample_bound_note(bound: str) -> str:
 
 
 def _jsonable_sample_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {k: _jsonable_cell(v) for k, v in row.items()}
+    return {k: iceberg_writer._jsonable_cell(v) for k, v in row.items()}
 
 
 def _sample_bronze_duckdb(
@@ -548,18 +543,12 @@ def _sample_bronze_postgres(
         "note": note,
     }
     try:
-        import psycopg  # noqa: PLC0415
-    except ImportError:
+        psycopg = require_psycopg()
+    except ImportError as exc:
         return {
             **base_out,
             "rows": [],
-            "errors": [
-                {
-                    "message": (
-                        'Postgres inspect requires the optional extra: pip install -e ".[postgres]"'
-                    )
-                }
-            ],
+            "errors": [{"message": str(exc)}],
             "truncated": False,
         }
     try:
@@ -626,7 +615,7 @@ def _sample_bronze_iceberg_pyiceberg(
     schema, table = sql_names_for_config(config)
     location = bronze_dataset_dir(config, root)
     try:
-        ice = load_iceberg_table(
+        ice = iceberg_writer.load_iceberg_table(
             lake=lake_root(config.destination, root),
             namespace=schema,
             table=table,
@@ -650,7 +639,7 @@ def _sample_bronze_iceberg_pyiceberg(
         }
 
     note = bound_note
-    fetched = scan_iceberg_rows(
+    fetched = iceberg_writer.scan_iceberg_rows(
         ice,
         limit=limit + 1,
         interval_start=interval_start,
@@ -664,13 +653,13 @@ def _sample_bronze_iceberg_pyiceberg(
         and interval_start is None
         and extract_run_since is not None
     ):
-        runs = list_iceberg_extract_runs(ice)
+        runs = iceberg_writer.list_iceberg_extract_runs(ice)
         if runs:
             latest = max(runs, key=lambda r: r[2])
             note = _iceberg_sample_bound_note(
                 f"latest extract_run={latest[2]} (no rows in lookback)"
             )
-            fetched = scan_iceberg_rows(
+            fetched = iceberg_writer.scan_iceberg_rows(
                 ice,
                 limit=limit + 1,
                 interval_start=latest[0],
@@ -743,7 +732,7 @@ def _sample_bronze_iceberg(
         }
 
     try:
-        ice = load_iceberg_table(
+        ice = iceberg_writer.load_iceberg_table(
             lake=lake_root(config.destination, root),
             namespace=schema,
             table=table,
@@ -821,7 +810,7 @@ def _sample_bronze_iceberg(
 
     note = bound_note
     if not fetched and not caller_filtered:
-        runs = list_iceberg_extract_runs(ice)
+        runs = iceberg_writer.list_iceberg_extract_runs(ice)
         if runs:
             latest = max(runs, key=lambda r: r[2])
             note = _iceberg_sample_bound_note(

@@ -11,22 +11,12 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, cast
 
+import det.ingestion.iceberg_writer as iceberg_writer
 from det.ingestion.iceberg_catalog_factory import (
     ensure_iceberg_namespace,
     lake_ref_uri,
     maybe_bind_location,
     resolve_iceberg_catalog,
-)
-from det.ingestion.iceberg_writer import (
-    _chunk_to_arrow,
-    _jsonable_cell,
-    _live_partition_summary,
-    _live_type_name,
-    _pyiceberg_type,
-    _read_planned_parquet,
-    _require_iceberg,
-    iceberg_schema_from_columns,
-    load_iceberg_table,
 )
 from det.logging import get_logger
 from det.runtime.lake import LakeRef
@@ -125,7 +115,7 @@ def ensure_ops_run_receipts_table(*, catalog: Any, location: str) -> Any:
     from pyiceberg.exceptions import NoSuchTableError  # noqa: PLC0415
 
     identifier = (OPS_NAMESPACE, OPS_TABLE)
-    schema = iceberg_schema_from_columns(OPS_COLUMN_TYPES)
+    schema = iceberg_writer.iceberg_schema_from_columns(OPS_COLUMN_TYPES)
     maybe_bind_location(catalog, identifier, location)
     try:
         table = catalog.load_table(identifier)
@@ -138,7 +128,10 @@ def ensure_ops_run_receipts_table(*, catalog: Any, location: str) -> Any:
             partition_spec=_attempt_date_partition_spec(schema),
         )
 
-    live = {field.name: _live_type_name(field.field_type) for field in table.schema().fields}
+    live = {
+        field.name: iceberg_writer._live_type_name(field.field_type)
+        for field in table.schema().fields
+    }
     to_add: list[tuple[str, str]] = []
     for name, expected in OPS_COLUMN_TYPES:
         live_type = live.get(name)
@@ -157,7 +150,7 @@ def ensure_ops_run_receipts_table(*, catalog: Any, location: str) -> Any:
     if to_add:
         with table.update_schema() as update:
             for name, expected in to_add:
-                update.add_column(name, _pyiceberg_type(expected))
+                update.add_column(name, iceberg_writer._pyiceberg_type(expected))
         table = catalog.load_table(identifier)
     if not _ops_partition_matches_attempt_date(table):
         # Spec apply is create-time only; keep the table but warn so materialize
@@ -166,7 +159,7 @@ def ensure_ops_run_receipts_table(*, catalog: Any, location: str) -> Any:
         logger.warning(
             "ops.run_receipts partition does not match identity(attempt_date); "
             "materialize will delete by attempt_date row filter to avoid duplicates",
-            live_partition=_live_partition_summary(table),
+            live_partition=iceberg_writer._live_partition_summary(table),
             expected="identity(attempt_date)",
             location=location,
         )
@@ -219,7 +212,7 @@ def materialize_receipts(
 
     Source of truth is ``{lake}/runs/`` JSON. Empty days delete the partition.
     """
-    _require_iceberg()
+    iceberg_writer._require_iceberg()
     start, end = attempt_window(since, until, now=now)
     by_day: dict[date, list[dict[str, Any]]] = defaultdict(list)
     skipped = 0
@@ -266,7 +259,7 @@ def materialize_receipts(
             txn.delete(delete_filter=_day_filter(day))
         if rows:
             rows.sort(key=lambda r: str(r.get("attempt_id") or ""))
-            arrow = _chunk_to_arrow(rows, OPS_COLUMN_TYPES, pa_schema)
+            arrow = iceberg_writer._chunk_to_arrow(rows, OPS_COLUMN_TYPES, pa_schema)
             txn.append(arrow)
             rows_written += len(rows)
         txn.commit_transaction()
@@ -300,7 +293,7 @@ def scan_ops_run_receipts(
 ) -> list[dict[str, Any]]:
     """Test helper: read live ops.run_receipts rows."""
 
-    ice = load_iceberg_table(
+    ice = iceberg_writer.load_iceberg_table(
         lake=lake,
         namespace=OPS_NAMESPACE,
         table=OPS_TABLE,
@@ -309,7 +302,7 @@ def scan_ops_run_receipts(
     if ice is None:
         return []
     # Read the full live set, then sort + slice so limit is deterministic.
-    rows = _read_planned_parquet(ice).to_pylist()
-    out = [{k: _jsonable_cell(v) for k, v in row.items()} for row in rows]
+    rows = iceberg_writer._read_planned_parquet(ice).to_pylist()
+    out = [{k: iceberg_writer._jsonable_cell(v) for k, v in row.items()} for row in rows]
     out.sort(key=lambda r: (str(r.get("attempt_date") or ""), str(r.get("attempt_id") or "")))
     return out[:limit]

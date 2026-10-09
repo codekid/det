@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from det.ingestion.iceberg_catalog import resolve_metadata_location
 from det.logging import get_logger
+from det.optional_deps import require_bigquery, try_import_bigquery
 from det.runtime.approval import ApprovalPlan, _lake_argv, make_plan
 from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
 from det.runtime.ids import parse_canonical_id, sql_schema_name
@@ -233,11 +234,8 @@ def _lake_bucket(lake_uri: str) -> str:
 
 def _lookup_connection_sa(project: str, location: str, connection: str) -> str | None:
     """Best-effort connection SA lookup; None when offline or connection missing."""
-    try:
-        from google.cloud import (  # noqa: PLC0415
-            bigquery,  # pyright: ignore[reportAttributeAccessIssue]
-        )
-    except ImportError:
+    bigquery = try_import_bigquery()
+    if bigquery is None:
         return None
 
     try:
@@ -407,10 +405,7 @@ def approval_plan_for_register(plan: BigLakeRegisterPlan, argv: list[str]) -> Ap
 
 
 def _ensure_dataset(client: Any, project: str, dataset_id: str, location: str) -> None:
-    from google.cloud import (  # noqa: PLC0415
-        bigquery,  # pyright: ignore[reportAttributeAccessIssue]
-    )
-
+    bigquery = require_bigquery()
     ref = bigquery.Dataset(f"{project}.{dataset_id}")
     ref.location = location
     try:
@@ -421,13 +416,9 @@ def _ensure_dataset(client: Any, project: str, dataset_id: str, location: str) -
 
 def apply_biglake_register(plan: BigLakeRegisterPlan) -> dict[str, Any]:
     try:
-        from google.cloud import (  # noqa: PLC0415
-            bigquery,  # pyright: ignore[reportAttributeAccessIssue]
-        )
+        bigquery = require_bigquery()
     except ImportError as exc:
-        raise RuntimeError(
-            'google-cloud-bigquery is required. Install: uv pip install -e ".[bigquery]"'
-        ) from exc
+        raise RuntimeError(str(exc)) from exc
 
     client = bigquery.Client(project=plan.project)
     applied: list[dict[str, str]] = []

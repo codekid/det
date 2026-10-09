@@ -11,15 +11,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from det.runtime import silver_catchup as silver_catchup
 from det.runtime.dbt_runner import analytics_exclude, run_dbt
 from det.runtime.pipelines import list_pipeline_ids, resolve_pipeline_ref
-from det.runtime.silver_catchup import (
-    DEFAULT_EXTRACT_LOOKBACK,
-    diff_bronze_silver,
-    plan_catchup_manifest,
-    write_catchup_manifest,
-)
 from det.runtime.silver_catchup.ids import parse_extract_lookback
+
+DEFAULT_EXTRACT_LOOKBACK = silver_catchup.DEFAULT_EXTRACT_LOOKBACK
 
 __all__ = [
     "DEFAULT_EXTRACT_LOOKBACK",
@@ -78,7 +75,7 @@ def iter_silver_catchup_holes(
         if canonical in seen:
             continue
         seen.add(canonical)
-        diff = diff_bronze_silver(
+        diff = silver_catchup.diff_bronze_silver(
             canonical,
             project_root=root,
             extract_lookback=lookback,
@@ -111,7 +108,7 @@ def run_silver_catchup_heal(
     lookback = _normalize_lookback(extract_lookback)
     resolved = resolve_pipeline_ref(pipeline, project_root=root)
     pipe = resolved.canonical_id
-    before = diff_bronze_silver(
+    before = silver_catchup.diff_bronze_silver(
         pipe,
         project_root=root,
         extract_lookback=lookback,
@@ -129,7 +126,7 @@ def run_silver_catchup_heal(
             "reason": "nothing_to_do",
         }
 
-    planned = plan_catchup_manifest(
+    planned = silver_catchup.plan_catchup_manifest(
         project_root=root,
         pipeline=pipe,
         extract_lookback=lookback,
@@ -152,7 +149,7 @@ def run_silver_catchup_heal(
             "reason": "nothing_to_do",
         }
 
-    write_catchup_manifest(manifest_body, project_root=root)
+    silver_catchup.write_catchup_manifest(manifest_body, project_root=root)
 
     result = run_dbt(
         project_root=root,
@@ -164,11 +161,10 @@ def run_silver_catchup_heal(
     )
     if result.returncode != 0:
         raise RuntimeError(
-            f"catch-up dbt build failed for {pipe} manifest_id={mid} "
-            f"exit={result.returncode}"
+            f"catch-up dbt build failed for {pipe} manifest_id={mid} exit={result.returncode}"
         )
 
-    after = diff_bronze_silver(
+    after = silver_catchup.diff_bronze_silver(
         pipe,
         project_root=root,
         extract_lookback=lookback,
