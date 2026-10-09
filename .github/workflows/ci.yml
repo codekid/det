@@ -17,7 +17,9 @@ jobs:
         python-version: ["3.12", "3.13"]
     services:
       postgres:
-        image: postgres:16
+        # Public ECR mirror of Docker Hub library/postgres — avoids Hub anonymous
+        # pull rate limits (toomanyrequests) on GitHub-hosted runners.
+        image: public.ecr.aws/docker/library/postgres:16
         env:
           POSTGRES_USER: det
           POSTGRES_PASSWORD: det
