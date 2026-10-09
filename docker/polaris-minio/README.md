@@ -3,6 +3,10 @@
 # Starts MinIO (API :9000, console :9001) and Polaris REST (:8181).
 # Catalog warehouse name: det_lake. Bucket: det-ci.
 #
+# MinIO images: `pgsty/minio` (AGPL community build). Upstream
+# `quay.io/minio/{minio,mc}` no longer allows anonymous pulls. The compose
+# file pins a release tag + digest; bump both together when upgrading.
+#
 #   make polaris-up
 #   make polaris-down
 #

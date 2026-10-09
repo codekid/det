@@ -33,6 +33,7 @@ from det.cli.common import (
 )
 from det.errors import DetConflictError
 from det.mcp.dry_run import catchup as catchup_dry_run
+from det.runtime import silver_catchup as silver_catchup
 from det.runtime.approval import (
     dbt_write_argv,
     make_plan,
@@ -44,21 +45,6 @@ from det.runtime.approval import (
 from det.runtime.config import load_pipeline_config
 from det.runtime.dbt_runner import DbtNotInstalledError, analytics_exclude, run_dbt
 from det.runtime.settings import use_settings
-from det.runtime.silver_catchup import (
-    apply_bq_catchup_cleanup,
-    assert_catchup_digest_matches,
-    diff_bronze_silver,
-    diff_bronze_silver_fleet,
-    list_bq_catchup_external_tables,
-    manifest_relpath_for_root,
-    plan_bq_catchup_cleanup,
-    plan_catchup_manifest,
-    read_catchup_manifest,
-    resolve_bq_catchup_cleanup_cutoff,
-    resolve_catchup_candidate_scope,
-    validate_bq_catchup_cleanup_scope,
-    write_catchup_manifest,
-)
 from det.scaffold.view_warn import emit_view_size_warnings
 
 catchup_app = typer.Typer(
@@ -90,7 +76,7 @@ def _resolve_effective_lookback(
     census: bool,
 ) -> str | None:
     try:
-        return resolve_catchup_candidate_scope(
+        return silver_catchup.resolve_catchup_candidate_scope(
             interval_start=interval_start,
             interval_end=interval_end,
             extract_lookback=extract_lookback,
@@ -189,7 +175,7 @@ def _run_status(
 
     with use_settings(settings):
         if all_pipelines:
-            payload = diff_bronze_silver_fleet(
+            payload = silver_catchup.diff_bronze_silver_fleet(
                 project_root=root,
                 interval_start=start,
                 interval_end=end,
@@ -203,7 +189,7 @@ def _run_status(
                     param_hint="--pipeline",
                 )
             resolved = _resolve_pipeline(pipeline, root)
-            payload = diff_bronze_silver(
+            payload = silver_catchup.diff_bronze_silver(
                 resolved.canonical_id,
                 project_root=root,
                 interval_start=start,
@@ -323,7 +309,7 @@ def _run_plan(
         )
 
     with use_settings(settings):
-        planned = plan_catchup_manifest(
+        planned = silver_catchup.plan_catchup_manifest(
             project_root=root,
             pipeline=pipe_id,
             all_pipelines=all_pipelines,
@@ -395,7 +381,7 @@ def _run_plan(
 
         if has_digest:
             try:
-                assert_catchup_digest_matches(
+                silver_catchup.assert_catchup_digest_matches(
                     planned["manifest"], expected_digest=str(content_digest)
                 )
             except ValueError as exc:
@@ -404,7 +390,7 @@ def _run_plan(
 
         try:
             with _claimed_approval_work(claimed, approval, root, settings=settings):
-                path = write_catchup_manifest(
+                path = silver_catchup.write_catchup_manifest(
                     planned["manifest"],
                     project_root=root,
                     settings=settings,
@@ -420,7 +406,7 @@ def _run_plan(
                 {
                     **planned,
                     "dry_run": False,
-                    "written": manifest_relpath_for_root(root, path),
+                    "written": silver_catchup.manifest_relpath_for_root(root, path),
                 },
                 indent=2,
                 default=str,
@@ -428,7 +414,7 @@ def _run_plan(
         )
     else:
         typer.echo(
-            f"OK silver-catchup-plan wrote={manifest_relpath_for_root(root, path)} "
+            f"OK silver-catchup-plan wrote={silver_catchup.manifest_relpath_for_root(root, path)} "
             f"manifest_id={planned['manifest_id']} "
             f"runs={len(planned['manifest'].get('runs') or [])}"
         )
@@ -485,7 +471,7 @@ def _run_cleanup(
             param_hint="--list/--manifest-id/--older-than/--created-before",
         )
     try:
-        validate_bq_catchup_cleanup_scope(
+        silver_catchup.validate_bq_catchup_cleanup_scope(
             manifest_id=mid or None,
             older_than=older or None,
             created_before=before or None,
@@ -496,7 +482,7 @@ def _run_cleanup(
 
     if list_tables:
         try:
-            rows = list_bq_catchup_external_tables(
+            rows = silver_catchup.list_bq_catchup_external_tables(
                 older_than=older or None,
                 created_before=before or None,
             )
@@ -534,7 +520,9 @@ def _run_cleanup(
             )
         apply_before = before or None
         if not mid and not apply_before and older:
-            _cutoff, apply_before, _older = resolve_bq_catchup_cleanup_cutoff(older_than=older)
+            _cutoff, apply_before, _older = silver_catchup.resolve_bq_catchup_cleanup_cutoff(
+                older_than=older
+            )
         if mid:
             gate_argv = silver_catchup_cleanup_write_argv(manifest_id=mid)
         elif apply_before:
@@ -554,7 +542,7 @@ def _run_cleanup(
         )
         with _claimed_approval_work(claimed, approval, root):
             try:
-                result = apply_bq_catchup_cleanup(
+                result = silver_catchup.apply_bq_catchup_cleanup(
                     manifest_id=mid or None,
                     created_before=apply_before,
                 )
@@ -574,7 +562,7 @@ def _run_cleanup(
         return
 
     try:
-        planned = plan_bq_catchup_cleanup(
+        planned = silver_catchup.plan_bq_catchup_cleanup(
             manifest_id=mid or None,
             older_than=older or None,
             created_before=before or None,
@@ -795,7 +783,9 @@ def silver_catchup_heal_cmd(
             )
 
         with use_settings(settings):
-            loaded = read_catchup_manifest(manifest_id=mid, project_root=root, settings=settings)
+            loaded = silver_catchup.read_catchup_manifest(
+                manifest_id=mid, project_root=root, settings=settings
+            )
         if loaded is None:
             typer.echo(
                 f"catch-up manifest not found: {mid} (apply first, then --continue)",

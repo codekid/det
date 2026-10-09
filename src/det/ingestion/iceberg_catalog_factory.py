@@ -14,7 +14,7 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 from det.logging import get_logger
-from det.optional_deps import pip_extra_hint
+from det.optional_deps import require_iceberg as _require_iceberg
 from det.runtime.lake import LakeRef
 from det.runtime.object_store import (
     gcs_project_from_env,
@@ -38,20 +38,11 @@ ENV_GLUE_ID = "DET_ICEBERG_GLUE_ID"
 
 _BL_WAREHOUSE_PROJECT = re.compile(r"^bl://projects/([^/]+)/catalogs/")
 
-_ICEBERG_HINT = pip_extra_hint("iceberg")
 _KINDS = frozenset({"hadoop", "rest", "glue"})
 
 
 def _env(environ: Mapping[str, str] | None) -> Mapping[str, str]:
     return os.environ if environ is None else environ
-
-
-def _require_iceberg() -> None:
-    try:
-        import pyarrow  # noqa: PLC0415, F401
-        import pyiceberg  # noqa: PLC0415, F401
-    except ImportError as exc:
-        raise ImportError(f"Iceberg bronze requires the optional extra: {_ICEBERG_HINT}") from exc
 
 
 def lake_ref_uri(ref: LakeRef) -> str:

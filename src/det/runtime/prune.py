@@ -3,20 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import det.ingestion.iceberg_writer as iceberg_writer
 from det.destinations.models import (
     bronze_dataset_dir,
     duckdb_connection_path,
     lake_roots_for,
     postgres_dsn,
 )
-from det.ingestion.iceberg_writer import (
-    delete_iceberg_extract_run,
-    list_iceberg_extract_runs,
-    load_iceberg_table,
-)
 from det.ingestion.sql_replace import delete_extract_run_sql
 from det.logging import bound_run_context, get_logger, sanitize_lake_uri
-from det.optional_deps import require_duckdb
+from det.optional_deps import require_duckdb, require_psycopg
 from det.runtime.config import PipelineConfig, load_pipeline
 from det.runtime.ids import sql_names_for_config
 from det.runtime.lake import LakeRef
@@ -334,12 +330,7 @@ class BronzePruner:
         window_end: str,
         keep: int,
     ) -> PrunePlan:
-        try:
-            import psycopg  # noqa: PLC0415
-        except ImportError as exc:
-            raise ImportError(
-                'Postgres prune requires the optional extra: pip install -e ".[postgres]"'
-            ) from exc
+        psycopg = require_psycopg()
 
         dsn = postgres_dsn(config.destination)
         schema, table = sql_names_for_config(config)
@@ -412,12 +403,7 @@ class BronzePruner:
         return deleted_groups
 
     def _apply_postgres(self, config: PipelineConfig, plan: PrunePlan) -> int:
-        try:
-            import psycopg  # noqa: PLC0415
-        except ImportError as exc:
-            raise ImportError(
-                'Postgres prune requires the optional extra: pip install -e ".[postgres]"'
-            ) from exc
+        psycopg = require_psycopg()
 
         dsn = postgres_dsn(config.destination)
         schema, table = sql_names_for_config(config)
@@ -454,7 +440,7 @@ class BronzePruner:
         keep: int,
     ) -> PrunePlan:
         schema, table = sql_names_for_config(config)
-        ice = load_iceberg_table(
+        ice = iceberg_writer.load_iceberg_table(
             lake=self._bronze_lake(config.destination),
             namespace=schema,
             table=table,
@@ -462,12 +448,14 @@ class BronzePruner:
         )
         if ice is None:
             return PrunePlan(keep=keep)
-        rows = list_iceberg_extract_runs(ice, window_start=window_start, window_end=window_end)
+        rows = iceberg_writer.list_iceberg_extract_runs(
+            ice, window_start=window_start, window_end=window_end
+        )
         return _plan_from_run_rows(rows, keep=keep)
 
     def _apply_iceberg(self, config: PipelineConfig, plan: PrunePlan) -> int:
         schema, table = sql_names_for_config(config)
-        ice = load_iceberg_table(
+        ice = iceberg_writer.load_iceberg_table(
             lake=self._bronze_lake(config.destination),
             namespace=schema,
             table=table,
@@ -477,7 +465,7 @@ class BronzePruner:
             return 0
         deleted_groups = 0
         for ref in plan.to_remove:
-            delete_iceberg_extract_run(
+            iceberg_writer.delete_iceberg_extract_run(
                 ice,
                 (ref.interval_start, ref.interval_end, ref.extract_run_datetime),
             )

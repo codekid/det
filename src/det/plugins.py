@@ -1,10 +1,5 @@
 from __future__ import annotations
 
-from det.ingestion.det_backend import DetBackend
-from det.ingestion.thin_backend import ThinBackend
-from det.runtime.mappers import identity_mapper
-from det.runtime.registry import register_ingestion, register_mapper
-
 _LOADED = False
 
 
@@ -17,6 +12,12 @@ def load_plugins() -> None:
     global _LOADED
     if _LOADED:
         return
+
+    # Keep backends off the base ``import det`` path (iceberg/duckdb writers).
+    from det.ingestion.det_backend import DetBackend  # noqa: PLC0415
+    from det.ingestion.thin_backend import ThinBackend  # noqa: PLC0415
+    from det.runtime.mappers import identity_mapper  # noqa: PLC0415
+    from det.runtime.registry import register_ingestion, register_mapper  # noqa: PLC0415
 
     register_ingestion("det", DetBackend)
     register_ingestion("thin", ThinBackend)

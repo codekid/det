@@ -59,3 +59,46 @@ def require_beautifulsoup() -> Any:
             f"{pip_extra_hint('examples')} (or uv sync --extra examples)"
         ) from exc
     return BeautifulSoup
+
+
+def require_iceberg() -> None:
+    """Ensure ``pyiceberg`` + ``pyarrow`` are importable (iceberg extra)."""
+    try:
+        import pyarrow  # noqa: PLC0415, F401
+        import pyiceberg  # noqa: PLC0415, F401
+    except ImportError as exc:
+        raise ImportError(
+            f"Iceberg bronze requires the optional extra: {pip_extra_hint('iceberg')}"
+        ) from exc
+
+
+def require_psycopg() -> ModuleType:
+    try:
+        import psycopg  # noqa: PLC0415
+    except ImportError as exc:
+        raise ImportError(
+            "psycopg is required for this operation; install with: "
+            f"{pip_extra_hint('postgres')} (or uv sync --extra postgres)"
+        ) from exc
+    return psycopg
+
+
+def try_import_bigquery() -> Any | None:
+    """Return ``google.cloud.bigquery`` or ``None`` when the bigquery extra is absent."""
+    try:
+        from google.cloud import (  # noqa: PLC0415
+            bigquery,  # pyright: ignore[reportAttributeAccessIssue]
+        )
+    except ImportError:
+        return None
+    return bigquery
+
+
+def require_bigquery() -> Any:
+    bigquery = try_import_bigquery()
+    if bigquery is None:
+        raise ImportError(
+            "google-cloud-bigquery is required; install with: "
+            f"{pip_extra_hint('bigquery')} (or uv sync --extra bigquery)"
+        )
+    return bigquery

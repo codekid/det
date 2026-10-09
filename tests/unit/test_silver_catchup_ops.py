@@ -54,7 +54,7 @@ def test_iter_silver_catchup_holes_yields_only_positive_counts(
         }
 
     monkeypatch.setattr(
-        "det.runtime.silver_catchup_ops.diff_bronze_silver", fake_diff
+        "det.runtime.silver_catchup.diff_bronze_silver", fake_diff
     )
     holes = list(iter_silver_catchup_holes(tmp_path, extract_lookback="48h"))
     assert [h.pipeline for h in holes] == ["b.two", "c.three"]
@@ -74,7 +74,7 @@ def test_iter_silver_catchup_holes_respects_allowlist(
         lambda pipe, project_root=None: _Resolved(pipe),
     )
     monkeypatch.setattr(
-        "det.runtime.silver_catchup_ops.diff_bronze_silver",
+        "det.runtime.silver_catchup.diff_bronze_silver",
         lambda pipeline, **kwargs: {
             "pipeline": pipeline,
             "catchup_count": 2,
@@ -122,7 +122,7 @@ def test_iter_silver_catchup_holes_dedupes_aliases_after_resolve(
         "det.runtime.silver_catchup_ops.resolve_pipeline_ref", _resolve
     )
     monkeypatch.setattr(
-        "det.runtime.silver_catchup_ops.diff_bronze_silver", fake_diff
+        "det.runtime.silver_catchup.diff_bronze_silver", fake_diff
     )
     holes = list(
         iter_silver_catchup_holes(
@@ -156,7 +156,7 @@ def test_run_silver_catchup_heal_skips_when_empty(
         lambda *a, **k: _Resolved(),
     )
     monkeypatch.setattr(
-        "det.runtime.silver_catchup_ops.diff_bronze_silver",
+        "det.runtime.silver_catchup.diff_bronze_silver",
         lambda *a, **k: {"catchup_count": 0, "extract_lookback": "48h"},
     )
     out = run_silver_catchup_heal(tmp_path, pipeline="noaa.storm_events")
@@ -178,12 +178,12 @@ def test_run_silver_catchup_heal_skips_when_planned_runs_empty(
         lambda *a, **k: _Resolved(),
     )
     monkeypatch.setattr(
-        "det.runtime.silver_catchup_ops.diff_bronze_silver",
+        "det.runtime.silver_catchup.diff_bronze_silver",
         lambda *a, **k: {"catchup_count": 2, "extract_lookback": "48h"},
     )
     mid = "scm_" + ("ef" * 8)
     monkeypatch.setattr(
-        "det.runtime.silver_catchup_ops.plan_catchup_manifest",
+        "det.runtime.silver_catchup.plan_catchup_manifest",
         lambda **kwargs: {
             "manifest_id": mid,
             "content_digest": "sha256:" + ("2" * 64),
@@ -197,7 +197,7 @@ def test_run_silver_catchup_heal_skips_when_planned_runs_empty(
     )
     wrote: list[str] = []
     monkeypatch.setattr(
-        "det.runtime.silver_catchup_ops.write_catchup_manifest",
+        "det.runtime.silver_catchup.write_catchup_manifest",
         lambda *a, **k: wrote.append("wrote"),
     )
     dbt_calls: list[str] = []
@@ -231,13 +231,13 @@ def test_run_silver_catchup_heal_happy_path(
         ]
     )
     monkeypatch.setattr(
-        "det.runtime.silver_catchup_ops.diff_bronze_silver",
+        "det.runtime.silver_catchup.diff_bronze_silver",
         lambda *a, **k: next(diffs),
     )
     mid = "scm_" + ("ab" * 8)
     digest = "sha256:" + ("0" * 64)
     monkeypatch.setattr(
-        "det.runtime.silver_catchup_ops.plan_catchup_manifest",
+        "det.runtime.silver_catchup.plan_catchup_manifest",
         lambda **kwargs: {
             "manifest_id": mid,
             "content_digest": digest,
@@ -257,7 +257,7 @@ def test_run_silver_catchup_heal_happy_path(
     )
     wrote: list[str] = []
     monkeypatch.setattr(
-        "det.runtime.silver_catchup_ops.write_catchup_manifest",
+        "det.runtime.silver_catchup.write_catchup_manifest",
         lambda payload, **kwargs: wrote.append(str(payload.get("manifest_id"))),
     )
     captured: dict[str, object] = {}
@@ -291,12 +291,12 @@ def test_run_silver_catchup_heal_verify_fails(
         lambda *a, **k: _Resolved(),
     )
     monkeypatch.setattr(
-        "det.runtime.silver_catchup_ops.diff_bronze_silver",
+        "det.runtime.silver_catchup.diff_bronze_silver",
         lambda *a, **k: {"catchup_count": 1, "extract_lookback": "48h"},
     )
     mid = "scm_" + ("cd" * 8)
     monkeypatch.setattr(
-        "det.runtime.silver_catchup_ops.plan_catchup_manifest",
+        "det.runtime.silver_catchup.plan_catchup_manifest",
         lambda **kwargs: {
             "manifest_id": mid,
             "content_digest": "sha256:" + ("1" * 64),
@@ -315,7 +315,7 @@ def test_run_silver_catchup_heal_verify_fails(
         },
     )
     monkeypatch.setattr(
-        "det.runtime.silver_catchup_ops.write_catchup_manifest",
+        "det.runtime.silver_catchup.write_catchup_manifest",
         lambda *a, **k: None,
     )
     monkeypatch.setattr(

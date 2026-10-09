@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from det.logging import get_logger
-from det.optional_deps import pip_extra_hint
+from det.optional_deps import require_psycopg
 from det.runtime.approval import ApprovalError, effective_status, utcnow
 from det.runtime.approval import _iso as approval_iso
 from det.runtime.approval import _parse_iso as approval_parse
@@ -23,13 +23,7 @@ SecretLookup = Callable[[str], str | None]
 
 
 def _import_psycopg():
-    try:
-        import psycopg  # noqa: PLC0415
-    except ImportError as exc:
-        raise ImportError(
-            f"postgres approval backend requires the optional extra: {pip_extra_hint('postgres')}"
-        ) from exc
-    return psycopg
+    return require_psycopg()
 
 
 def _iso(dt: datetime) -> str:

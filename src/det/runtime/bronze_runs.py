@@ -16,7 +16,7 @@ from det.destinations.models import (
     lake_root,
     postgres_dsn,
 )
-from det.optional_deps import require_duckdb
+from det.optional_deps import require_duckdb, require_psycopg
 from det.runtime.config import PipelineConfig
 from det.runtime.ids import sql_names_for_config
 from det.runtime.lake import LakeRef
@@ -208,11 +208,9 @@ def _list_bronze_sql_runs(
 
     if dest.type == "postgres":
         try:
-            import psycopg  # noqa: PLC0415
-        except ImportError:
-            return [], (
-                'Postgres inspect requires the optional extra: pip install -e ".[postgres]"'
-            )
+            psycopg = require_psycopg()
+        except ImportError as exc:
+            return [], str(exc)
         try:
             dsn = postgres_dsn(dest, backend="env")
         except (SecretError, ValueError) as exc:

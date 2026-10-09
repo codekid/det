@@ -4,9 +4,9 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
+import det.ingestion.iceberg_writer as iceberg_writer
 from det.destinations.models import duckdb_connection_path, lake_roots_for, postgres_dsn
 from det.ingestion.duckdb_writer import write_duckdb_table
-from det.ingestion.iceberg_writer import write_iceberg_table
 from det.ingestion.jsonl import write_jsonl_partition
 from det.ingestion.postgres_writer import write_postgres_table
 from det.logging import get_logger
@@ -177,7 +177,7 @@ class DetBackend:
             table_location = table_location / config.medallion.bronze_prefix
         for part in fs_dataset_parts(config.canonical_id):
             table_location = table_location / part
-        written = write_iceberg_table(
+        written = iceberg_writer.write_iceberg_table(
             records,
             lake=roots.bronze,
             table_location=table_location,
