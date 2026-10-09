@@ -21,7 +21,8 @@ def legacy_approvals_dir(project_root: Path) -> Path:
 
 
 def _validate_id(approval_id: str) -> None:
-    from det.runtime.approval import ApprovalError
+    # approval.py imports this module at load time.
+    from det.runtime.approval import ApprovalError  # noqa: PLC0415
 
     if not approval_id.startswith("apr_") or "/" in approval_id or "\\" in approval_id:
         raise ApprovalError("approval_not_found", f"invalid approval id {approval_id!r}")
@@ -43,7 +44,7 @@ class LegacyApprovalReader:
             )
 
     def load(self, approval_id: str) -> dict[str, Any] | None:
-        from det.runtime.approval import ApprovalError
+        from det.runtime.approval import ApprovalError  # noqa: PLC0415
 
         _validate_id(approval_id)
         path = legacy_approvals_dir(self.project_root) / f"{approval_id}.json"
@@ -63,7 +64,7 @@ class LegacyApprovalReader:
         statuses: Sequence[str] | None = None,
         now: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        from det.runtime.approval import effective_status
+        from det.runtime.approval import effective_status  # noqa: PLC0415
 
         folder = legacy_approvals_dir(self.project_root)
         if not folder.is_dir():

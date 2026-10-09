@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from det.sources.openlibrary.subjects import (
@@ -30,26 +32,18 @@ def test_subject_slug_and_path(raw: str, slug: str):
 
 
 def test_fixture_works_validate_with_subject_key(project_root):
-    schema = load_json_schema(
-        project_root / "schemas/openlibrary/subjects/subjects.schema.yaml"
+    schema = load_json_schema(project_root / "schemas/openlibrary/subjects/subjects.schema.yaml")
+    fixtures = (project_root / "tests/fixtures/openlibrary/subjects_love.json").read_text(
+        encoding="utf-8"
     )
-    fixtures = (
-        project_root / "tests/fixtures/openlibrary/subjects_love.json"
-    ).read_text(encoding="utf-8")
-    import json
 
-    rows = [
-        {**row, "subject_key": "/subjects/love"}
-        for row in json.loads(fixtures)
-    ]
+    rows = [{**row, "subject_key": "/subjects/love"} for row in json.loads(fixtures)]
     validate_records(rows, schema)
 
 
 def test_unknown_work_field_fails_schema(project_root):
     """Contract drift should be loud — do not silently strip in the source."""
-    schema = load_json_schema(
-        project_root / "schemas/openlibrary/subjects/subjects.schema.yaml"
-    )
+    schema = load_json_schema(project_root / "schemas/openlibrary/subjects/subjects.schema.yaml")
     row = {
         "key": "/works/OL1W",
         "subject_key": "/subjects/love",

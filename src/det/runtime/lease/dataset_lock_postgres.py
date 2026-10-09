@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -49,24 +50,16 @@ class PostgresDatasetLockStore:
         self._resolve_secret = resolve_secret
         self.dsn_env = dsn_env
         self.schema = require_sql_ident(schema, what="postgres dataset lock schema")
-        self.locks_table = require_sql_ident(
-            locks_table, what="postgres dataset locks table"
-        )
-        self.shared_table = require_sql_ident(
-            shared_table, what="postgres dataset shared table"
-        )
+        self.locks_table = require_sql_ident(locks_table, what="postgres dataset locks table")
+        self.shared_table = require_sql_ident(shared_table, what="postgres dataset shared table")
         self._ensured = False
 
     def _dsn(self) -> str:
         raw = self._resolve_secret(self.dsn_env)
         if raw is None or not str(raw).strip():
-            raise RuntimeError(
-                f"postgres dataset lock backend requires {self.dsn_env} to be set"
-            )
+            raise RuntimeError(f"postgres dataset lock backend requires {self.dsn_env} to be set")
         text = str(raw).strip()
         if text.startswith("{"):
-            import json
-
             try:
                 payload = json.loads(text)
             except json.JSONDecodeError:
@@ -95,9 +88,7 @@ class PostgresDatasetLockStore:
             with conn.cursor() as cur:
                 k1, k2 = _ensure_ddl_lock_keys(self.schema, self.locks_table)
                 self._exec(cur, "SELECT pg_advisory_xact_lock(%s, %s)", (k1, k2))
-                self._exec(
-                    cur, f"CREATE SCHEMA IF NOT EXISTS {quote_ident(self.schema)}"
-                )
+                self._exec(cur, f"CREATE SCHEMA IF NOT EXISTS {quote_ident(self.schema)}")
                 self._exec(
                     cur,
                     f"""
@@ -125,8 +116,7 @@ class PostgresDatasetLockStore:
                 ):
                     self._exec(
                         cur,
-                        f"ALTER TABLE {self._locks_qual} "
-                        f"ADD COLUMN IF NOT EXISTS {col} {col_type}",
+                        f"ALTER TABLE {self._locks_qual} ADD COLUMN IF NOT EXISTS {col} {col_type}",
                     )
                 self._exec(
                     cur,
@@ -258,11 +248,7 @@ class PostgresDatasetLockStore:
                     "expires_at": expires_at.isoformat(),
                     "ttl_sec": ttl_sec,
                 }
-            if (
-                intent_token
-                and intent_expires_at
-                and intent_expires_at > datetime.now(UTC)
-            ):
+            if intent_token and intent_expires_at and intent_expires_at > datetime.now(UTC):
                 body["exclusive_intent"] = {
                     "token": intent_token,
                     "owner": intent_owner,
@@ -447,9 +433,7 @@ class PostgresDatasetLockStore:
             if not wait:
                 with self._connect() as conn:
                     with conn.cursor() as cur:
-                        cur.execute(
-                            "SELECT pg_advisory_xact_lock(hashtext(%s))", (cid,)
-                        )
+                        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (cid,))
                         self._clear_exclusive_intent_if_owned(cur, cid, token)
                     conn.commit()
                     with conn.cursor() as cur:
@@ -461,9 +445,7 @@ class PostgresDatasetLockStore:
             if deadline is not None and time.monotonic() >= deadline:
                 with self._connect() as conn:
                     with conn.cursor() as cur:
-                        cur.execute(
-                            "SELECT pg_advisory_xact_lock(hashtext(%s))", (cid,)
-                        )
+                        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (cid,))
                         self._clear_exclusive_intent_if_owned(cur, cid, token)
                     conn.commit()
                     with conn.cursor() as cur:

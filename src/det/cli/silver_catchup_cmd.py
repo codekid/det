@@ -12,10 +12,12 @@ import typer
 from det.cli.app import app
 from det.cli.common import (
     _APPROVAL_HELP,
+    _BOUND_PARAMS,
     _LAKE_PATH_BRONZE_HELP,
     _LAKE_PATH_HELP,
     _LAKE_PATH_OPS_HELP,
     _LAKE_PATH_RAW_HELP,
+    _NEUTRAL_PARAMS,
     _PIPELINE_HELP,
     _PROJECT_ROOT_HELP,
     _REQUIRE_APPROVAL_HELP,
@@ -29,6 +31,35 @@ from det.cli.common import (
     _resolve_pipeline,
     _settings,
 )
+from det.errors import DetConflictError
+from det.mcp.dry_run import catchup as catchup_dry_run
+from det.runtime.approval import (
+    dbt_write_argv,
+    make_plan,
+    require_approvals_enabled,
+    silver_catchup_apply_cli_hint,
+    silver_catchup_cleanup_write_argv,
+    silver_catchup_plan_write_argv,
+)
+from det.runtime.config import load_pipeline_config
+from det.runtime.dbt_runner import DbtNotInstalledError, analytics_exclude, run_dbt
+from det.runtime.settings import use_settings
+from det.runtime.silver_catchup import (
+    apply_bq_catchup_cleanup,
+    assert_catchup_digest_matches,
+    diff_bronze_silver,
+    diff_bronze_silver_fleet,
+    list_bq_catchup_external_tables,
+    manifest_relpath_for_root,
+    plan_bq_catchup_cleanup,
+    plan_catchup_manifest,
+    read_catchup_manifest,
+    resolve_bq_catchup_cleanup_cutoff,
+    resolve_catchup_candidate_scope,
+    validate_bq_catchup_cleanup_scope,
+    write_catchup_manifest,
+)
+from det.scaffold.view_warn import emit_view_size_warnings
 
 catchup_app = typer.Typer(
     name="silver-catchup",
@@ -58,8 +89,6 @@ def _resolve_effective_lookback(
     extract_lookback: str | None,
     census: bool,
 ) -> str | None:
-    from det.runtime.silver_catchup import resolve_catchup_candidate_scope
-
     try:
         return resolve_catchup_candidate_scope(
             interval_start=interval_start,
@@ -135,12 +164,6 @@ def _run_status(
     as_json: bool,
     fail_if_catchup: bool = False,
 ) -> dict[str, Any]:
-    from det.runtime.settings import use_settings
-    from det.runtime.silver_catchup import (
-        diff_bronze_silver,
-        diff_bronze_silver_fleet,
-    )
-
     if all_pipelines == (pipeline is not None):
         raise typer.BadParameter(
             "exactly one of --pipeline / --all-pipelines is required",
@@ -218,20 +241,6 @@ def _run_plan(
     approval: str | None,
     require_approval: bool,
 ) -> None:
-    from det.errors import DetConflictError
-    from det.runtime.approval import (
-        make_plan,
-        silver_catchup_apply_cli_hint,
-        silver_catchup_plan_write_argv,
-    )
-    from det.runtime.settings import use_settings
-    from det.runtime.silver_catchup import (
-        assert_catchup_digest_matches,
-        manifest_relpath_for_root,
-        plan_catchup_manifest,
-        write_catchup_manifest,
-    )
-
     if dry_run == apply:
         raise typer.BadParameter(
             "exactly one of --dry-run or --apply is required",
@@ -281,8 +290,6 @@ def _run_plan(
 
     claimed = False
     if apply:
-        from det.runtime.approval import require_approvals_enabled
-
         need_bound = bool(approval) or require_approval or require_approvals_enabled()
         if need_bound and not (has_mid and has_digest):
             raise typer.BadParameter(
@@ -446,17 +453,6 @@ def _run_cleanup(
     approval: str | None,
     require_approval: bool,
 ) -> None:
-    from det.runtime.approval import (
-        require_approvals_enabled,
-        silver_catchup_cleanup_write_argv,
-    )
-    from det.runtime.silver_catchup import (
-        apply_bq_catchup_cleanup,
-        list_bq_catchup_external_tables,
-        plan_bq_catchup_cleanup,
-        validate_bq_catchup_cleanup_scope,
-    )
-
     if _cleanup_is_duckdb():
         payload = {
             "cleanup_skipped": "duckdb",
@@ -538,8 +534,6 @@ def _run_cleanup(
             )
         apply_before = before or None
         if not mid and not apply_before and older:
-            from det.runtime.silver_catchup import resolve_bq_catchup_cleanup_cutoff
-
             _cutoff, apply_before, _older = resolve_bq_catchup_cleanup_cutoff(older_than=older)
         if mid:
             gate_argv = silver_catchup_cleanup_write_argv(manifest_id=mid)
@@ -757,9 +751,7 @@ def silver_catchup_heal_cmd(
         None, "--manifest-id", help="scm_… id from apply (with --continue)"
     ),
     all_pipelines: bool = typer.Option(False, "--all-pipelines", hidden=True),
-    interval_start: str | None = typer.Option(
-        None, "--interval-start", "-s", hidden=True
-    ),
+    interval_start: str | None = typer.Option(None, "--interval-start", "-s", hidden=True),
     interval_end: str | None = typer.Option(None, "--interval-end", "-e", hidden=True),
     census: bool = typer.Option(False, "--census", hidden=True),
     limit: int = typer.Option(200, "--limit"),
@@ -801,15 +793,9 @@ def silver_catchup_heal_cmd(
             raise typer.BadParameter(
                 "--continue requires --manifest-id", param_hint="--manifest-id"
             )
-        from det.runtime.approval import dbt_write_argv, make_plan
-        from det.runtime.dbt_runner import analytics_exclude, run_dbt
-        from det.runtime.settings import use_settings
-        from det.runtime.silver_catchup import read_catchup_manifest
 
         with use_settings(settings):
-            loaded = read_catchup_manifest(
-                manifest_id=mid, project_root=root, settings=settings
-            )
+            loaded = read_catchup_manifest(manifest_id=mid, project_root=root, settings=settings)
         if loaded is None:
             typer.echo(
                 f"catch-up manifest not found: {mid} (apply first, then --continue)",
@@ -873,11 +859,8 @@ def silver_catchup_heal_cmd(
     if pipeline is None:
         raise typer.BadParameter("pipeline required for Mode A heal", param_hint="-p")
 
-    from det.mcp.dry_run.catchup import _mode_a_heal_preview
-    from det.runtime.settings import use_settings
-
     with use_settings(settings):
-        payload = _mode_a_heal_preview(
+        payload = catchup_dry_run._mode_a_heal_preview(
             pipeline,
             extract_lookback=extract_lookback,
             limit=limit,
@@ -989,9 +972,6 @@ def silver_catchup_build_cmd(
     command's Typer context into ``dbt_cmd`` (``--manifest-id`` would fail
     unbound-flag against the dbt bound set).
     """
-    from det.runtime.approval import dbt_write_argv
-    from det.runtime.dbt_runner import DbtNotInstalledError, run_dbt
-    from det.runtime.settings import use_settings
 
     mid = str(manifest_id).strip()
     if not mid:
@@ -999,7 +979,6 @@ def silver_catchup_build_cmd(
 
     # Fail-closed: COMMANDLINE flags must map into the dbt digest or be neutral.
     # --manifest-id is catchup_manifest in argv (see _unbound_params_for_dbt_catchup_build).
-    from det.runtime.approval import require_approvals_enabled
 
     need_bound = bool(approval) or require_approval or require_approvals_enabled()
     if need_bound:
@@ -1044,9 +1023,6 @@ def silver_catchup_build_cmd(
             use_settings(settings),
         ):
             if resolved is not None:
-                from det.runtime.config import load_pipeline_config
-                from det.scaffold.view_warn import emit_view_size_warnings
-
                 cfg = load_pipeline_config(resolved.path, overrides=set_ or None)
                 for w in emit_view_size_warnings(
                     cfg,
@@ -1096,7 +1072,6 @@ def _unbound_params_for_dbt_catchup_build(ctx: typer.Context) -> list[str]:
     ``silver-catchup build --manifest-id`` is the same binding as
     ``det dbt --catchup --catchup-manifest``; treat ``manifest_id`` as covered.
     """
-    from det.cli.common import _BOUND_PARAMS, _NEUTRAL_PARAMS
 
     bound = _BOUND_PARAMS.get("dbt", frozenset()) | {"catchup_manifest"}
     unbound: list[str] = []

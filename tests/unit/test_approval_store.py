@@ -10,17 +10,23 @@ import pytest
 
 from det.runtime.approval import (
     ApprovalError,
+    check_approval,
     claim_approval,
+    consume_approval,
     create_approval,
     describe_approval_record,
     load_approval,
+    make_plan,
     prune_write_argv,
     release_approval,
     touch_approval_heartbeat,
 )
+from det.runtime.approval_store import open_approval_store, resolve_approval_options
 from det.runtime.approval_store.enrich import enrich_heartbeat_fields
+from det.runtime.approval_store.lake_store import LakeApprovalStore
 from det.runtime.approval_store.legacy import legacy_approvals_dir
 from det.runtime.settings import DetSettings, use_settings
+from det.runtime.silver_catchup.paths import resolve_ops_lake
 
 NOW = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
 
@@ -28,18 +34,14 @@ NOW = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
 def _settings(tmp_path: Path) -> DetSettings:
     lake = tmp_path / "lake"
     lake.mkdir()
-    return DetSettings.from_env(project_root=tmp_path).with_overrides(
-        lake_override=str(lake)
-    )
+    return DetSettings.from_env(project_root=tmp_path).with_overrides(lake_override=str(lake))
 
 
 def test_create_lands_under_ops_approvals(tmp_path: Path):
     settings = _settings(tmp_path)
     with use_settings(settings):
         argv = prune_write_argv("example_api.events", "2026-08-01")
-        rec = create_approval(
-            tmp_path, command="prune", argv=argv, approved_by="tester", now=NOW
-        )
+        rec = create_approval(tmp_path, command="prune", argv=argv, approved_by="tester", now=NOW)
         path = tmp_path / "lake" / "approvals" / f"{rec['id']}.json"
         assert path.is_file()
         loaded = load_approval(tmp_path, rec["id"])
@@ -50,12 +52,8 @@ def test_claim_sets_heartbeat_and_touch_updates(tmp_path: Path):
     settings = _settings(tmp_path)
     with use_settings(settings):
         argv = prune_write_argv("example_api.events", "2026-08-01")
-        rec = create_approval(
-            tmp_path, command="prune", argv=argv, approved_by="tester", now=NOW
-        )
-        claimed = claim_approval(
-            tmp_path, "prune", argv, rec["id"], require=True, now=NOW
-        )
+        rec = create_approval(tmp_path, command="prune", argv=argv, approved_by="tester", now=NOW)
+        claimed = claim_approval(tmp_path, "prune", argv, rec["id"], require=True, now=NOW)
         assert claimed is not None
         assert claimed["status"] == "claimed"
         assert claimed.get("heartbeat_at")
@@ -93,7 +91,6 @@ def test_legacy_dot_det_read_fallback(tmp_path: Path):
     settings = _settings(tmp_path)
     legacy_dir = legacy_approvals_dir(tmp_path)
     legacy_dir.mkdir(parents=True)
-    from det.runtime.approval import check_approval, make_plan
 
     argv = prune_write_argv("example_api.events", "2026-08-01")
     plan = make_plan("prune", argv)
@@ -109,9 +106,7 @@ def test_legacy_dot_det_read_fallback(tmp_path: Path):
         "status": "unused",
         "consumed_at": None,
     }
-    (legacy_dir / f"{apr}.json").write_text(
-        json.dumps(record, indent=2) + "\n", encoding="utf-8"
-    )
+    (legacy_dir / f"{apr}.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     with use_settings(settings):
         loaded = load_approval(tmp_path, apr)
         assert loaded["approved_by"] == "legacy"
@@ -131,7 +126,6 @@ def test_legacy_dot_det_read_fallback(tmp_path: Path):
 
 def test_store_uses_settings_lake_override(tmp_path: Path):
     """Claim/consume must honor CLI DetSettings lake roots, not bare env."""
-    from det.runtime.approval import consume_approval
 
     lake_a = tmp_path / "lake_a"
     lake_b = tmp_path / "lake_b"
@@ -175,9 +169,7 @@ def test_store_uses_settings_lake_override(tmp_path: Path):
         settings=settings_a,
     )
     assert claimed is not None and claimed["status"] == "claimed"
-    consumed = consume_approval(
-        tmp_path, rec["id"], now=NOW, settings=settings_a
-    )
+    consumed = consume_approval(tmp_path, rec["id"], now=NOW, settings=settings_a)
     assert consumed["status"] == "consumed"
 
 
@@ -185,9 +177,7 @@ def test_describe_includes_heartbeat_fields(tmp_path: Path):
     settings = _settings(tmp_path)
     with use_settings(settings):
         argv = prune_write_argv("example_api.events", "2026-08-01")
-        rec = create_approval(
-            tmp_path, command="prune", argv=argv, approved_by="tester", now=NOW
-        )
+        rec = create_approval(tmp_path, command="prune", argv=argv, approved_by="tester", now=NOW)
         claim_approval(tmp_path, "prune", argv, rec["id"], require=True, now=NOW)
         desc = describe_approval_record(tmp_path, rec["id"], now=NOW)
         assert desc["status"] == "claimed"
@@ -199,9 +189,7 @@ def test_release_after_claim(tmp_path: Path):
     settings = _settings(tmp_path)
     with use_settings(settings):
         argv = prune_write_argv("example_api.events", "2026-08-01")
-        rec = create_approval(
-            tmp_path, command="prune", argv=argv, approved_by="tester", now=NOW
-        )
+        rec = create_approval(tmp_path, command="prune", argv=argv, approved_by="tester", now=NOW)
         claim_approval(tmp_path, "prune", argv, rec["id"], require=True, now=NOW)
         out = release_approval(tmp_path, rec["id"], released_by="ops", now=NOW)
         assert out["status"] == "unused"
@@ -210,15 +198,11 @@ def test_release_after_claim(tmp_path: Path):
 
 def test_orphan_claim_sidecar_can_be_released(tmp_path: Path):
     """Crash between .claim create and JSON update leaves unused + sidecar."""
-    from det.runtime.approval_store.lake_store import LakeApprovalStore
-    from det.runtime.silver_catchup.paths import resolve_ops_lake
 
     settings = _settings(tmp_path)
     with use_settings(settings):
         argv = prune_write_argv("example_api.events", "2026-08-01")
-        rec = create_approval(
-            tmp_path, command="prune", argv=argv, approved_by="tester", now=NOW
-        )
+        rec = create_approval(tmp_path, command="prune", argv=argv, approved_by="tester", now=NOW)
         ops = resolve_ops_lake(project_root=tmp_path, settings=settings)
         store = LakeApprovalStore(ops)
         claim = store._claim_ref(rec["id"])
@@ -231,24 +215,17 @@ def test_orphan_claim_sidecar_can_be_released(tmp_path: Path):
         assert released["status"] == "unused"
         assert not claim.exists()
         # Orphan clear does not stamp released_* (sidecar-only recovery).
-        claimed = claim_approval(
-            tmp_path, "prune", argv, rec["id"], require=True, now=NOW
-        )
+        claimed = claim_approval(tmp_path, "prune", argv, rec["id"], require=True, now=NOW)
         assert claimed is not None and claimed["status"] == "claimed"
 
 
 def test_heartbeat_does_not_resurrect_consumed(tmp_path: Path):
     """CAS conflict must not soft-overwrite consumed status back to claimed."""
-    from det.runtime.approval import consume_approval
-    from det.runtime.approval_store.lake_store import LakeApprovalStore
-    from det.runtime.silver_catchup.paths import resolve_ops_lake
 
     settings = _settings(tmp_path)
     with use_settings(settings):
         argv = prune_write_argv("example_api.events", "2026-08-01")
-        rec = create_approval(
-            tmp_path, command="prune", argv=argv, approved_by="tester", now=NOW
-        )
+        rec = create_approval(tmp_path, command="prune", argv=argv, approved_by="tester", now=NOW)
         claim_approval(tmp_path, "prune", argv, rec["id"], require=True, now=NOW)
         ops = resolve_ops_lake(project_root=tmp_path, settings=settings)
         store = LakeApprovalStore(ops)
@@ -268,8 +245,6 @@ def test_heartbeat_does_not_resurrect_consumed(tmp_path: Path):
 
 def test_settings_overrides_beat_env_for_approval_options(tmp_path: Path):
     """DetSettings.with_overrides wins over conflicting DET_APPROVAL_* env."""
-    from det.runtime.approval_store import open_approval_store, resolve_approval_options
-    from det.runtime.approval_store.lake_store import LakeApprovalStore
 
     settings = DetSettings.from_env(project_root=tmp_path).with_overrides(
         approval_backend="lake",

@@ -19,10 +19,14 @@ from det.ingestion.iceberg_catalog_factory import (
 )
 from det.ingestion.iceberg_writer import (
     _chunk_to_arrow,
+    _jsonable_cell,
+    _live_partition_summary,
     _live_type_name,
     _pyiceberg_type,
+    _read_planned_parquet,
     _require_iceberg,
     iceberg_schema_from_columns,
+    load_iceberg_table,
 )
 from det.logging import get_logger
 from det.runtime.lake import LakeRef
@@ -82,8 +86,8 @@ def ops_run_receipts_location(lake: LakeRef) -> LakeRef:
 
 
 def _attempt_date_partition_spec(schema: Any) -> Any:
-    from pyiceberg.partitioning import PartitionField, PartitionSpec
-    from pyiceberg.transforms import IdentityTransform
+    from pyiceberg.partitioning import PartitionField, PartitionSpec  # noqa: PLC0415
+    from pyiceberg.transforms import IdentityTransform  # noqa: PLC0415
 
     src = schema.find_field(_ATTEMPT_DATE)
     return PartitionSpec(
@@ -118,7 +122,7 @@ def _ops_partition_matches_attempt_date(table: Any) -> bool:
 
 def ensure_ops_run_receipts_table(*, catalog: Any, location: str) -> Any:
     """Create or evolve ``ops.run_receipts`` partitioned by ``attempt_date``."""
-    from pyiceberg.exceptions import NoSuchTableError
+    from pyiceberg.exceptions import NoSuchTableError  # noqa: PLC0415
 
     identifier = (OPS_NAMESPACE, OPS_TABLE)
     schema = iceberg_schema_from_columns(OPS_COLUMN_TYPES)
@@ -158,7 +162,6 @@ def ensure_ops_run_receipts_table(*, catalog: Any, location: str) -> Any:
     if not _ops_partition_matches_attempt_date(table):
         # Spec apply is create-time only; keep the table but warn so materialize
         # uses row-filter deletes instead of partition-index short-circuits.
-        from det.ingestion.iceberg_writer import _live_partition_summary
 
         logger.warning(
             "ops.run_receipts partition does not match identity(attempt_date); "
@@ -171,7 +174,7 @@ def ensure_ops_run_receipts_table(*, catalog: Any, location: str) -> Any:
 
 
 def _day_filter(day: date) -> Any:
-    from pyiceberg.expressions import EqualTo
+    from pyiceberg.expressions import EqualTo  # noqa: PLC0415
 
     return EqualTo(_ATTEMPT_DATE, day)  # type: ignore[call-arg]
 
@@ -296,11 +299,6 @@ def scan_ops_run_receipts(
     limit: int = 100,
 ) -> list[dict[str, Any]]:
     """Test helper: read live ops.run_receipts rows."""
-    from det.ingestion.iceberg_writer import (
-        _jsonable_cell,
-        _read_planned_parquet,
-        load_iceberg_table,
-    )
 
     ice = load_iceberg_table(
         lake=lake,
@@ -313,7 +311,5 @@ def scan_ops_run_receipts(
     # Read the full live set, then sort + slice so limit is deterministic.
     rows = _read_planned_parquet(ice).to_pylist()
     out = [{k: _jsonable_cell(v) for k, v in row.items()} for row in rows]
-    out.sort(
-        key=lambda r: (str(r.get("attempt_date") or ""), str(r.get("attempt_id") or ""))
-    )
+    out.sort(key=lambda r: (str(r.get("attempt_date") or ""), str(r.get("attempt_id") or "")))
     return out[:limit]

@@ -18,6 +18,7 @@ from det.runtime.config import (
     PipelineConfig,
     SourceConfig,
 )
+from det.runtime.runner import PipelineRunner
 from det.runtime.secrets import SecretNotSetError
 
 _EVENT_SCHEMA = {
@@ -25,9 +26,7 @@ _EVENT_SCHEMA = {
     "properties": {"event_id": {"type": ["integer", "null"]}},
 }
 
-_COL_DEF = re.compile(
-    r'"([^"]+)"\s+((?:DOUBLE PRECISION)|(?:[A-Z][A-Z0-9]*))'
-)
+_COL_DEF = re.compile(r'"([^"]+)"\s+((?:DOUBLE PRECISION)|(?:[A-Z][A-Z0-9]*))')
 
 
 def _install_fake_pg(monkeypatch, calls: list):
@@ -49,14 +48,9 @@ def _install_fake_pg(monkeypatch, calls: list):
                 self._result = list(live)
             elif lower.startswith("create table"):
                 start, end = text.find("("), text.rfind(")")
-                live[:] = [
-                    (m.group(1), m.group(2))
-                    for m in _COL_DEF.finditer(text[start:end])
-                ]
+                live[:] = [(m.group(1), m.group(2)) for m in _COL_DEF.finditer(text[start:end])]
             elif "add column" in lower:
-                match = re.search(
-                    r'ADD COLUMN "([^"]+)" (.+)$', text, re.IGNORECASE
-                )
+                match = re.search(r'ADD COLUMN "([^"]+)" (.+)$', text, re.IGNORECASE)
                 if match:
                     live.append((match.group(1), match.group(2).strip()))
 
@@ -87,9 +81,7 @@ def _install_fake_pg(monkeypatch, calls: list):
         def connect(dsn):
             return FakeConn()
 
-    monkeypatch.setattr(
-        "det.ingestion.postgres_writer._import_psycopg", lambda: FakePsycopg
-    )
+    monkeypatch.setattr("det.ingestion.postgres_writer._import_psycopg", lambda: FakePsycopg)
     return live
 
 
@@ -114,9 +106,7 @@ def test_connection_env_is_postgres_only():
 
 def test_connection_env_must_be_a_name_not_a_dsn():
     with pytest.raises(ValidationError, match="env var name"):
-        DestinationConfig(
-            type="postgres", connection_env="postgresql://det:pw@db/det"
-        )
+        DestinationConfig(type="postgres", connection_env="postgresql://det:pw@db/det")
 
 
 def test_backend_resolves_dsn_from_connection_env(monkeypatch, tmp_path: Path):
@@ -236,20 +226,15 @@ def test_det_backend_writes_postgres_via_helper(tmp_path: Path):
     assert out == Path("postgres") / "bronze_noaa" / "storm_events_v1"
 
 
-def test_postgres_run_leaves_no_dsn_in_the_lake(
-    monkeypatch, project_root: Path, tmp_path: Path
-):
+def test_postgres_run_leaves_no_dsn_in_the_lake(monkeypatch, project_root: Path, tmp_path: Path):
     """Raw bytes and DET sidecars must never carry the resolved credential."""
-    from det.runtime.runner import PipelineRunner
 
     dsn = "postgresql://det:hunter2pw@db.internal/det"
     monkeypatch.setenv("DET_POSTGRES_DSN", dsn)
     schema_rel = "schemas/example_api/events/events.schema.yaml"
     schema_dst = tmp_path / schema_rel
     schema_dst.parent.mkdir(parents=True)
-    schema_dst.write_text(
-        (project_root / schema_rel).read_text(encoding="utf-8"), encoding="utf-8"
-    )
+    schema_dst.write_text((project_root / schema_rel).read_text(encoding="utf-8"), encoding="utf-8")
     lake = tmp_path / "lake"
     pipe = tmp_path / "configs/pipelines/example_api/events.yaml"
     pipe.parent.mkdir(parents=True)
@@ -284,9 +269,7 @@ def test_postgres_run_leaves_no_dsn_in_the_lake(
     )
 
     with patch("det.ingestion.det_backend.write_postgres_table") as write:
-        PipelineRunner(tmp_path).run(
-            pipe, interval_start="2026-08-06", interval_end="2026-08-07"
-        )
+        PipelineRunner(tmp_path).run(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
     assert write.call_args.kwargs["dsn"] == dsn
 
     landed = [p for p in lake.rglob("*") if p.is_file()]
@@ -342,9 +325,7 @@ def test_write_postgres_table_deletes_then_inserts(monkeypatch):
     execute_sql = [sql for op, sql, _ in calls if op == "execute" and sql]
     assert any("pg_advisory_lock" in sql.lower() for sql in execute_sql)
     assert any("delete from" in sql.lower() for sql in execute_sql)
-    create = next(
-        sql for sql in execute_sql if sql.lower().startswith("create table")
-    )
+    create = next(sql for sql in execute_sql if sql.lower().startswith("create table"))
     assert "BIGINT" in create
     assert "JSONB" not in create
     delete = next(c for c in calls if c[0] == "execute" and c[1] and "delete from" in c[1].lower())
@@ -373,11 +354,7 @@ def test_write_postgres_table_chunks_inserts(monkeypatch):
         json_schema=_EVENT_SCHEMA,
         chunk_rows=1,
     )
-    deletes = [
-        c
-        for c in calls
-        if c[0] == "execute" and c[1] and "delete from" in c[1].lower()
-    ]
+    deletes = [c for c in calls if c[0] == "execute" and c[1] and "delete from" in c[1].lower()]
     assert len(deletes) == 1
     inserts = [c for c in calls if c[0] == "executemany"]
     assert len(inserts) == 3
@@ -427,17 +404,11 @@ def test_write_postgres_table_schema_types_and_alter(monkeypatch):
         json_schema=wider,
     )
     alters = [
-        sql
-        for op, sql, _ in calls
-        if op == "execute" and sql and "alter table" in sql.lower()
+        sql for op, sql, _ in calls if op == "execute" and sql and "alter table" in sql.lower()
     ]
     assert len(alters) == 1
     assert "ADD COLUMN" in alters[0] and '"state"' in alters[0]
-    deletes = [
-        c
-        for c in calls
-        if c[0] == "execute" and c[1] and "delete from" in c[1].lower()
-    ]
+    deletes = [c for c in calls if c[0] == "execute" and c[1] and "delete from" in c[1].lower()]
     assert len(deletes) == 1
     assert any(op == "executemany" for op, _, _ in calls)
 

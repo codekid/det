@@ -9,6 +9,8 @@ import yaml
 
 from det.errors import DetConflictError, DetNotFoundError
 from det.ingestion.sql_replace import require_bronze_run_identity
+from det.runtime.bronze_runs import list_bronze_runs
+from det.runtime.config import load_pipeline_config
 from det.runtime.manifest import (
     committed_extract_run_dirs,
     is_committed_raw_dir,
@@ -112,9 +114,7 @@ def test_load_requires_committed_raw(project_root: Path, tmp_path: Path):
         )
 
 
-def test_extract_refuses_overwrite_of_committed_run(
-    project_root: Path, tmp_path: Path
-):
+def test_extract_refuses_overwrite_of_committed_run(project_root: Path, tmp_path: Path):
     """Invariant 2: re-extract of a committed prefix conflicts."""
     pipe = _example_pipe(tmp_path, project_root)
     runner = PipelineRunner(tmp_path)
@@ -156,19 +156,12 @@ def test_replace_by_run_requires_stable_run_identity():
         )
 
 
-def test_filesystem_bronze_commit_gates_list_bronze_runs(
-    project_root: Path, tmp_path: Path
-):
+def test_filesystem_bronze_commit_gates_list_bronze_runs(project_root: Path, tmp_path: Path):
     """Filesystem bronze: data.jsonl alone is invisible; manifest publishes it."""
-    from det.runtime.bronze_runs import list_bronze_runs
-    from det.runtime.config import load_pipeline_config
-    from det.runtime.manifest import is_committed_raw_dir
 
     pipe = _example_pipe(tmp_path, project_root)
     runner = PipelineRunner(tmp_path)
-    extracted = runner.extract(
-        pipe, interval_start="2026-08-06", interval_end="2026-08-07"
-    )
+    extracted = runner.extract(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
     loaded = runner.load(
         pipe,
         interval_start=extracted.interval_start,

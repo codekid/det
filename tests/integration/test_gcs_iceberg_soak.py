@@ -15,6 +15,7 @@ import yaml
 
 from det.ingestion.iceberg_writer import load_iceberg_table, scan_iceberg_rows
 from det.runtime.lake import ENV_LAKE_MODE, open_lake
+from det.runtime.object_store import fsspec_gcs_kwargs
 from det.runtime.runner import PipelineRunner
 
 _HOST = (os.environ.get("STORAGE_EMULATOR_HOST") or "").strip()
@@ -33,9 +34,7 @@ SOAK_ROWS = 25
 
 def _ensure_bucket() -> None:
     pytest.importorskip("gcsfs")
-    import fsspec
-
-    from det.runtime.object_store import fsspec_gcs_kwargs
+    import fsspec  # noqa: PLC0415
 
     fs = fsspec.filesystem("gcs", **fsspec_gcs_kwargs())
     if not fs.exists(_BUCKET):

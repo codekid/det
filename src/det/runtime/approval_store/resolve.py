@@ -91,8 +91,13 @@ def open_approval_store(
     lake_path: str | None = None,
 ) -> ApprovalStore:
     """Build the active approval store (lake or postgres) with legacy read fallback."""
-    from det.runtime.approval_store.composite import CompositeApprovalStore
-    from det.runtime.settings import DetSettings, get_active_settings
+    # Imported here so approval_store can finish loading before approval/settings.
+    from det.runtime.approval_store.composite import CompositeApprovalStore  # noqa: PLC0415
+    from det.runtime.approval_store.lake_store import LakeApprovalStore  # noqa: PLC0415
+    from det.runtime.approval_store.legacy import LegacyApprovalReader  # noqa: PLC0415
+    from det.runtime.approval_store.postgres_store import PostgresApprovalStore  # noqa: PLC0415
+    from det.runtime.settings import DetSettings, get_active_settings  # noqa: PLC0415
+    from det.runtime.silver_catchup.paths import resolve_ops_lake  # noqa: PLC0415
 
     root = project_root.resolve()
     active = settings if settings is not None else get_active_settings()
@@ -102,8 +107,6 @@ def open_approval_store(
     secret = resolve_secret or active.resolve_secret
 
     if opts.backend == "postgres":
-        from det.runtime.approval_store.postgres_store import PostgresApprovalStore
-
         primary: ApprovalStore = PostgresApprovalStore(
             resolve_secret=secret,
             dsn_env=opts.pg_dsn_env,
@@ -111,13 +114,8 @@ def open_approval_store(
             table=opts.pg_table,
         )
     else:
-        from det.runtime.approval_store.lake_store import LakeApprovalStore
-        from det.runtime.silver_catchup.paths import resolve_ops_lake
-
         ops = resolve_ops_lake(project_root=root, settings=active, lake_path=lake_path)
         primary = LakeApprovalStore(ops)
-
-    from det.runtime.approval_store.legacy import LegacyApprovalReader
 
     return CompositeApprovalStore(
         primary=primary,

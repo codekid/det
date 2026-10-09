@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -48,7 +49,7 @@ def store(monkeypatch: pytest.MonkeyPatch):
     s.ensure()  # type: ignore[attr-defined]
     yield s
     # cleanup table rows for this suite
-    import psycopg
+    import psycopg  # noqa: PLC0415
 
     with psycopg.connect(_DSN) as conn:
         with conn.cursor() as cur:
@@ -89,14 +90,13 @@ def test_postgres_expire_steal_and_token_mismatch(store) -> None:
         owner="a",
     )
     # Force expiry
-    import psycopg
+    import psycopg  # noqa: PLC0415
 
     past = datetime.now(UTC) - timedelta(seconds=10)
     with psycopg.connect(_DSN) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                'UPDATE "det_lease_test"."leases" SET expires_at = %s '
-                "WHERE token = %s",
+                'UPDATE "det_lease_test"."leases" SET expires_at = %s WHERE token = %s',
                 (past, a.token),
             )
         conn.commit()
@@ -111,9 +111,7 @@ def test_postgres_expire_steal_and_token_mismatch(store) -> None:
     assert b.token != a.token
     store.refresh(a)  # should no-op (token mismatch)
     store.release(a)  # should no-op
-    held = store.inspect(
-        pipeline="example_api.events", interval_start=start, interval_end=end
-    )
+    held = store.inspect(pipeline="example_api.events", interval_start=start, interval_end=end)
     assert held is not None
     assert held["token"] == b.token
     store.release(b)
@@ -134,7 +132,7 @@ def overlap_store(monkeypatch: pytest.MonkeyPatch):
     s = open_lease_store(lake, options, resolve_secret=lambda n: os.environ.get(n))
     s.ensure()  # type: ignore[attr-defined]
     yield s
-    import psycopg
+    import psycopg  # noqa: PLC0415
 
     with psycopg.connect(_DSN) as conn:
         with conn.cursor() as cur:
@@ -180,7 +178,7 @@ def test_postgres_overlap_blocks_intersecting(overlap_store) -> None:
 @pytest.fixture
 def overlap_store_mixed_case(monkeypatch: pytest.MonkeyPatch):
     pytest.importorskip("psycopg")
-    import psycopg
+    import psycopg  # noqa: PLC0415
 
     monkeypatch.setenv("DET_LOCK_PG_DSN", _DSN)
     schema, table = "DetLeaseMix", "LeasesMix"
@@ -201,7 +199,7 @@ def overlap_store_mixed_case(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_postgres_overlap_ensure_mixed_case_idempotent(overlap_store_mixed_case) -> None:
-    import psycopg
+    import psycopg  # noqa: PLC0415
 
     store, schema, table = overlap_store_mixed_case
     store.ensure()  # type: ignore[attr-defined]
@@ -226,7 +224,7 @@ def test_postgres_overlap_ensure_mixed_case_idempotent(overlap_store_mixed_case)
 @pytest.fixture
 def overlap_conc_schema(monkeypatch: pytest.MonkeyPatch):
     pytest.importorskip("psycopg")
-    import psycopg
+    import psycopg  # noqa: PLC0415
 
     monkeypatch.setenv("DET_LOCK_PG_DSN", _DSN)
     schema, table = "det_lease_conc", "leases_overlap_conc"
@@ -238,8 +236,6 @@ def overlap_conc_schema(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_postgres_overlap_ensure_concurrent(overlap_conc_schema) -> None:
-    import threading
-
     schema, table = overlap_conc_schema
     errors: list[BaseException] = []
 
@@ -253,9 +249,7 @@ def test_postgres_overlap_ensure_concurrent(overlap_conc_schema) -> None:
                 pg_schema=schema,
                 pg_table=table,
             )
-            store = open_lease_store(
-                lake, options, resolve_secret=lambda n: os.environ.get(n)
-            )
+            store = open_lease_store(lake, options, resolve_secret=lambda n: os.environ.get(n))
             store.ensure()  # type: ignore[attr-defined]
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)

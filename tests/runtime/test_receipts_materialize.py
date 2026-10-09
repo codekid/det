@@ -5,10 +5,28 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
+import structlog
+from typer.testing import CliRunner
 
+from det.cli import app
+from det.ingestion.iceberg_catalog_factory import (
+    ensure_iceberg_namespace,
+    lake_ref_uri,
+    resolve_iceberg_catalog,
+)
+from det.ingestion.iceberg_writer import iceberg_schema_from_columns
+from det.logging import configure_logging
 from det.runtime.lake import open_lake
 from det.runtime.receipts import normalize_receipt
-from det.runtime.receipts_materialize import materialize_receipts, scan_ops_run_receipts
+from det.runtime.receipts_materialize import (
+    OPS_COLUMN_TYPES,
+    OPS_NAMESPACE,
+    OPS_TABLE,
+    _ops_partition_matches_attempt_date,
+    materialize_receipts,
+    ops_run_receipts_location,
+    scan_ops_run_receipts,
+)
 
 pytest.importorskip("pyiceberg")
 pytest.importorskip("pyarrow")
@@ -88,17 +106,13 @@ def test_materialize_replace_by_day_idempotent(tmp_path: Path):
     _write_json_receipt(lake, attempt_id="aaaa1111", started_at=day)
     _write_json_receipt(lake, attempt_id="bbbb2222", started_at=day, command="load")
 
-    stats1 = materialize_receipts(
-        lake, since="2026-08-16", until="2026-08-17", now=day
-    )
+    stats1 = materialize_receipts(lake, since="2026-08-16", until="2026-08-17", now=day)
     assert stats1.rows_written == 2
     assert stats1.days_touched == 1
     rows1 = scan_ops_run_receipts(lake)
     assert {r["attempt_id"] for r in rows1} == {"aaaa1111", "bbbb2222"}
 
-    stats2 = materialize_receipts(
-        lake, since="2026-08-16", until="2026-08-17", now=day
-    )
+    stats2 = materialize_receipts(lake, since="2026-08-16", until="2026-08-17", now=day)
     assert stats2.rows_written == 2
     rows2 = scan_ops_run_receipts(lake)
     ids = [r["attempt_id"] for r in rows2]
@@ -108,21 +122,7 @@ def test_materialize_replace_by_day_idempotent(tmp_path: Path):
 
 def test_materialize_unpartitioned_table_deletes_before_append(tmp_path: Path):
     """Wrong/missing partition must not skip delete and duplicate rows."""
-    from pyiceberg.partitioning import UNPARTITIONED_PARTITION_SPEC
-
-    from det.ingestion.iceberg_catalog_factory import (
-        ensure_iceberg_namespace,
-        lake_ref_uri,
-        resolve_iceberg_catalog,
-    )
-    from det.ingestion.iceberg_writer import iceberg_schema_from_columns
-    from det.runtime.receipts_materialize import (
-        OPS_COLUMN_TYPES,
-        OPS_NAMESPACE,
-        OPS_TABLE,
-        _ops_partition_matches_attempt_date,
-        ops_run_receipts_location,
-    )
+    from pyiceberg.partitioning import UNPARTITIONED_PARTITION_SPEC  # noqa: PLC0415
 
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     loc = ops_run_receipts_location(lake)
@@ -162,12 +162,6 @@ def test_materialize_empty_day_clears_partition(tmp_path: Path):
 
 
 def test_runs_materialize_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    import structlog
-    from typer.testing import CliRunner
-
-    from det.cli import app
-    from det.logging import configure_logging
-
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     day = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
     _write_json_receipt(lake, attempt_id="cli00001", started_at=day)

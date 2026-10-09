@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -7,7 +8,23 @@ from pathlib import Path
 import typer
 
 from det.cli.app import logger
+from det.runtime.approval import (
+    ApprovalError,
+    claim_approval,
+    consume_approval,
+    require_approvals_enabled,
+    touch_approval_heartbeat,
+)
 from det.runtime.approval_bound import APPROVAL_BOUND_PARAMS as _BOUND_PARAMS
+from det.runtime.approval_store import DEFAULT_HEARTBEAT_INTERVAL_SEC
+from det.runtime.dbt_runner import analytics_exclude
+from det.runtime.lake import (
+    is_split_lake_configured,
+    split_lake_specs_from_settings,
+)
+from det.runtime.meta import resolve_interval, to_interval_datetime
+from det.runtime.pipelines import PipelineRefError, resolve_pipeline_ref, resolve_project_root
+from det.runtime.settings import DetSettings
 
 _PIPELINE_HELP = (
     "Pipeline ref: canonical id (noaa.storm_events), slash form, or YAML path under the project"
@@ -22,8 +39,6 @@ _REQUIRE_APPROVAL_HELP = "Fail unless --approval is set (same as DET_REQUIRE_APP
 
 
 def _resolve_interval(start: str, end: str | None) -> tuple[str, str]:
-    from det.runtime.meta import resolve_interval, to_interval_datetime
-
     for value, hint in ((start, "--interval-start"), (end, "--interval-end")):
         if value is None:
             continue
@@ -41,8 +56,6 @@ def _resolve_interval(start: str, end: str | None) -> tuple[str, str]:
 
 
 def _project_root(explicit: Path | None) -> Path:
-    from det.runtime.pipelines import resolve_project_root
-
     return resolve_project_root(explicit)
 
 
@@ -56,7 +69,6 @@ def _settings(
     lock_ttl_sec: int | None = None,
 ):
     """Build DetSettings from env, then apply CLI flag overrides."""
-    from det.runtime.settings import DetSettings
 
     settings = DetSettings.from_env(project_root=project_root)
     overrides: dict = {}
@@ -86,10 +98,6 @@ def _approval_lake_kwargs(settings) -> dict:
     with split roots: runtime resolution prefers split and would ignore the
     parent, so digests would not match the lake the operator meant to bind.
     """
-    from det.runtime.lake import (
-        is_split_lake_configured,
-        split_lake_specs_from_settings,
-    )
 
     out: dict = {}
     override = (settings.lake_override or "").strip()
@@ -125,7 +133,6 @@ _LAKE_PATH_OPS_HELP = "Ops layer root URI for runs/locks (layout 2; requires raw
 
 def _resolve_pipeline(ref: str, root: Path):
     """Resolve pipeline ref; log and echo the resolved path for auditability."""
-    from det.runtime.pipelines import PipelineRefError, resolve_pipeline_ref
 
     try:
         resolved = resolve_pipeline_ref(ref, project_root=root)
@@ -147,8 +154,6 @@ def _resolve_pipeline(ref: str, root: Path):
 
 
 def _analytics_exclude(select: list[str] | None) -> list[str] | None:
-    from det.runtime.dbt_runner import analytics_exclude
-
     return analytics_exclude(select)
 
 
@@ -231,7 +236,6 @@ def _claimed_approval_work(
     settings=None,
 ) -> Iterator[None]:
     """Heartbeat while claimed; on failure print recovery hints then re-raise."""
-    import threading
 
     stop = threading.Event()
     thread: threading.Thread | None = None
@@ -240,9 +244,6 @@ def _claimed_approval_work(
         active_settings = settings
 
         def _loop() -> None:
-            from det.runtime.approval import touch_approval_heartbeat
-            from det.runtime.approval_store import DEFAULT_HEARTBEAT_INTERVAL_SEC
-
             while not stop.wait(DEFAULT_HEARTBEAT_INTERVAL_SEC):
                 try:
                     touch_approval_heartbeat(root, approval, settings=active_settings)
@@ -290,7 +291,6 @@ def _gate_approval(
 
     Returns ``True`` when an approval id was successfully claimed, else ``False``.
     """
-    from det.runtime.approval import ApprovalError, claim_approval, require_approvals_enabled
 
     require = require_approval or require_approvals_enabled()
     if approval:
@@ -326,7 +326,6 @@ def _consume_approval(
 ) -> None:
     if not approval:
         return
-    from det.runtime.approval import ApprovalError, consume_approval
 
     try:
         consume_approval(root, approval, settings=settings)

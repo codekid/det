@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from det.ingestion.det_backend import DetBackend
+from det.ingestion.thin_backend import ThinBackend
+from det.runtime.mappers import identity_mapper
+from det.runtime.registry import register_ingestion, register_mapper
+
 _LOADED = False
 
 
@@ -12,11 +17,6 @@ def load_plugins() -> None:
     global _LOADED
     if _LOADED:
         return
-
-    from det.ingestion.det_backend import DetBackend
-    from det.ingestion.thin_backend import ThinBackend
-    from det.runtime.mappers import identity_mapper
-    from det.runtime.registry import register_ingestion, register_mapper
 
     register_ingestion("det", DetBackend)
     register_ingestion("thin", ThinBackend)

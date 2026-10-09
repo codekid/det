@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -31,7 +33,7 @@ SecretLookup = Callable[[str], str | None]
 
 def _import_psycopg():
     try:
-        import psycopg
+        import psycopg  # noqa: PLC0415
     except ImportError as exc:
         raise ImportError(
             f"postgres lease backend requires the optional extra: {pip_extra_hint('postgres')}"
@@ -69,8 +71,6 @@ class PostgresLeaseStore:
             )
         text = str(raw).strip()
         if text.startswith("{"):
-            import json
-
             try:
                 payload = json.loads(text)
             except json.JSONDecodeError:
@@ -96,16 +96,12 @@ class PostgresLeaseStore:
                 if self.mode == "overlap":
                     # DB-wide lock: extension install is not schema-scoped.
                     ek1, ek2 = _btree_gist_extension_lock_keys()
-                    self._exec(
-                        cur, "SELECT pg_advisory_xact_lock(%s, %s)", (ek1, ek2)
-                    )
+                    self._exec(cur, "SELECT pg_advisory_xact_lock(%s, %s)", (ek1, ek2))
                     self._exec(cur, "CREATE EXTENSION IF NOT EXISTS btree_gist")
                     # Schema/table lock: serialize table bootstrap + constraint.
                     k1, k2 = _ensure_ddl_lock_keys(self.schema, self.table)
                     self._exec(cur, "SELECT pg_advisory_xact_lock(%s, %s)", (k1, k2))
-                self._exec(
-                    cur, f"CREATE SCHEMA IF NOT EXISTS {quote_ident(self.schema)}"
-                )
+                self._exec(cur, f"CREATE SCHEMA IF NOT EXISTS {quote_ident(self.schema)}")
                 self._exec(
                     cur,
                     f"""
@@ -221,7 +217,8 @@ class PostgresLeaseStore:
                         ) from exc
                     if is_expired(held):
                         # Steal via token CAS
-                        self._exec(cur, 
+                        self._exec(
+                            cur,
                             f"""
                             UPDATE {self._qual}
                                SET owner = %s,
@@ -290,7 +287,8 @@ class PostgresLeaseStore:
 
     def _clear_expired(self, cur: Any, pipeline: str, start: datetime, end: datetime) -> None:
         if self.mode == "overlap":
-            self._exec(cur, 
+            self._exec(
+                cur,
                 f"""
                 DELETE FROM {self._qual}
                  WHERE pipeline = %s
@@ -301,7 +299,8 @@ class PostgresLeaseStore:
                 (pipeline, start, end),
             )
         else:
-            self._exec(cur, 
+            self._exec(
+                cur,
                 f"""
                 DELETE FROM {self._qual}
                  WHERE pipeline = %s
@@ -316,7 +315,8 @@ class PostgresLeaseStore:
         self, cur: Any, pipeline: str, start: datetime, end: datetime
     ) -> dict[str, Any] | None:
         if self.mode == "overlap":
-            self._exec(cur, 
+            self._exec(
+                cur,
                 f"""
                 SELECT pipeline, interval_start, interval_end, owner, command,
                        token, expires_at, ttl_sec
@@ -330,7 +330,8 @@ class PostgresLeaseStore:
                 (pipeline, start, end),
             )
         else:
-            self._exec(cur, 
+            self._exec(
+                cur,
                 f"""
                 SELECT pipeline, interval_start, interval_end, owner, command,
                        token, expires_at, ttl_sec
@@ -353,7 +354,8 @@ class PostgresLeaseStore:
         expires = _as_dt(expires_at_iso(lease.ttl_sec))
         with self._connect() as conn:
             with conn.cursor() as cur:
-                self._exec(cur, 
+                self._exec(
+                    cur,
                     f"""
                     UPDATE {self._qual}
                        SET expires_at = %s, ttl_sec = %s
@@ -425,7 +427,8 @@ class PostgresLeaseStore:
             return
         with self._connect() as conn:
             with conn.cursor() as cur:
-                self._exec(cur, 
+                self._exec(
+                    cur,
                     f"""
                     DELETE FROM {self._qual}
                      WHERE pipeline = %s
@@ -527,8 +530,6 @@ def _as_dt(value: str | datetime) -> datetime:
 
 
 def _advisory_i32(text: str) -> int:
-    import hashlib
-
     digest = hashlib.sha256(text.encode("utf-8")).digest()
     return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
 

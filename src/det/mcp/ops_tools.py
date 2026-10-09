@@ -5,8 +5,23 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from det.destinations.models import lake_root
+from det.logging import sanitize_lake_uri
 from det.mcp import _helpers as h
+from det.mcp.catalog import describe_dbt_model, list_dbt_models
 from det.mcp.context import resolve_under_root
+from det.mcp.cube_client import cube_load as run_load
+from det.mcp.cube_client import cube_meta as fetch_meta
+from det.mcp.inspect import clamp_list_limit
+from det.mcp.query_sql import Warehouse
+from det.mcp.query_sql import query_analytics as run_query
+from det.runtime.approval import ApprovalError, describe_approval_record, list_approval_records
+from det.runtime.check import findings_payload
+from det.runtime.config import load_pipeline_config
+from det.runtime.lake import open_lake, pick_lake_spec
+from det.runtime.pipelines import resolve_pipeline_ref
+from det.runtime.receipts import list_receipts, summarize_receipts
+from det.scaffold.check_dbt import check_project_with_dbt
 
 _RECEIPT_SECRET_KEYS = frozenset(
     {
@@ -26,12 +41,6 @@ _RECEIPT_NOTE = (
 
 
 def _runs_lake(pipeline: str | None, root: Path):
-    from det.destinations.models import lake_root
-    from det.logging import sanitize_lake_uri
-    from det.runtime.config import load_pipeline_config
-    from det.runtime.lake import open_lake, pick_lake_spec
-    from det.runtime.pipelines import resolve_pipeline_ref
-
     if pipeline:
         resolved = resolve_pipeline_ref(pipeline, project_root=root)
         resolve_under_root(resolved.path, root=root)
@@ -44,8 +53,6 @@ def _runs_lake(pipeline: str | None, root: Path):
 
 
 def _public_receipt(row: dict[str, Any], *, root: Path) -> dict[str, Any]:
-    from det.logging import sanitize_lake_uri
-
     out = {
         key: value
         for key, value in row.items()
@@ -81,8 +88,6 @@ def list_runs(
     destination connection.
     """
     h.prepare_tool()
-    from det.mcp.inspect import clamp_list_limit
-    from det.runtime.receipts import list_receipts
 
     base = h.root(root)
     lake, pipe_id, lake_display = _runs_lake(pipeline, base)
@@ -122,7 +127,6 @@ def summarize_runs(
     Numbers only — no SLO thresholds. Manifest remains the data authority.
     """
     h.prepare_tool()
-    from det.runtime.receipts import summarize_receipts
 
     base = h.root(root)
     lake, pipe_id, lake_display = _runs_lake(pipeline, base)
@@ -143,7 +147,6 @@ def summarize_runs(
 def list_models(*, root: Path | None = None) -> dict[str, Any]:
     """List dbt models (stg/silver/gold/ops) from dbt/models YAML + SQL."""
     h.prepare_tool()
-    from det.mcp.catalog import list_dbt_models
 
     return list_dbt_models(root=h.root(root))
 
@@ -151,7 +154,6 @@ def list_models(*, root: Path | None = None) -> dict[str, Any]:
 def describe_model(name: str, *, root: Path | None = None) -> dict[str, Any]:
     """Describe one dbt model: schema, grain, columns from YAML."""
     h.prepare_tool()
-    from det.mcp.catalog import describe_dbt_model
 
     return describe_dbt_model(name, root=h.root(root))
 
@@ -165,8 +167,6 @@ def query_analytics(
 ) -> dict[str, Any]:
     """Capped read-only SELECT on analytics or ops DuckDB (not certified metrics)."""
     h.prepare_tool()
-    from det.mcp.query_sql import Warehouse
-    from det.mcp.query_sql import query_analytics as run_query
 
     if warehouse not in {"analytics", "ops"}:
         return {
@@ -182,7 +182,6 @@ def query_analytics(
 def cube_meta(*, root: Path | None = None) -> dict[str, Any]:
     """Cube Core meta (cubes/measures/dimensions). Start Cube with make cube-up."""
     h.prepare_tool()
-    from det.mcp.cube_client import cube_meta as fetch_meta
 
     return fetch_meta(root=h.root(root))
 
@@ -197,7 +196,6 @@ def cube_load(
 ) -> dict[str, Any]:
     """Run a Cube REST load query (certified gold/ops metrics)."""
     h.prepare_tool()
-    from det.mcp.cube_client import cube_load as run_load
 
     return run_load(
         measures=measures,
@@ -220,8 +218,6 @@ def check(
     extract/load.
     """
     h.prepare_tool()
-    from det.runtime.check import findings_payload
-    from det.scaffold.check_dbt import check_project_with_dbt
 
     base = h.root(root)
     findings = check_project_with_dbt(base, pipeline=pipeline)
@@ -241,7 +237,6 @@ def list_approvals(
     Postgres when ``DET_APPROVAL_BACKEND=postgres``).
     """
     h.prepare_tool()
-    from det.runtime.approval import list_approval_records
 
     valid = {"unused", "claimed", "consumed", "expired", "all"}
     wanted = (status or "unused").strip().lower()
@@ -260,7 +255,6 @@ def list_approvals(
 def describe_approval(approval_id: str, *, root: Path | None = None) -> dict[str, Any]:
     """Load one approval record; expired + heartbeat triage derived at read time."""
     h.prepare_tool()
-    from det.runtime.approval import ApprovalError, describe_approval_record
 
     base = h.root(root)
     try:

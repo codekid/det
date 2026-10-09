@@ -234,7 +234,9 @@ def _lake_bucket(lake_uri: str) -> str:
 def _lookup_connection_sa(project: str, location: str, connection: str) -> str | None:
     """Best-effort connection SA lookup; None when offline or connection missing."""
     try:
-        from google.cloud import bigquery  # pyright: ignore[reportAttributeAccessIssue]
+        from google.cloud import (  # noqa: PLC0415
+            bigquery,  # pyright: ignore[reportAttributeAccessIssue]
+        )
     except ImportError:
         return None
 
@@ -265,13 +267,9 @@ def build_iam_hint(plan: BigLakeRegisterPlan) -> dict[str, Any]:
     }
     if plan.lake_layout >= 2 and plan.bronze_uri and plan.ops_uri:
         bronze_bucket = (
-            _lake_bucket(plan.bronze_uri)
-            if plan.bronze_uri.startswith("gs://")
-            else None
+            _lake_bucket(plan.bronze_uri) if plan.bronze_uri.startswith("gs://") else None
         )
-        ops_bucket = (
-            _lake_bucket(plan.ops_uri) if plan.ops_uri.startswith("gs://") else None
-        )
+        ops_bucket = _lake_bucket(plan.ops_uri) if plan.ops_uri.startswith("gs://") else None
         hint["bronze_uri"] = plan.bronze_uri
         hint["ops_uri"] = plan.ops_uri
         hint["buckets"] = {
@@ -409,7 +407,9 @@ def approval_plan_for_register(plan: BigLakeRegisterPlan, argv: list[str]) -> Ap
 
 
 def _ensure_dataset(client: Any, project: str, dataset_id: str, location: str) -> None:
-    from google.cloud import bigquery  # pyright: ignore[reportAttributeAccessIssue]
+    from google.cloud import (  # noqa: PLC0415
+        bigquery,  # pyright: ignore[reportAttributeAccessIssue]
+    )
 
     ref = bigquery.Dataset(f"{project}.{dataset_id}")
     ref.location = location
@@ -421,7 +421,9 @@ def _ensure_dataset(client: Any, project: str, dataset_id: str, location: str) -
 
 def apply_biglake_register(plan: BigLakeRegisterPlan) -> dict[str, Any]:
     try:
-        from google.cloud import bigquery  # pyright: ignore[reportAttributeAccessIssue]
+        from google.cloud import (  # noqa: PLC0415
+            bigquery,  # pyright: ignore[reportAttributeAccessIssue]
+        )
     except ImportError as exc:
         raise RuntimeError(
             'google-cloud-bigquery is required. Install: uv pip install -e ".[bigquery]"'
@@ -461,8 +463,7 @@ def format_dry_run(plan: BigLakeRegisterPlan, argv: list[str]) -> str:
     ]
     for table in plan.tables:
         lines.append(
-            f"  {table.bq_dataset}.{table.bq_table} ({table.kind}) "
-            f"metadata={table.metadata_uri}"
+            f"  {table.bq_dataset}.{table.bq_table} ({table.kind}) metadata={table.metadata_uri}"
         )
     lines.append("")
     lines.append(format_iam_hint(plan))

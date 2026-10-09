@@ -16,6 +16,7 @@ from det.runtime.dlt_hygiene import (
     refuse_dlt_keys,
 )
 from det.runtime.runner import PipelineRunner
+from det.sources.base import SourceRow
 from det.sources.example_api.events import ExampleApiSource
 
 
@@ -121,13 +122,9 @@ def test_extract_refuses_dlt_shaped_page(project_root: Path, tmp_path: Path) -> 
 def test_load_refuses_dlt_row_keys(project_root: Path, tmp_path: Path) -> None:
     pipe = _example_pipe(tmp_path, project_root)
     runner = PipelineRunner(tmp_path)
-    extracted = runner.extract(
-        pipe, interval_start="2026-08-06", interval_end="2026-08-07"
-    )
+    extracted = runner.extract(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
 
     def bad_rows(self, *, config, raw_dir, manifest):
-        from det.sources.base import SourceRow
-
         yield SourceRow(
             data={
                 "id": "e1",
@@ -138,6 +135,7 @@ def test_load_refuses_dlt_row_keys(project_root: Path, tmp_path: Path) -> None:
                 "status": "1",
             }
         )
+
     with (
         patch.object(ExampleApiSource, "records_from_raw", bad_rows),
         pytest.raises(DetContractError, match="_dlt_load_id"),

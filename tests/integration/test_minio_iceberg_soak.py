@@ -13,17 +13,16 @@ import pytest
 import yaml
 
 from det.ingestion.iceberg_writer import load_iceberg_table, scan_iceberg_rows
+from det.runtime.dbt_runner import run_dbt
 from det.runtime.lake import ENV_LAKE_MODE, open_lake
-from det.runtime.object_store import configure_duckdb_s3
+from det.runtime.object_store import configure_duckdb_s3, fsspec_s3_kwargs
 from det.runtime.runner import PipelineRunner
 
 _ENDPOINT = (os.environ.get("AWS_ENDPOINT_URL") or "").strip()
 _KEY = (os.environ.get("AWS_ACCESS_KEY_ID") or "minioadmin").strip()
 _SECRET = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "minioadmin").strip()
 _REGION = (
-    os.environ.get("AWS_REGION")
-    or os.environ.get("AWS_DEFAULT_REGION")
-    or "us-east-1"
+    os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
 ).strip()
 _BUCKET = (os.environ.get("DET_MINIO_BUCKET") or "det-ci").strip()
 _LAKE_URI = f"s3://{_BUCKET}/det-lake"
@@ -39,9 +38,7 @@ SOAK_ROWS = 25
 
 def _ensure_bucket() -> None:
     pytest.importorskip("s3fs")
-    import fsspec
-
-    from det.runtime.object_store import fsspec_s3_kwargs
+    import fsspec  # noqa: PLC0415
 
     fs = fsspec.filesystem("s3", **fsspec_s3_kwargs())
     if not fs.exists(_BUCKET):
@@ -161,8 +158,6 @@ def test_minio_extract_load_iceberg_det_dbt(
     )
     assert result.rows == SOAK_ROWS
 
-    from det.runtime.dbt_runner import run_dbt
-
     dbt_result = run_dbt(
         project_root=project_root,
         pipeline=pipe,
@@ -179,7 +174,5 @@ def test_minio_extract_load_iceberg_det_dbt(
         configure_duckdb_s3(con)
     except Exception as exc:  # pragma: no cover - extension / secret quirks
         pytest.skip(f"duckdb s3/iceberg setup failed: {exc}")
-    n = con.execute(
-        "SELECT count(*) FROM silver_example_api.stg_example_api__events"
-    ).fetchone()[0]
+    n = con.execute("SELECT count(*) FROM silver_example_api.stg_example_api__events").fetchone()[0]
     assert n == SOAK_ROWS

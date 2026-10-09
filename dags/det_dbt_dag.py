@@ -19,6 +19,8 @@ from pathlib import Path
 from airflow.decorators import dag, task
 from det_env import dbt_env_for_pipeline, dbt_select, project_root
 
+from det.runtime.dbt_runner import DbtNotInstalledError, analytics_exclude, run_dbt
+
 PROJECT_ROOT = project_root()
 DBT_PROJECT = Path(os.environ.get("DET_DBT_PROJECT", str(PROJECT_ROOT / "dbt")))
 
@@ -33,8 +35,6 @@ DBT_PROJECT = Path(os.environ.get("DET_DBT_PROJECT", str(PROJECT_ROOT / "dbt")))
 def det_dbt_silver_gold():
     @task
     def dbt_build() -> dict:
-        from det.runtime.dbt_runner import DbtNotInstalledError, run_dbt
-
         for key, value in dbt_env_for_pipeline().items():
             os.environ[key] = value
 
@@ -51,9 +51,7 @@ def det_dbt_silver_gold():
             raise
 
         if result.returncode != 0:
-            raise RuntimeError(
-                f"dbt build failed with exit code {result.returncode}"
-            )
+            raise RuntimeError(f"dbt build failed with exit code {result.returncode}")
         return {
             "command": result.command,
             "returncode": result.returncode,
@@ -66,8 +64,6 @@ def det_dbt_silver_gold():
 
 
 def _analytics_exclude(select: list[str] | None) -> list[str] | None:
-    from det.runtime.dbt_runner import analytics_exclude
-
     return analytics_exclude(select)
 
 

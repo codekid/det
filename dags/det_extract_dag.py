@@ -24,6 +24,7 @@ import os
 from datetime import datetime
 
 from airflow.decorators import dag, task
+from airflow.operators.python import get_current_context
 from det_env import (
     approval_id_from_conf,
     consume_prune_approval,
@@ -36,6 +37,10 @@ from det_env import (
     project_root,
     set_lock_owner,
 )
+
+from det.runtime.config import load_pipeline_config
+from det.runtime.prune import BronzePruner
+from det.runtime.runner import PipelineRunner
 
 PROJECT_ROOT = project_root()
 
@@ -50,10 +55,6 @@ PROJECT_ROOT = project_root()
 def det_extract_bronze():
     @task
     def extract_raw(data_interval_start=None, data_interval_end=None) -> dict:
-        from airflow.operators.python import get_current_context
-
-        from det.runtime.runner import PipelineRunner
-
         context = get_current_context()
         dag_run = context.get("dag_run")
         run_id = getattr(dag_run, "run_id", "unknown")
@@ -83,10 +84,6 @@ def det_extract_bronze():
 
     @task
     def load_bronze(extract_info: dict) -> dict:
-        from airflow.operators.python import get_current_context
-
-        from det.runtime.runner import PipelineRunner
-
         context = get_current_context()
         dag_run = context.get("dag_run")
         run_id = getattr(dag_run, "run_id", "unknown")
@@ -116,11 +113,6 @@ def det_extract_bronze():
         """Optional bronze retention. Disabled unless DET_PRUNE=1."""
         if not env_flag("DET_PRUNE"):
             return {"skipped": True, "reason": "DET_PRUNE not set"}
-
-        from airflow.operators.python import get_current_context
-
-        from det.runtime.config import load_pipeline_config
-        from det.runtime.prune import BronzePruner
 
         keep = int(os.environ.get("DET_PRUNE_KEEP", "1"))
         apply = env_flag("DET_PRUNE_APPLY")

@@ -97,9 +97,7 @@ def test_plan_glue_requires_s3(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         build_iceberg_register_plan(project_root=tmp_path)
 
 
-def test_plan_builds_bronze_and_ops(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_plan_builds_bronze_and_ops(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_pipeline(tmp_path)
     lake = _plant_bronze(tmp_path, with_ops=True)
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
@@ -182,9 +180,7 @@ def test_catalog_target_redacts_rest_uri_userinfo(
     lake = _plant_bronze(tmp_path)
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
     monkeypatch.setenv(ENV_CATALOG, "rest")
-    monkeypatch.setenv(
-        ENV_REST_URI, "http://alice:s3cr3t@catalog.example:8181/api/catalog"
-    )
+    monkeypatch.setenv(ENV_REST_URI, "http://alice:s3cr3t@catalog.example:8181/api/catalog")
     plan = build_iceberg_register_plan(project_root=tmp_path, include_ops=False)
     assert plan.rest_uri_host == "http://catalog.example:8181/api/catalog"
     target = format_catalog_target(plan)
@@ -209,25 +205,19 @@ def test_apply_rejects_catalog_target_drift(
         apply_iceberg_register(plan, project_root=tmp_path)
 
 
-def test_apply_rejects_rest_path_drift(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_apply_rejects_rest_path_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_pipeline(tmp_path)
     lake = _plant_bronze(tmp_path)
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
     monkeypatch.setenv(ENV_CATALOG, "rest")
     monkeypatch.setenv(ENV_REST_URI, "http://catalog.example:8181/api/catalog")
     plan = build_iceberg_register_plan(project_root=tmp_path, include_ops=False)
-    monkeypatch.setenv(
-        ENV_REST_URI, "http://catalog.example:8181/api/catalog/v2"
-    )
+    monkeypatch.setenv(ENV_REST_URI, "http://catalog.example:8181/api/catalog/v2")
     with pytest.raises(ValueError, match="catalog target changed"):
         assert_catalog_target_matches_env(plan)
 
 
-def test_apply_register_then_exists(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_apply_register_then_exists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_pipeline(tmp_path)
     lake = _plant_bronze(tmp_path)
     monkeypatch.setenv("DET_LAKE_PATH", str(lake))
@@ -235,7 +225,7 @@ def test_apply_register_then_exists(
     monkeypatch.setenv(ENV_REST_URI, "http://localhost:8181/api/catalog")
     plan = build_iceberg_register_plan(project_root=tmp_path, include_ops=False)
 
-    from pyiceberg.exceptions import NoSuchTableError
+    from pyiceberg.exceptions import NoSuchTableError  # noqa: PLC0415
 
     catalog = MagicMock()
     catalog.load_table.side_effect = [NoSuchTableError("missing"), object()]

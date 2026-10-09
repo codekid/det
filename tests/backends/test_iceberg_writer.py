@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+import det.ingestion.iceberg_writer as iw
 from det.ingestion.det_backend import DetBackend
 from det.ingestion.iceberg_writer import (
     list_iceberg_extract_runs,
     load_iceberg_table,
+    purge_iceberg_table,
     scan_iceberg_rows,
     write_iceberg_table,
 )
@@ -166,7 +169,6 @@ def test_write_iceberg_table_does_not_call_list_extract_runs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """Replace-by-run must not full-scan the table to decide whether to delete."""
-    import det.ingestion.iceberg_writer as iw
 
     def _boom(*_a, **_k):
         raise AssertionError("write_iceberg_table must not call list_iceberg_extract_runs")
@@ -258,8 +260,15 @@ def test_iceberg_alter_adds_missing_column(tmp_path: Path):
         },
     )
     write_iceberg_table(
-        [{**_meta(), "event_id": 2, "state": "TX", "__row_hash": "two",
-          "__extract_run_datetime": "2026-08-06T16:00:00+00:00"}],
+        [
+            {
+                **_meta(),
+                "event_id": 2,
+                "state": "TX",
+                "__row_hash": "two",
+                "__extract_run_datetime": "2026-08-06T16:00:00+00:00",
+            }
+        ],
         lake=lake,
         table_location=loc,
         namespace="bronze_noaa",
@@ -348,7 +357,6 @@ def test_list_iceberg_extract_runs_uses_partitions_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """Listing must not open data files when the table is partitioned."""
-    import det.ingestion.iceberg_writer as iw
 
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     loc = lake / "bronze" / "noaa" / "storm_events_v1"
@@ -379,9 +387,7 @@ def test_list_unpartitioned_mixed_bounds_samples_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """Compaction-style mixed file bounds must not hide extract runs."""
-    import pyarrow as pa
-
-    import det.ingestion.iceberg_writer as iw
+    import pyarrow as pa  # noqa: PLC0415
 
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     loc = lake / "bronze" / "example_api" / "events_v1"
@@ -465,12 +471,9 @@ def test_read_planned_parquet_applies_residual_before_limit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """Residual predicates must filter the full file before limit slicing."""
-    from datetime import UTC, datetime
 
-    from pyiceberg.expressions import AlwaysFalse, EqualTo
-    from pyiceberg.table import FileScanTask
-
-    import det.ingestion.iceberg_writer as iw
+    from pyiceberg.expressions import AlwaysFalse, EqualTo  # noqa: PLC0415
+    from pyiceberg.table import FileScanTask  # noqa: PLC0415
 
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     loc = lake / "bronze" / "example_api" / "events_v1"
@@ -623,8 +626,6 @@ def test_iceberg_hard_fails_when_yaml_partition_mismatches(tmp_path: Path):
 
 
 def test_purge_and_recreate_applies_yaml_partition(tmp_path: Path):
-    from det.ingestion.iceberg_writer import purge_iceberg_table
-
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     loc = lake / "bronze" / "noaa" / "storm_events_v1"
     schema = _json_schema()

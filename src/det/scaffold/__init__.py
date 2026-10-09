@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 def __getattr__(name: str) -> Any:
     if name in __all__:
-        from det.scaffold.dbt import ScaffoldResult, scaffold_dbt
+        from det.scaffold.dbt import ScaffoldResult, scaffold_dbt  # noqa: PLC0415
 
         return {"ScaffoldResult": ScaffoldResult, "scaffold_dbt": scaffold_dbt}[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

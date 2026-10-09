@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from textwrap import dedent
 
 from det.logging import get_logger
-from det.runtime.discovery import in_tree_reserved_source_map, project_sources_dir
+from det.runtime.discovery import (
+    _project_module_name,
+    in_tree_reserved_source_map,
+    project_sources_dir,
+)
 from det.runtime.ids import parse_canonical_id, validate_canonical_id
+from det.runtime.registry import _SOURCE_REGISTRY, _root_key
 from det.scaffold.dbt import ScaffoldAction
 from det.scaffold.init_pipeline import InitPipelineResult, init_pipeline
 
@@ -141,14 +147,10 @@ def init_source(
             "choose another provider.source name"
         )
 
-    body = dedent(
-        _PLUGIN_TEMPLATE.format(name=name, class_name=_class_name(provider, source))
-    )
+    body = dedent(_PLUGIN_TEMPLATE.format(name=name, class_name=_class_name(provider, source)))
     exists = plugin_path.exists()
     if exists and not force:
-        actions.append(
-            ScaffoldAction(path=plugin_path, action="skip", detail="plugin exists")
-        )
+        actions.append(ScaffoldAction(path=plugin_path, action="skip", detail="plugin exists"))
     elif dry_run:
         actions.append(
             ScaffoldAction(
@@ -174,10 +176,6 @@ def init_source(
         )
         logger.info("init-source wrote plugin", path=str(plugin_path), name=name)
         # Drop a previously imported project module so force-overwrite reloads.
-        import sys
-
-        from det.runtime.discovery import _project_module_name
-        from det.runtime.registry import _SOURCE_REGISTRY, _root_key
 
         sys.modules.pop(_project_module_name(name), None)
         _SOURCE_REGISTRY.pop((name, _root_key(root)), None)

@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib
 import importlib.metadata
 import importlib.util
+import os
 import pkgutil
 import sys
 from collections.abc import Callable, Iterator
@@ -24,6 +25,8 @@ from typing import Any, cast
 
 import det.sources as sources_pkg
 from det.errors import DetPluginError
+from det.runtime.pipelines import resolve_project_root
+from det.runtime.settings import get_active_settings
 from det.sources.base import MAPPER_ATTR, SourcePlugin
 
 SOURCES_GROUP = "det.sources"
@@ -45,7 +48,6 @@ class PluginLoadError(DetPluginError):
 
 def discover_examples_enabled(environ: dict[str, str] | None = None) -> bool:
     """Return True when in-tree demo sources (NOAA, example_api, …) should be listed."""
-    import os
 
     env = environ if environ is not None else os.environ
     raw = (env.get(_ENV_DISCOVER_EXAMPLES) or "").strip().lower()
@@ -60,12 +62,10 @@ def resolve_discovery_root(project_root: Path | None = None) -> Path:
     """Explicit root > active ``DetSettings`` > ``DET_PROJECT_ROOT`` / cwd."""
     if project_root is not None:
         return Path(project_root).expanduser().resolve()
-    from det.runtime.settings import get_active_settings
 
     active = get_active_settings()
     if active is not None:
         return active.project_root
-    from det.runtime.pipelines import resolve_project_root
 
     return resolve_project_root(None)
 
@@ -208,8 +208,7 @@ def discovered_source_ids(project_root: Path | None = None) -> list[str]:
             )
         if ep.name in project:
             raise PluginLoadError(
-                f"entry point source {ep.name!r} collides with project-local "
-                f"{project[ep.name]}",
+                f"entry point source {ep.name!r} collides with project-local {project[ep.name]}",
                 module=str(project[ep.name]),
             )
         ids.add(ep.name)
@@ -269,9 +268,7 @@ def collect_mappers(module: ModuleType) -> dict[str, Callable[[dict[str, Any]], 
                 f"duplicate mapper {mapper_name!r} in {module.__name__}",
                 module=module.__name__,
             )
-        found[str(mapper_name)] = cast(
-            Callable[[dict[str, Any]], dict[str, Any]], obj
-        )
+        found[str(mapper_name)] = cast(Callable[[dict[str, Any]], dict[str, Any]], obj)
     return found
 
 
@@ -327,8 +324,7 @@ def load_source(
         )
     if plugin_id in ep_by_name and plugin_id in project:
         raise PluginLoadError(
-            f"entry point source {plugin_id!r} collides with project-local "
-            f"{project[plugin_id]}",
+            f"entry point source {plugin_id!r} collides with project-local {project[plugin_id]}",
             module=str(project[plugin_id]),
         )
 

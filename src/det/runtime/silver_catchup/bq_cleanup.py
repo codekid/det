@@ -36,6 +36,7 @@ from det.runtime.silver_catchup.types import (
 
 logger = get_logger(__name__)
 
+
 def validate_bq_catchup_cleanup_scope(
     *,
     manifest_id: str | None,
@@ -59,8 +60,7 @@ def validate_bq_catchup_cleanup_scope(
         return
     if not mid and not older and not before:
         raise ValueError(
-            "exactly one of --manifest-id, --older-than, or --created-before "
-            "is required"
+            "exactly one of --manifest-id, --older-than, or --created-before is required"
         )
 
 
@@ -95,6 +95,7 @@ def resolve_bq_catchup_cleanup_cutoff(
         return datetime.fromisoformat(iso), iso, older_raw
     return None, None, None
 
+
 def list_bq_catchup_external_tables(
     *,
     older_than: str | None = None,
@@ -112,7 +113,7 @@ def list_bq_catchup_external_tables(
     cutoff, _cutoff_iso, _older = resolve_bq_catchup_cleanup_cutoff(
         older_than=older_than, created_before=created_before, now=now
     )
-    from det.runtime import silver_catchup as _sc
+    from det.runtime import silver_catchup as _sc  # noqa: PLC0415
 
     client, project, dataset, _location = _sc._bq_client()
     rows: list[CatchupCleanupTarget] = []
@@ -152,7 +153,7 @@ def list_bq_catchup_external_tables(
 def drop_bq_catchup_external_table(*, manifest_id: str) -> CatchupCleanupDropResult:
     """Delete one manifest-scoped catch-up external table (``not_found_ok``)."""
     mid = validate_catchup_manifest_id(manifest_id)
-    from det.runtime import silver_catchup as _sc
+    from det.runtime import silver_catchup as _sc  # noqa: PLC0415
 
     client, project, dataset, _location = _sc._bq_client()
     table_name = catchup_bq_external_table_name(mid)
@@ -198,7 +199,7 @@ def plan_bq_catchup_cleanup(
         list_mode=False,
     )
     mid_raw = str(manifest_id).strip() if manifest_id else ""
-    from det.runtime import silver_catchup as _sc
+    from det.runtime import silver_catchup as _sc  # noqa: PLC0415
 
     project, dataset, _location = _sc._bq_project_dataset_location()
     targets: list[CatchupCleanupTarget] = []
@@ -206,9 +207,7 @@ def plan_bq_catchup_cleanup(
     older_raw: str | None = None
     if mid_raw:
         mid = validate_catchup_manifest_id(mid_raw)
-        relation = catchup_bq_relation(
-            project=project, dataset=dataset, manifest_id=mid
-        )
+        relation = catchup_bq_relation(project=project, dataset=dataset, manifest_id=mid)
         client, _, _, _ = _sc._bq_client()
         table_id = f"{project}.{dataset}.{catchup_bq_external_table_name(mid)}"
         existed = False
@@ -234,9 +233,7 @@ def plan_bq_catchup_cleanup(
         _cutoff, cutoff_iso, older_raw = resolve_bq_catchup_cleanup_cutoff(
             older_than=older_than, created_before=created_before, now=now
         )
-        listed = list_bq_catchup_external_tables(
-            created_before=cutoff_iso, now=now
-        )
+        listed = list_bq_catchup_external_tables(created_before=cutoff_iso, now=now)
         for row in listed:
             if not row.get("manifest_id"):
                 continue
@@ -276,9 +273,7 @@ def apply_bq_catchup_cleanup(
             "--created-before from plan/dry-run (relative duration would drift)"
         )
     if not mid_raw and not before_raw:
-        raise ValueError(
-            "apply_bq_catchup_cleanup requires --manifest-id or --created-before"
-        )
+        raise ValueError("apply_bq_catchup_cleanup requires --manifest-id or --created-before")
     planned = plan_bq_catchup_cleanup(
         manifest_id=mid_raw or None,
         created_before=before_raw or None,
@@ -296,4 +291,3 @@ def apply_bq_catchup_cleanup(
         "results": results,
         "dropped_count": dropped_count,
     }
-

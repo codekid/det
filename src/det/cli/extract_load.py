@@ -24,6 +24,9 @@ from det.cli.common import (
     _resolve_pipeline,
     _settings,
 )
+from det.runtime.approval import extract_write_argv, load_write_argv, run_write_argv
+from det.runtime.lease import LeaseHeldError
+from det.runtime.runner import PipelineRunner
 
 
 @app.command("extract")
@@ -49,9 +52,6 @@ def extract_raw(
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Source → raw data/ + format check + meta/manifest.json."""
-    from det.runtime.approval import extract_write_argv
-    from det.runtime.lease import LeaseHeldError
-    from det.runtime.runner import PipelineRunner
 
     root = _project_root(project_root)
     # Resolve before gating so the approval digest is built from the canonical id
@@ -126,9 +126,6 @@ def load_bronze(
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Raw data/ → snake_case naming → JSON Schema → bronze."""
-    from det.runtime.approval import load_write_argv
-    from det.runtime.lease import LeaseHeldError
-    from det.runtime.runner import PipelineRunner
 
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
@@ -198,9 +195,6 @@ def run_pipeline(
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """extract then load with one shared run-start stamp."""
-    from det.runtime.approval import run_write_argv
-    from det.runtime.lease import LeaseHeldError
-    from det.runtime.runner import PipelineRunner
 
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)

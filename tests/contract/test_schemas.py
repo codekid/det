@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 from det.runtime.config import load_pipeline_config, resolve_path
+from det.runtime.registry import get_source, list_sources
+from det.sources.base import Interval
 from det.validation.jsonschema_validator import (
     SchemaValidationError,
     load_json_schema,
@@ -11,9 +13,6 @@ from det.validation.jsonschema_validator import (
 
 
 def test_every_source_implements_raw_contract(project_root):
-    from det.runtime.registry import get_source, list_sources
-    from det.sources.base import Interval
-
     interval = Interval(start="2026-08-06T00:00:00+00:00", end="2026-08-07T00:00:00+00:00")
     for name in list_sources():
         source = get_source(name)

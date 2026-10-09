@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -24,8 +25,6 @@ def load_json_schema(path: Path | str) -> dict[str, Any]:
     if p.suffix in {".yaml", ".yml"}:
         schema = yaml.safe_load(text)
     else:
-        import json
-
         schema = json.loads(text)
     if not isinstance(schema, dict):
         raise ValueError(f"Schema must be an object: {p}")

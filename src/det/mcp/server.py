@@ -12,7 +12,7 @@ from det.mcp import tools as t
 
 def create_server():
     try:
-        from mcp.server.fastmcp import FastMCP
+        from mcp.server.fastmcp import FastMCP  # noqa: PLC0415
     except ImportError as exc:  # pragma: no cover
         raise SystemExit(
             "det-mcp requires the optional mcp extra: pip install -e '.[mcp]'"

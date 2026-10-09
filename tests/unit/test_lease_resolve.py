@@ -14,6 +14,7 @@ from det.runtime.lease import (
     open_lease_store,
     resolve_lease_options,
 )
+from det.runtime.lease.postgres_store import PostgresLeaseStore
 from det.runtime.settings import DetSettings
 
 
@@ -110,8 +111,6 @@ def test_lease_config_rejects_unsafe_pg_idents() -> None:
 
 
 def test_postgres_store_rejects_unsafe_idents() -> None:
-    from det.runtime.lease.postgres_store import PostgresLeaseStore
-
     with pytest.raises(ValueError, match="postgres lease schema"):
         PostgresLeaseStore(
             resolve_secret=lambda _k: "postgres://x",

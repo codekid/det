@@ -10,6 +10,7 @@ from typing import Any
 import yaml
 
 from det.runtime.config.pipeline import PipelineConfig
+from det.runtime.pipelines import resolve_pipeline_ref
 
 
 def apply_overrides(raw: dict[str, Any], assignments: Sequence[str]) -> dict[str, Any]:
@@ -72,7 +73,6 @@ def load_pipeline(
                 "PipelineConfig; pass a path or canonical id instead"
             )
         return pipeline
-    from det.runtime.pipelines import resolve_pipeline_ref
 
     resolved = resolve_pipeline_ref(pipeline, project_root=project_root)
     return load_pipeline_config(resolved.path, overrides=overrides)

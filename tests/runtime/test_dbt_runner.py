@@ -17,6 +17,7 @@ from det.runtime.dbt_runner import (
     ops_dbt_target,
     run_dbt,
 )
+from det.runtime.silver_catchup import _runs_jsonl_bytes, catchup_content_digest
 
 
 def test_default_select_for_pipeline():
@@ -92,9 +93,7 @@ def test_ops_dbt_target():
     assert ops_dbt_target(["tag:ops"], "duckdb") == "ops"
 
 
-def test_run_dbt_ops_select_uses_ops_target(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_run_dbt_ops_select_uses_ops_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DET_LAKE_MODE", "local")
     monkeypatch.delenv("DET_LAKE_PATH", raising=False)
     monkeypatch.delenv("DET_OPS_DUCKDB", raising=False)
@@ -128,9 +127,7 @@ def test_run_dbt_ops_select_honors_det_dbt_target_bigquery(
     assert result.command[result.command.index("--target") + 1] == "bigquery"
 
 
-def test_run_dbt_dry_run_sets_lake_and_select(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_run_dbt_dry_run_sets_lake_and_select(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DET_LAKE_MODE", "local")
     monkeypatch.delenv("DET_LAKE_PATH", raising=False)
     dbt_dir = tmp_path / "dbt"
@@ -169,9 +166,7 @@ destination:
     assert "stg_noaa__storm_events+" in result.command
 
 
-def test_run_dbt_sets_duckdb_bronze_source(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_run_dbt_sets_duckdb_bronze_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DET_LAKE_MODE", "local")
     monkeypatch.delenv("DET_LAKE_PATH", raising=False)
     monkeypatch.delenv("DET_BRONZE_SOURCE", raising=False)
@@ -202,9 +197,7 @@ destination:
     assert result.bronze_source == "duckdb"
 
 
-def test_run_dbt_sets_iceberg_bronze_source(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_run_dbt_sets_iceberg_bronze_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DET_LAKE_MODE", "local")
     monkeypatch.delenv("DET_LAKE_PATH", raising=False)
     monkeypatch.delenv("DET_BRONZE_SOURCE", raising=False)
@@ -256,9 +249,7 @@ destination:
     return pipeline
 
 
-def test_run_dbt_s3_lake_uses_duckdb_s3_target(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_run_dbt_s3_lake_uses_duckdb_s3_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DET_LAKE_MODE", "cloud")
     monkeypatch.delenv("DET_DBT_TARGET", raising=False)
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
@@ -275,9 +266,7 @@ def test_run_dbt_s3_lake_uses_duckdb_s3_target(
     assert result.lake_path == "s3://det-ci/det-lake/bronze"
 
 
-def test_run_dbt_gs_lake_does_not_force_duckdb_s3(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_run_dbt_gs_lake_does_not_force_duckdb_s3(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     pytest.importorskip("gcsfs")
     monkeypatch.setenv("DET_LAKE_MODE", "cloud")
     monkeypatch.delenv("DET_DBT_TARGET", raising=False)
@@ -308,9 +297,7 @@ def test_run_dbt_gs_lake_honors_det_dbt_target_bigquery(
     assert result.command[result.command.index("--target") + 1] == "bigquery"
 
 
-def test_run_dbt_local_lake_keeps_duckdb_target(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_run_dbt_local_lake_keeps_duckdb_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DET_LAKE_MODE", "local")
     monkeypatch.delenv("DET_LAKE_PATH", raising=False)
     monkeypatch.delenv("DET_DBT_TARGET", raising=False)
@@ -534,7 +521,6 @@ def test_run_dbt_catchup_bigquery_gcs_sets_bq_relation(
             "interval_end": "2026-08-07T00:00:00+00:00",
         }
     ]
-    from det.runtime.silver_catchup import _runs_jsonl_bytes, catchup_content_digest
 
     digest = catchup_content_digest(runs)
     manifest = {
@@ -634,7 +620,6 @@ def test_run_dbt_catchup_bigquery_rejects_sidecar_digest_mismatch(
     dbt_dir.mkdir()
     (dbt_dir / "dbt_project.yml").write_text("name: x\n", encoding="utf-8")
     mid = "scm_" + ("11" * 8)
-    from det.runtime.silver_catchup import _runs_jsonl_bytes, catchup_content_digest
 
     runs = [
         {
@@ -690,9 +675,7 @@ def test_run_dbt_catchup_bigquery_rejects_sidecar_digest_mismatch(
         ),
         patch(
             "det.runtime.silver_catchup.catchup_runs_file_path",
-            return_value=_FakeRef(
-                runs_uri, text=_runs_jsonl_bytes(other_runs).decode("utf-8")
-            ),
+            return_value=_FakeRef(runs_uri, text=_runs_jsonl_bytes(other_runs).decode("utf-8")),
         ),
         pytest.raises(ValueError, match="does not match manifest content_digest"),
     ):

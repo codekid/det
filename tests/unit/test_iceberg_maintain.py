@@ -9,6 +9,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from det.ingestion.iceberg_writer import ensure_iceberg_table
 from det.runtime.config import (
     DestinationConfig,
     IcebergDestinationConfig,
@@ -55,17 +56,13 @@ def test_destination_iceberg_table_properties_helper():
             table_properties={"write.target-file-size-bytes": "536870912"}
         ),
     )
-    assert dest.iceberg_table_properties == {
-        "write.target-file-size-bytes": "536870912"
-    }
+    assert dest.iceberg_table_properties == {"write.target-file-size-bytes": "536870912"}
     assert DestinationConfig(type="iceberg").iceberg_table_properties == {}
 
 
 def test_ensure_iceberg_table_passes_properties() -> None:
     pytest.importorskip("pyiceberg")
-    from pyiceberg.exceptions import NoSuchTableError
-
-    from det.ingestion.iceberg_writer import ensure_iceberg_table
+    from pyiceberg.exceptions import NoSuchTableError  # noqa: PLC0415
 
     created: dict = {}
 
@@ -141,11 +138,7 @@ def test_fleet_maintain_defaults_from_env():
 
 def test_iter_plans_skips_hadoop(tmp_path: Path):
     _write_iceberg_pipeline(tmp_path)
-    plans = list(
-        iter_iceberg_maintain_plans(
-            tmp_path, environ={"DET_ICEBERG_CATALOG": "hadoop"}
-        )
-    )
+    plans = list(iter_iceberg_maintain_plans(tmp_path, environ={"DET_ICEBERG_CATALOG": "hadoop"}))
     assert len(plans) == 1
     assert plans[0].actionable is False
     assert plans[0].skip_reason is not None
@@ -180,9 +173,7 @@ def test_iter_plans_rest_actionable_and_pipeline_override(tmp_path: Path):
 
 
 def test_iter_plans_inherits_fleet_when_maintain_omitted(tmp_path: Path):
-    _write_iceberg_pipeline(
-        tmp_path, table_properties={"write.format.default": "parquet"}
-    )
+    _write_iceberg_pipeline(tmp_path, table_properties={"write.format.default": "parquet"})
     plans = list(
         iter_iceberg_maintain_plans(
             tmp_path,
@@ -221,9 +212,7 @@ def test_partial_maintain_override_preserves_fleet_fields(tmp_path: Path):
 def test_plan_mutation_isolated_from_fleet_and_siblings(tmp_path: Path):
     _write_iceberg_pipeline(tmp_path, name="acme.one")
     _write_iceberg_pipeline(tmp_path, name="acme.two")
-    fleet = fleet_maintain_defaults(
-        {"DET_ICEBERG_MAINTAIN_EXPIRE_OLDER_THAN": "9d"}
-    )
+    fleet = fleet_maintain_defaults({"DET_ICEBERG_MAINTAIN_EXPIRE_OLDER_THAN": "9d"})
     plans = list(
         iter_iceberg_maintain_plans(
             tmp_path,

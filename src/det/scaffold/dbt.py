@@ -18,6 +18,7 @@ from det.runtime.config import (
     resolve_path,
 )
 from det.runtime.ids import dbt_model_slug, parse_canonical_id, sql_names_for_config
+from det.runtime.slo import SLO_SEED_RELPATH, render_slo_seed_for_project
 from det.runtime.sql_types import (
     duckdb_type_for_prop,  # noqa: F401  (test_flatten imports this via dbt)
 )
@@ -81,17 +82,14 @@ from det.scaffold.relation_load import (
     relation_delete_key,
     resolve_relation_materialization,
 )
+from det.scaffold.view_warn import emit_view_size_warnings
 from det.validation.jsonschema_validator import load_json_schema
 
 logger = get_logger(__name__)
 
 # Shared with scaffold-ops; create-if-missing only (never --force overwrite).
 _GENERATE_SCHEMA_NAME_TMPL = (
-    Path(__file__).resolve().parent
-    / "templates"
-    / "ops"
-    / "macros"
-    / "generate_schema_name.sql"
+    Path(__file__).resolve().parent / "templates" / "ops" / "macros" / "generate_schema_name.sql"
 )
 
 
@@ -159,9 +157,7 @@ def _bootstrap_generate_schema_name(
         return
     content = _GENERATE_SCHEMA_NAME_TMPL.read_text(encoding="utf-8")
     if dry_run:
-        actions.append(
-            ScaffoldAction(path=path, action="would_write", detail="create")
-        )
+        actions.append(ScaffoldAction(path=path, action="would_write", detail="create"))
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -176,7 +172,6 @@ def _write_slo_seed(
     actions: list[ScaffoldAction],
 ) -> None:
     """Always regenerate the ops SLO seed from all pipelines (derived; ignores --force)."""
-    from det.runtime.slo import SLO_SEED_RELPATH, render_slo_seed_for_project
 
     path = (project_root / SLO_SEED_RELPATH).resolve()
     content = render_slo_seed_for_project(project_root)
@@ -236,9 +231,7 @@ def scaffold_dbt(
     silver_descs = post_stg_description_map(schema_descs, stg_cfg)
     props = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
     columns = stg_columns_from_schema(schema, stg_cfg, unique_key=silver.unique_key)
-    columns_struct = format_read_json_columns(
-        widen_read_json_columns(schema, stg_cfg)
-    )
+    columns_struct = format_read_json_columns(widen_read_json_columns(schema, stg_cfg))
 
     models_dir = (dbt_models_dir or (root / "dbt" / "models" / "silver")).resolve()
     actions: list[ScaffoldAction] = []
@@ -419,8 +412,6 @@ def scaffold_dbt(
     _write_slo_seed(root, dry_run=dry_run, actions=actions)
 
     if warn:
-        from det.scaffold.view_warn import emit_view_size_warnings
-
         emit_view_size_warnings(config, project_root=root)
 
     return ScaffoldResult(dataset=config.bronze_dataset(), actions=actions)

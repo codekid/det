@@ -8,6 +8,7 @@ import yaml
 
 from det.errors import DetConflictError, DetPluginError
 from det.runtime.manifest import is_committed_raw_dir, read_manifest, write_manifest
+from det.runtime.meta import to_partition_value
 from det.runtime.runner import PipelineRunner
 from det.sources.example_api.events import ExampleApiSource
 
@@ -66,9 +67,7 @@ def test_incomplete_prefix_is_not_committed(tmp_path: Path):
     assert not is_committed_raw_dir(raw_dir)
 
 
-def test_failed_extract_does_not_commit_and_cleans_prefix(
-    project_root: Path, tmp_path: Path
-):
+def test_failed_extract_does_not_commit_and_cleans_prefix(project_root: Path, tmp_path: Path):
     pipe = _example_pipe(tmp_path, project_root)
 
     def boom(self, *, config, interval, data_dir):
@@ -90,9 +89,7 @@ def test_failed_extract_does_not_commit_and_cleans_prefix(
 def test_load_skips_newer_incomplete_sibling(project_root: Path, tmp_path: Path):
     pipe = _example_pipe(tmp_path, project_root)
     runner = PipelineRunner(tmp_path)
-    extracted = runner.extract(
-        pipe, interval_start="2026-08-06", interval_end="2026-08-07"
-    )
+    extracted = runner.extract(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
     incomplete = extracted.raw_dir.parent / "__extract_run_datetime=20990101T000000Z"
     (incomplete / "data").mkdir(parents=True)
     (incomplete / "data" / "orphan.bin").write_bytes(b"x")
@@ -106,9 +103,7 @@ def test_load_skips_newer_incomplete_sibling(project_root: Path, tmp_path: Path)
     assert loaded.rows == 1
 
 
-def test_extract_refuses_overwrite_of_committed_run(
-    project_root: Path, tmp_path: Path
-):
+def test_extract_refuses_overwrite_of_committed_run(project_root: Path, tmp_path: Path):
     pipe = _example_pipe(tmp_path, project_root)
     runner = PipelineRunner(tmp_path)
     stamp = "2026-08-06T12:00:00+00:00"
@@ -132,8 +127,6 @@ def test_extract_refuses_overwrite_of_committed_run(
 
 
 def test_extract_retries_incomplete_same_run_id(project_root: Path, tmp_path: Path):
-    from det.runtime.meta import to_partition_value
-
     pipe = _example_pipe(tmp_path, project_root)
     runner = PipelineRunner(tmp_path)
     stamp = "2026-08-06T12:00:00+00:00"

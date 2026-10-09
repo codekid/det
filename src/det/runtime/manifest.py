@@ -9,6 +9,7 @@ from typing import Any, cast
 
 from det.runtime.lake import LakeRef
 from det.runtime.manifest_types import ManifestPayload, ManifestValidation
+from det.runtime.meta import from_partition_value, to_interval_datetime
 
 META_DIR = "meta"
 MANIFEST_NAME = "manifest.json"
@@ -105,7 +106,6 @@ def extract_run_datetime_from_raw(
     manifest: ManifestPayload | dict[str, Any], raw_dir: LakePath
 ) -> str:
     """Bronze/load identity: manifest extract_run, else hive leaf value."""
-    from det.runtime.meta import from_partition_value, to_interval_datetime
 
     raw = manifest.get("extract_run_datetime")
     if raw is not None and str(raw).strip():
@@ -113,9 +113,7 @@ def extract_run_datetime_from_raw(
     name = getattr(raw_dir, "name", "") or ""
     if name.startswith("__extract_run_datetime="):
         return from_partition_value(name.split("=", 1)[1])
-    raise ValueError(
-        f"raw partition {raw_dir} has no extract_run_datetime in manifest or path"
-    )
+    raise ValueError(f"raw partition {raw_dir} has no extract_run_datetime in manifest or path")
 
 
 def write_manifest(raw_dir: LakePath, payload: ManifestPayload) -> LakePath:

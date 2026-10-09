@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 from det.logging import bound_run_context, get_logger, sanitize_lake_uri
+from det.runtime import silver_catchup as silver_catchup
 from det.runtime.config import PipelineConfig, load_pipeline_config, resolve_path
 from det.runtime.ids import dbt_model_slug, sql_names_for_config
 from det.runtime.lake import (
@@ -17,7 +19,9 @@ from det.runtime.lake import (
     open_lake,
     resolve_lake_root_specs,
 )
+from det.runtime.object_store import duckdb_s3_profile_env
 from det.runtime.settings import get_active_settings
+from det.scaffold.flatten import iter_relation_paths
 
 logger = get_logger(__name__)
 
@@ -107,7 +111,6 @@ def default_select_for_pipeline(config: PipelineConfig) -> list[str]:
     Relation models read bronze directly (not ``ref`` parent), so they are not
     pulled in by ``stg_<parent>+`` alone.
     """
-    from det.scaffold.flatten import iter_relation_paths
 
     slug = dbt_model_slug(config.name)
     selects = [f"stg_{slug}+"]
@@ -174,9 +177,7 @@ def analytics_exclude(select: Sequence[str] | None) -> list[str] | None:
     return [OPS_TAG_EXCLUDE]
 
 
-def ops_dbt_target(
-    select: Sequence[str] | None, env_target: str | None = None
-) -> str | None:
+def ops_dbt_target(select: Sequence[str] | None, env_target: str | None = None) -> str | None:
     """Use profile target ``ops`` when select is ops-only (unless BQ env target)."""
     if select and all(is_ops_selector(s) for s in select):
         if env_target == "bigquery":
@@ -218,7 +219,6 @@ def run_dbt(
     in the manifest (unless ``select`` is already set). BigQuery target is
     refused for catch-up.
     """
-    import json
 
     root = project_root.resolve()
     dbt_dir = resolve_dbt_project_dir(root, project_dir)
@@ -235,11 +235,7 @@ def run_dbt(
             )
 
     env = os.environ.copy()
-    profiles = (
-        resolve_dbt_project_dir(root, profiles_dir)
-        if profiles_dir is not None
-        else dbt_dir
-    )
+    profiles = resolve_dbt_project_dir(root, profiles_dir) if profiles_dir is not None else dbt_dir
 
     spec_cli = str(lake_path).strip() if lake_path is not None else None
     active = get_active_settings()
@@ -273,17 +269,8 @@ def run_dbt(
     catchup_mid: str | None = None
     catchup_digest: str | None = None
     if catchup:
-        from det.runtime.silver_catchup import (
-            catchup_manifest_file_path,
-            catchup_select_from_manifest,
-            catchup_vars_from_manifest,
-            read_catchup_manifest,
-            validate_catchup_content_digest,
-            validate_catchup_manifest_id,
-        )
-
-        catchup_mid = validate_catchup_manifest_id(str(catchup_manifest or ""))
-        payload = read_catchup_manifest(
+        catchup_mid = silver_catchup.validate_catchup_manifest_id(str(catchup_manifest or ""))
+        payload = silver_catchup.read_catchup_manifest(
             manifest_id=catchup_mid, project_root=root, lake_path=catchup_lake
         )
         if payload is None or not (payload.get("runs") or []):
@@ -291,22 +278,20 @@ def run_dbt(
                 f"catch-up requires ops/silver_catchup/{catchup_mid}.json with runs; "
                 "run det silver-catchup-plan --apply first"
             )
-        catchup_digest = validate_catchup_content_digest(
+        catchup_digest = silver_catchup.validate_catchup_content_digest(
             str(payload.get("content_digest") or "")
         )
-        manifest_path = catchup_manifest_file_path(
+        manifest_path = silver_catchup.catchup_manifest_file_path(
             manifest_id=catchup_mid, project_root=root, lake_path=catchup_lake
         )
         env["DET_CATCHUP_MANIFEST_PATH"] = str(manifest_path)
-        vars_map = catchup_vars_from_manifest(
+        vars_map = silver_catchup.catchup_vars_from_manifest(
             {**payload, "manifest_id": catchup_mid}
         )
         catchup_extra = ["--vars", json.dumps(vars_map, separators=(",", ":"))]
-        catchup_select = catchup_select_from_manifest(payload, project_root=root)
+        catchup_select = silver_catchup.catchup_select_from_manifest(payload, project_root=root)
         if not catchup_select:
-            raise FileNotFoundError(
-                "catch-up manifest has runs but no resolvable silver models"
-            )
+            raise FileNotFoundError("catch-up manifest has runs but no resolvable silver models")
 
     resolved_select = list(select) if select else None
     if resolved_select is None and catchup_select is not None:
@@ -324,17 +309,9 @@ def run_dbt(
         resolved_target = ops_dbt_target(resolved_select, env_target) or env_target
 
     if catchup and (resolved_target or "").strip() == "bigquery":
-        from det.runtime.silver_catchup import (
-            assert_catchup_runs_sidecar_matches,
-            catchup_bq_relation,
-            catchup_manifest_file_path,
-            catchup_runs_file_path,
-            ensure_bq_catchup_external_table,
-        )
-
         if catchup_mid is None or catchup_digest is None:
             raise ValueError("catch-up requires --catchup-manifest <scm_…>")
-        manifest_path = catchup_manifest_file_path(
+        manifest_path = silver_catchup.catchup_manifest_file_path(
             manifest_id=catchup_mid, project_root=root, lake_path=catchup_lake
         )
         manifest_uri = str(manifest_path)
@@ -343,7 +320,7 @@ def run_dbt(
                 "BigQuery catch-up requires a GCS ops lake (gs:// scm path); "
                 f"got {manifest_uri!r}. Local-lake → BQ heal is unsupported."
             )
-        runs_path = catchup_runs_file_path(
+        runs_path = silver_catchup.catchup_runs_file_path(
             manifest_id=catchup_mid, project_root=root, lake_path=catchup_lake
         )
         if not runs_path.exists():
@@ -353,26 +330,21 @@ def run_dbt(
                 "to write .runs.jsonl"
             )
         # Fail closed before BQ config when sidecar drifts from scm digest.
-        assert_catchup_runs_sidecar_matches(
+        silver_catchup.assert_catchup_runs_sidecar_matches(
             runs_path, expected_digest=catchup_digest
         )
         if dry_run:
-            project = (
-                env.get("DET_GCP_PROJECT")
-                or env.get("GOOGLE_CLOUD_PROJECT")
-                or ""
-            ).strip()
+            project = (env.get("DET_GCP_PROJECT") or env.get("GOOGLE_CLOUD_PROJECT") or "").strip()
             if not project:
                 raise ValueError(
-                    "BigQuery catch-up requires DET_GCP_PROJECT "
-                    "(or GOOGLE_CLOUD_PROJECT)"
+                    "BigQuery catch-up requires DET_GCP_PROJECT (or GOOGLE_CLOUD_PROJECT)"
                 )
             dataset = (env.get("DET_BQ_DATASET") or "analytics").strip() or "analytics"
-            env["DET_CATCHUP_BQ_RELATION"] = catchup_bq_relation(
+            env["DET_CATCHUP_BQ_RELATION"] = silver_catchup.catchup_bq_relation(
                 project=project, dataset=dataset, manifest_id=catchup_mid
             )
         else:
-            env["DET_CATCHUP_BQ_RELATION"] = ensure_bq_catchup_external_table(
+            env["DET_CATCHUP_BQ_RELATION"] = silver_catchup.ensure_bq_catchup_external_table(
                 runs_uri=str(runs_path),
                 manifest_id=catchup_mid,
             )
@@ -380,12 +352,7 @@ def run_dbt(
     # MinIO/S3 lakes use DuckDB iceberg_scan + httpfs. GCS lakes keep bronze on
     # gs:// Iceberg; prod analytics is BigQuery (DET_DBT_TARGET=bigquery) — never
     # auto-select duckdb_s3 for gs://.
-    if (
-        lake_uri.startswith("s3://")
-        and resolved_target not in ("ops", "bigquery")
-    ):
-        from det.runtime.object_store import duckdb_s3_profile_env
-
+    if lake_uri.startswith("s3://") and resolved_target not in ("ops", "bigquery"):
         env.update(duckdb_s3_profile_env(env))
         resolved_target = "duckdb_s3"
     if resolved_target == "ops":

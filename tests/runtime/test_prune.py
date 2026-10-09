@@ -8,7 +8,13 @@ import structlog
 from typer.testing import CliRunner
 
 from det.cli import app
+from det.destinations.models import bronze_dataset_dir, lake_root
 from det.ingestion.duckdb_writer import write_duckdb_table
+from det.ingestion.iceberg_writer import (
+    list_iceberg_extract_runs,
+    load_iceberg_table,
+    write_iceberg_table,
+)
 from det.logging import configure_logging
 from det.runtime.config import (
     DestinationConfig,
@@ -88,9 +94,7 @@ def test_filesystem_prune_dry_run_and_apply_keeps_newest(tmp_path: Path):
     bronze_dirs = [
         _mk_run(bronze, interval_start=start, interval_end=end, extract_run=r) for r in runs
     ]
-    raw_dirs = [
-        _mk_run(raw, interval_start=start, interval_end=end, extract_run=r) for r in runs
-    ]
+    raw_dirs = [_mk_run(raw, interval_start=start, interval_end=end, extract_run=r) for r in runs]
 
     pruner = BronzePruner(tmp_path)
     plan = pruner.plan(
@@ -172,12 +176,6 @@ def test_duckdb_prune_deletes_old_runs(tmp_path: Path):
 def test_iceberg_prune_deletes_old_runs(tmp_path: Path):
     pytest.importorskip("pyiceberg")
     pytest.importorskip("pyarrow")
-    from det.destinations.models import bronze_dataset_dir, lake_root
-    from det.ingestion.iceberg_writer import (
-        list_iceberg_extract_runs,
-        load_iceberg_table,
-        write_iceberg_table,
-    )
 
     config = PipelineConfig(
         name="noaa.storm_events",

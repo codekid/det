@@ -1,24 +1,37 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from pathlib import Path
 
 import pytest
 import yaml
 
+from det.destinations.models import bronze_dataset_dir, lake_root
 from det.ingestion.duckdb_writer import write_duckdb_table
+from det.ingestion.iceberg_writer import write_iceberg_table
+from det.mcp import inspect as inspect_mod
+from det.mcp.airflow_inspect import _unreachable_note
 from det.mcp.context import PathSandboxError
 from det.mcp.inspect import (
     MAX_SAMPLE_LIMIT,
+    _sample_wire,
     clamp_sample_limit,
     diagnose_pipeline,
     diff_partitions,
+    list_bronze_runs,
     sample_bronze,
     sample_raw,
     validate_sample,
 )
+from det.mcp.inspect._common import _root
 from det.mcp.server import create_server
+from det.runtime.config import load_pipeline_config
+from det.runtime.manifest import write_manifest
 from det.runtime.meta import to_partition_value
+from det.runtime.registry import get_source
+from det.runtime.settings import DetSettings, use_settings
 
 
 def _write_pipeline(
@@ -250,9 +263,6 @@ def test_validate_sample_get_source_uses_mcp_resolved_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Default-root validate_sample must not diverge from pipeline/run/schema base."""
-    from det.mcp.inspect._common import _root
-    from det.runtime.registry import get_source
-    from det.runtime.settings import DetSettings, use_settings
 
     settings_root = tmp_path / "settings"
     env_root = tmp_path / "env"
@@ -300,7 +310,6 @@ def test_validate_sample_get_source_uses_mcp_resolved_root(
 
 def test_sample_raw_wire_oserror_does_not_leak_abs_path(tmp_path: Path, monkeypatch):
     """Wire-sample OSError messages must not expose absolute filesystem paths."""
-    from det.mcp.inspect import _sample_wire
 
     data = tmp_path / "run" / "data"
     data.mkdir(parents=True)
@@ -324,7 +333,6 @@ def test_sample_raw_wire_oserror_does_not_leak_abs_path(tmp_path: Path, monkeypa
 
 def test_diagnose_manifest_error_is_sanitized(tmp_path: Path, monkeypatch):
     """Manifest read failures in diagnose must not leak absolute paths."""
-    from det.mcp import inspect as inspect_mod
 
     _write_pipeline(tmp_path)
     start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
@@ -352,8 +360,6 @@ def test_diagnose_manifest_error_is_sanitized(tmp_path: Path, monkeypatch):
 
 
 def test_unreachable_note_sanitizes_exception_paths():
-    from det.mcp.airflow_inspect import _unreachable_note
-
     note = _unreachable_note(
         "http://localhost:8080",
         OSError("Connection failed reading /Users/alice/dev/secret/token"),
@@ -363,8 +369,6 @@ def test_unreachable_note_sanitizes_exception_paths():
 
 
 def test_sample_bronze_filesystem(tmp_path: Path):
-    from det.runtime.manifest import write_manifest
-
     _write_pipeline(tmp_path)
     start, end = "2026-08-06T00:00:00+00:00", "2026-08-07T00:00:00+00:00"
     bronze = tmp_path / "lake" / "bronze" / "example_api" / "events_v1"
@@ -500,9 +504,6 @@ class _FakePgConn:
 
 
 def _install_fake_psycopg(monkeypatch) -> list[str]:
-    import sys
-    import types
-
     seen: list[str] = []
     module = types.ModuleType("psycopg")
 
@@ -556,10 +557,6 @@ def test_sample_bronze_iceberg(tmp_path: Path):
     pytest.importorskip("pyiceberg")
     pytest.importorskip("pyarrow")
     pytest.importorskip("duckdb")
-    from det.destinations.models import bronze_dataset_dir, lake_root
-    from det.ingestion.iceberg_writer import write_iceberg_table
-    from det.mcp.inspect import list_bronze_runs
-    from det.runtime.config import load_pipeline_config
 
     _write_pipeline(tmp_path, destination={"type": "iceberg", "path": str(tmp_path / "lake")})
     config = load_pipeline_config(

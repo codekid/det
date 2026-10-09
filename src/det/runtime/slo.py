@@ -205,8 +205,9 @@ def render_slo_seed_csv(rows: Sequence[SloExpectedRow]) -> str:
 
 def collect_slo_rows(project_root: Path) -> list[SloExpectedRow]:
     """Flatten ``slo:`` from every pipeline that loads. Invalid YAML is skipped."""
-    from det.runtime.config import load_pipeline_config
-    from det.runtime.pipelines import discover_pipeline_files
+    # config.pipeline imports SloConfig from this module.
+    from det.runtime.config import load_pipeline_config  # noqa: PLC0415
+    from det.runtime.pipelines import discover_pipeline_files  # noqa: PLC0415
 
     rows: list[SloExpectedRow] = []
     for path in discover_pipeline_files(project_root):

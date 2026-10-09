@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import sys
 
+import det.runtime.manifest as manifest_mod
+import det.sources.http  # noqa: F401
 from det.mcp.reload import refresh_det_runtime
-from det.runtime.registry import list_sources
+from det.runtime.registry import get_source, list_sources
 
 
 def test_refresh_reloads_manifest_and_reregisters_plugins():
     """Simulate long-lived MCP: cached manifest without a new symbol, then refresh."""
-    import det.runtime.manifest as manifest_mod
 
     # Pretend the process loaded an older manifest (no stamp helper).
     if hasattr(manifest_mod, "stamp_validation_success"):
@@ -17,8 +18,8 @@ def test_refresh_reloads_manifest_and_reregisters_plugins():
 
     refresh_det_runtime()
 
-    from det.runtime.manifest import stamp_validation_success
-    from det.runtime.migrate import BronzeMigrator
+    from det.runtime.manifest import stamp_validation_success  # noqa: PLC0415
+    from det.runtime.migrate import BronzeMigrator  # noqa: PLC0415
 
     assert callable(stamp_validation_success)
     assert BronzeMigrator is not None
@@ -26,9 +27,6 @@ def test_refresh_reloads_manifest_and_reregisters_plugins():
 
 
 def test_refresh_evicts_plugin_modules_not_helpers():
-    import det.sources.http  # noqa: F401
-    from det.runtime.registry import get_source
-
     get_source("example_api.events")
     assert "det.sources.example_api.events" in sys.modules
     refresh_det_runtime()

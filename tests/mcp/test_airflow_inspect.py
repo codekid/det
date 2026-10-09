@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from det.mcp.airflow_inspect import (
     DET_DAG_IDS,
@@ -46,8 +47,6 @@ def test_custom_base_url_used(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
 
 def test_unreachable_returns_ok_false(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    import requests
-
     monkeypatch.setenv("DET_AIRFLOW_BASE_URL", "http://127.0.0.1:9")
     with patch(
         "det.mcp.airflow_inspect.requests.request",
@@ -125,9 +124,7 @@ def test_describe_env_redacts_password(tmp_path: Path):
     assert out["det"]["DET_PIPELINE_CONFIG"] == "noaa.storm_events"
     assert out["web_user"] == "airflow"
     # Password value must not appear in structured fields
-    blob = json.dumps(
-        {k: v for k, v in out.items() if k != "note"}, default=str
-    )
+    blob = json.dumps({k: v for k, v in out.items() if k != "note"}, default=str)
     assert "secret" not in blob
     assert "_AIRFLOW_WWW_USER_PASSWORD" not in out.get("det", {})
 

@@ -11,6 +11,7 @@ from det.destinations.models import bronze_dataset_dir, lake_root
 from det.logging import get_logger
 from det.runtime.config import PipelineConfig
 from det.runtime.lake import LakeRef
+from det.scaffold.relation_load import resolve_relation_materialization
 
 logger = get_logger(__name__)
 
@@ -26,9 +27,7 @@ def _bronze_jsonl_files(bronze_root: Path | LakeRef) -> list[Path | LakeRef]:
     return sorted(p for p in bronze_root.rglob("data.jsonl") if p.is_file())
 
 
-def _estimate_parent_rows(
-    files: list[Path | LakeRef], *, sample_lines: int = 50
-) -> int | None:
+def _estimate_parent_rows(files: list[Path | LakeRef], *, sample_lines: int = 50) -> int | None:
     """Estimate parent row count from total bytes / mean bytes-per-line."""
     if not files:
         return None
@@ -126,8 +125,6 @@ def collect_view_size_warnings(
     if not warn_cfg.enabled:
         return []
 
-    from det.scaffold.relation_load import resolve_relation_materialization
-
     view_relations = {
         name: rel
         for name, rel in stg.relations.items()
@@ -197,9 +194,7 @@ def emit_view_size_warnings(
     lake_path: str | Path | None = None,
 ) -> list[ViewSizeWarning]:
     """Collect warnings and log them (advisory; never fails)."""
-    warnings = collect_view_size_warnings(
-        config, project_root=project_root, lake_path=lake_path
-    )
+    warnings = collect_view_size_warnings(config, project_root=project_root, lake_path=lake_path)
     for w in warnings:
         logger.warning(w.message)
     return warnings

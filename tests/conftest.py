@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 from pathlib import Path
@@ -9,6 +10,13 @@ import pytest
 
 from det.logging import clear_secret_values
 from det.plugins import load_plugins
+from det.runtime import registry as reg
+from det.runtime.discovery import (
+    bind_in_tree_plugin_modules,
+    evict_in_tree_plugin_modules,
+    is_in_tree_plugin_module,
+    iter_in_tree_source_specs,
+)
 from det.runtime.secrets import clear_secret_cache
 
 
@@ -24,18 +32,10 @@ def project_root() -> Path:
 
 
 def _snapshot_plugin_modules() -> dict[str, ModuleType]:
-    from det.runtime.discovery import is_in_tree_plugin_module
-
     return {n: sys.modules[n] for n in list(sys.modules) if is_in_tree_plugin_module(n)}
 
 
 def _restore_plugin_snapshot(snapshot: dict[str, ModuleType]) -> None:
-    from det.runtime import registry as reg
-    from det.runtime.discovery import (
-        bind_in_tree_plugin_modules,
-        evict_in_tree_plugin_modules,
-    )
-
     evict_in_tree_plugin_modules()
     bind_in_tree_plugin_modules(snapshot)
     reg._SOURCE_REGISTRY.clear()
@@ -49,9 +49,6 @@ def _restore_plugin_snapshot(snapshot: dict[str, ModuleType]) -> None:
 @pytest.fixture(scope="session")
 def _plugin_module_snapshot() -> dict[str, ModuleType]:
     """In-tree plugin modules after collection (the classes tests patch)."""
-    import importlib
-
-    from det.runtime.discovery import iter_in_tree_source_specs
 
     for _plugin_id, module_name in iter_in_tree_source_specs():
         importlib.import_module(module_name)

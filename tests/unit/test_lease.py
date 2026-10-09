@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+import typer
+import yaml
 
+from det.cli import lock_release
+from det.ingestion.jsonl import write_jsonl_partition
 from det.runtime.lake import clear_memory_lakes, open_lake
 from det.runtime.lease import (
     DEFAULT_LOCK_TTL_SEC,
+    Lease,
     LeaseFencedError,
     LeaseHeldError,
     acquire_lease,
@@ -20,9 +26,12 @@ from det.runtime.lease import (
     pipeline_lease,
     read_lock,
     refresh_lease,
+    release_lease,
     resolve_lock_ttl_sec,
 )
+from det.runtime.manifest import is_committed_raw_dir
 from det.runtime.meta import resolve_interval
+from det.runtime.runner import PipelineRunner
 
 
 @pytest.fixture(autouse=True)
@@ -64,7 +73,10 @@ def test_second_acquire_fails():
             caught.append(exc)
 
     with pipeline_lease(
-        lake, pipeline="noaa.storm_events", interval_start=start, interval_end=end,
+        lake,
+        pipeline="noaa.storm_events",
+        interval_start=start,
+        interval_end=end,
         command="extract",
     ):
         t = threading.Thread(target=other)
@@ -79,11 +91,17 @@ def test_different_intervals_do_not_contend():
     a0, a1 = resolve_interval("2026-08-15", None)
     b0, b1 = resolve_interval("2026-08-16", None)
     with pipeline_lease(
-        lake, pipeline="noaa.storm_events", interval_start=a0, interval_end=a1,
+        lake,
+        pipeline="noaa.storm_events",
+        interval_start=a0,
+        interval_end=a1,
         command="extract",
     ):
         with pipeline_lease(
-            lake, pipeline="noaa.storm_events", interval_start=b0, interval_end=b1,
+            lake,
+            pipeline="noaa.storm_events",
+            interval_start=b0,
+            interval_end=b1,
             command="extract",
         ):
             pass
@@ -93,11 +111,17 @@ def test_nested_same_interval_is_noop():
     lake = _lake()
     start, end = resolve_interval("2026-08-15", None)
     with pipeline_lease(
-        lake, pipeline="example_api.events", interval_start=start, interval_end=end,
+        lake,
+        pipeline="example_api.events",
+        interval_start=start,
+        interval_end=end,
         command="run",
     ):
         with pipeline_lease(
-            lake, pipeline="example_api.events", interval_start=start, interval_end=end,
+            lake,
+            pipeline="example_api.events",
+            interval_start=start,
+            interval_end=end,
             command="extract",
         ):
             pass
@@ -107,12 +131,18 @@ def test_release_then_reacquire():
     lake = _lake()
     start, end = resolve_interval("2026-08-15", None)
     with pipeline_lease(
-        lake, pipeline="example_api.events", interval_start=start, interval_end=end,
+        lake,
+        pipeline="example_api.events",
+        interval_start=start,
+        interval_end=end,
         command="extract",
     ):
         pass
     with pipeline_lease(
-        lake, pipeline="example_api.events", interval_start=start, interval_end=end,
+        lake,
+        pipeline="example_api.events",
+        interval_start=start,
+        interval_end=end,
         command="extract",
     ):
         pass
@@ -135,7 +165,10 @@ def test_expired_steal(monkeypatch: pytest.MonkeyPatch):
         )
     )
     with pipeline_lease(
-        lake, pipeline="noaa.storm_events", interval_start=start, interval_end=end,
+        lake,
+        pipeline="noaa.storm_events",
+        interval_start=start,
+        interval_end=end,
         command="extract",
     ) as lease:
         assert lease is not None
@@ -164,8 +197,12 @@ def test_live_lease_not_stolen():
             caught.append(exc)
 
     with pipeline_lease(
-        lake, pipeline="noaa.storm_events", interval_start=start, interval_end=end,
-        command="extract", ttl_sec=3600,
+        lake,
+        pipeline="noaa.storm_events",
+        interval_start=start,
+        interval_end=end,
+        command="extract",
+        ttl_sec=3600,
     ):
         t = threading.Thread(target=other)
         t.start()
@@ -178,11 +215,17 @@ def test_det_lock_disabled(monkeypatch: pytest.MonkeyPatch):
     lake = _lake()
     start, end = resolve_interval("2026-08-15", None)
     with pipeline_lease(
-        lake, pipeline="noaa.storm_events", interval_start=start, interval_end=end,
+        lake,
+        pipeline="noaa.storm_events",
+        interval_start=start,
+        interval_end=end,
         command="extract",
     ) as a:
         with pipeline_lease(
-            lake, pipeline="noaa.storm_events", interval_start=start, interval_end=end,
+            lake,
+            pipeline="noaa.storm_events",
+            interval_start=start,
+            interval_end=end,
             command="load",
         ) as b:
             assert a is None
@@ -194,7 +237,10 @@ def test_force_release_removes_live_lease():
     start, end = resolve_interval("2026-08-15", None)
     path = lock_path(lake, "noaa.storm_events", start, end)
     with pipeline_lease(
-        lake, pipeline="noaa.storm_events", interval_start=start, interval_end=end,
+        lake,
+        pipeline="noaa.storm_events",
+        interval_start=start,
+        interval_end=end,
         command="extract",
     ):
         payload = force_release_lock(path)
@@ -206,8 +252,12 @@ def test_per_acquire_ttl():
     lake = _lake()
     start, end = resolve_interval("2026-08-15", None)
     with pipeline_lease(
-        lake, pipeline="noaa.storm_events", interval_start=start, interval_end=end,
-        command="extract", ttl_sec=90,
+        lake,
+        pipeline="noaa.storm_events",
+        interval_start=start,
+        interval_end=end,
+        command="extract",
+        ttl_sec=90,
     ) as lease:
         assert lease is not None
         held = read_lock(lease.path)
@@ -227,16 +277,17 @@ def test_advisory_lock_keys_stable():
         "2026-08-16T00:00:00+00:00",
     )
     assert a == b
-    assert a[0] != advisory_lock_keys(
-        "noaa.fatalities",
-        "2026-08-15T00:00:00+00:00",
-        "2026-08-16T00:00:00+00:00",
-    )[0]
+    assert (
+        a[0]
+        != advisory_lock_keys(
+            "noaa.fatalities",
+            "2026-08-15T00:00:00+00:00",
+            "2026-08-16T00:00:00+00:00",
+        )[0]
+    )
 
 
 def test_refresh_lease_uses_bound_store_when_path_missing():
-    from det.runtime.lease import Lease, refresh_lease
-
     calls: list[object] = []
 
     class _Store:
@@ -260,8 +311,6 @@ def test_refresh_lease_uses_bound_store_when_path_missing():
 
 
 def test_read_lock_returns_none_on_undecodable_utf8(tmp_path: Path):
-    from det.runtime.lease import lock_path, read_lock
-
     lake = open_lake(str(tmp_path / "lake"), tmp_path)
     start, end = resolve_interval("2026-08-15", None)
     path = lock_path(lake, "example_api.events", start, end)
@@ -316,7 +365,6 @@ def test_ensure_held_ok_and_fenced_after_steal(tmp_path: Path):
     with pytest.raises(LeaseFencedError):
         assert_lease_held(first)
     assert_lease_held(second)  # type: ignore[arg-type]
-    from det.runtime.lease import release_lease
 
     release_lease(second)  # type: ignore[arg-type]
 
@@ -351,7 +399,6 @@ def test_ensure_held_fenced_after_ttl_expiry_same_token(tmp_path: Path):
     assert held is not None
     assert held.get("token") == token_before
     assert held.get("expires_at") == past
-    from det.runtime.lease import release_lease
 
     release_lease(lease)
 
@@ -378,10 +425,6 @@ def test_extract_fence_preserves_raw_dir(
 
     Scrub arm: test_crash_before_manifest_publish_cleans_prefix.
     """
-    import yaml
-
-    from det.runtime.manifest import is_committed_raw_dir
-    from det.runtime.runner import PipelineRunner
 
     monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path / "lake"))
     schema_src = project_root / "schemas/example_api/events/events.schema.yaml"
@@ -427,10 +470,6 @@ def test_extract_fence_preserves_raw_dir(
 def test_runner_fence_blocks_write_after_steal(
     tmp_path: Path, project_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    import yaml
-
-    from det.runtime.runner import PipelineRunner
-
     monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path / "lake"))
     schema_src = project_root / "schemas/example_api/events/events.schema.yaml"
     schema_dst = tmp_path / "schemas/example_api/events/events.schema.yaml"
@@ -461,7 +500,6 @@ def test_runner_fence_blocks_write_after_steal(
 
     def tracking_write(self, records, **kwargs):  # noqa: ANN001
         writes.append("write")
-        from det.ingestion.jsonl import write_jsonl_partition
 
         return write_jsonl_partition(
             records, kwargs["partition_dir"], chunk_rows=kwargs.get("chunk_rows", 1000)
@@ -472,9 +510,7 @@ def test_runner_fence_blocks_write_after_steal(
         tracking_write,
     )
 
-    extracted = runner.extract(
-        pipe, interval_start="2026-08-06", interval_end="2026-08-07"
-    )
+    extracted = runner.extract(pipe, interval_start="2026-08-06", interval_end="2026-08-07")
 
     def boom(lease, *, store=None):  # noqa: ANN001
         raise LeaseFencedError("injected fence")
@@ -502,13 +538,6 @@ def test_local_exclusive_create(tmp_path: Path):
 def test_runner_second_extract_blocked(
     tmp_path: Path, project_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    import threading
-    import time
-
-    import yaml
-
-    from det.runtime.runner import PipelineRunner
-
     monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path / "lake"))
     schema_src = project_root / "schemas/example_api/events/events.schema.yaml"
     schema_dst = tmp_path / "schemas/example_api/events/events.schema.yaml"
@@ -560,10 +589,6 @@ def test_runner_second_extract_blocked(
 
 
 def test_cli_lock_release_requires_force():
-    import typer
-
-    from det.cli import lock_release
-
     with pytest.raises(typer.BadParameter, match="--force"):
         lock_release(
             ctx=None,
@@ -578,10 +603,6 @@ def test_cli_lock_release_requires_force():
 
 
 def test_cli_lock_release_rejects_blank_dataset_id():
-    import typer
-
-    from det.cli import lock_release
-
     with pytest.raises(typer.BadParameter, match="must not be empty"):
         lock_release(
             ctx=None,
@@ -596,10 +617,6 @@ def test_cli_lock_release_rejects_blank_dataset_id():
 
 
 def test_cli_lock_release_rejects_invalid_dataset_id():
-    import typer
-
-    from det.cli import lock_release
-
     with pytest.raises(typer.BadParameter, match="canonical id"):
         lock_release(
             ctx=None,
@@ -614,10 +631,6 @@ def test_cli_lock_release_rejects_invalid_dataset_id():
 
 
 def test_cli_lock_release_rejects_mixed_dataset_and_interval():
-    import typer
-
-    from det.cli import lock_release
-
     with pytest.raises(typer.BadParameter, match="cannot be combined"):
         lock_release(
             ctx=None,

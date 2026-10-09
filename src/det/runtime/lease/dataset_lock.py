@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import replace
 from typing import Any
 
 from det.runtime.ids import validate_canonical_id
@@ -68,12 +69,13 @@ def open_dataset_lock_store(
     if options.backend == "lake":
         return LakeDatasetLockStore(lake)
     if options.backend == "postgres":
-        from det.runtime.lease.dataset_lock_postgres import PostgresDatasetLockStore
+        # postgres store imports names from this module.
+        from det.runtime.lease.dataset_lock_postgres import (  # noqa: PLC0415
+            PostgresDatasetLockStore,
+        )
 
         if resolve_secret is None:
-            raise ValueError(
-                "postgres dataset lock backend requires settings.resolve_secret"
-            )
+            raise ValueError("postgres dataset lock backend requires settings.resolve_secret")
         return PostgresDatasetLockStore(
             resolve_secret=resolve_secret,
             dsn_env=options.pg_dsn_env,
@@ -92,11 +94,7 @@ def _resolve_opts(
     options: ResolvedLeaseOptions | None,
     env: Mapping[str, str] | None,
 ) -> ResolvedLeaseOptions:
-    from dataclasses import replace
-
-    opts = options or resolve_lease_options(
-        env=env, ttl_sec=ttl_sec, owner=owner, enabled=enabled
-    )
+    opts = options or resolve_lease_options(env=env, ttl_sec=ttl_sec, owner=owner, enabled=enabled)
     if enabled is not None:
         opts = replace(opts, enabled=enabled)
     if ttl_sec is not None:
@@ -121,20 +119,14 @@ def _acquire_shared_handle(
     resolve_secret: Any | None,
     store: DatasetLockStore | None,
 ) -> DatasetLockHandle | None:
-    opts = _resolve_opts(
-        ttl_sec=ttl_sec, owner=owner, enabled=enabled, options=options, env=env
-    )
+    opts = _resolve_opts(ttl_sec=ttl_sec, owner=owner, enabled=enabled, options=options, env=env)
     if not opts.enabled:
         return None
-    ttl = resolve_lock_ttl_sec(
-        ttl_sec if ttl_sec is not None else opts.ttl_sec, env=env
-    )
+    ttl = resolve_lock_ttl_sec(ttl_sec if ttl_sec is not None else opts.ttl_sec, env=env)
     who = owner or opts.owner or default_lock_owner(env)
     cid = validate_canonical_id(dataset_id)
     nested = _DATASET_HELD.get()
-    active_store = store or open_dataset_lock_store(
-        lake, opts, resolve_secret=resolve_secret
-    )
+    active_store = store or open_dataset_lock_store(lake, opts, resolve_secret=resolve_secret)
     if nested == cid:
         active = _DATASET_ACTIVE.get()
         if active is not None:
@@ -212,9 +204,7 @@ def dataset_shared_lock(
     options: ResolvedLeaseOptions | None = None,
     resolve_secret: Any | None = None,
 ) -> Iterator[DatasetLockHandle | None]:
-    opts = _resolve_opts(
-        ttl_sec=ttl_sec, owner=owner, enabled=enabled, options=options, env=env
-    )
+    opts = _resolve_opts(ttl_sec=ttl_sec, owner=owner, enabled=enabled, options=options, env=env)
     store: DatasetLockStore | None = None
     if opts.enabled:
         store = open_dataset_lock_store(lake, opts, resolve_secret=resolve_secret)
@@ -266,15 +256,11 @@ def dataset_exclusive_lock(
     wait_sec: int | None = None,
     poll_interval: float = 0.2,
 ) -> Iterator[DatasetLockHandle | None]:
-    opts = _resolve_opts(
-        ttl_sec=ttl_sec, owner=owner, enabled=enabled, options=options, env=env
-    )
+    opts = _resolve_opts(ttl_sec=ttl_sec, owner=owner, enabled=enabled, options=options, env=env)
     if not opts.enabled:
         yield None
         return
-    ttl = resolve_lock_ttl_sec(
-        ttl_sec if ttl_sec is not None else opts.ttl_sec, env=env
-    )
+    ttl = resolve_lock_ttl_sec(ttl_sec if ttl_sec is not None else opts.ttl_sec, env=env)
     who = owner or opts.owner or default_lock_owner(env)
     cid = validate_canonical_id(dataset_id)
     if _DATASET_HELD.get() == cid:

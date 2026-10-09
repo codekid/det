@@ -10,6 +10,11 @@ from typing import Any
 import pytest
 
 from det.ingestion.det_backend import DetBackend
+from det.ingestion.iceberg_writer import (
+    load_iceberg_table,
+    scan_iceberg_rows,
+    write_iceberg_table,
+)
 from det.runtime.config import (
     DestinationConfig,
     IngestionConfig,
@@ -17,6 +22,7 @@ from det.runtime.config import (
     PipelineConfig,
     SourceConfig,
 )
+from det.runtime.lake import open_lake
 from det.runtime.meta import identity_iso
 
 Interval = tuple[str, str, str]
@@ -90,11 +96,7 @@ class _FsHarness:
         self.backend = DetBackend()
 
     def write(self, records: list[dict[str, Any]], *, identity: Interval) -> None:
-        part = (
-            self.tmp_path
-            / "bronze"
-            / f"run={identity[2].replace(':', '').replace('+', 'Z')}"
-        )
+        part = self.tmp_path / "bronze" / f"run={identity[2].replace(':', '').replace('+', 'Z')}"
         self.backend.write(
             records,
             config=self.config,
@@ -105,11 +107,7 @@ class _FsHarness:
         )
 
     def rows_for(self, extract_run: str) -> list[dict[str, Any]]:
-        part = (
-            self.tmp_path
-            / "bronze"
-            / f"run={extract_run.replace(':', '').replace('+', 'Z')}"
-        )
+        part = self.tmp_path / "bronze" / f"run={extract_run.replace(':', '').replace('+', 'Z')}"
         data = part / "data.jsonl"
         if not data.exists():
             return []
@@ -146,7 +144,7 @@ class _DuckHarness:
         )
 
     def rows_for(self, extract_run: str) -> list[dict[str, Any]]:
-        import duckdb
+        import duckdb  # noqa: PLC0415
 
         if not self.db_path.exists():
             return []
@@ -194,7 +192,7 @@ class _PgHarness:
         self._drop()
 
     def _drop(self) -> None:
-        import psycopg
+        import psycopg  # noqa: PLC0415
 
         with psycopg.connect(self.dsn) as con:
             con.execute("drop schema if exists bronze_noaa cascade")
@@ -211,7 +209,7 @@ class _PgHarness:
         )
 
     def rows_for(self, extract_run: str) -> list[dict[str, Any]]:
-        import psycopg
+        import psycopg  # noqa: PLC0415
 
         with psycopg.connect(self.dsn) as con:
             cur = con.execute(
@@ -244,12 +242,6 @@ class _IcebergHarness:
     def __init__(self, tmp_path: Path) -> None:
         pytest.importorskip("pyiceberg")
         pytest.importorskip("pyarrow")
-        from det.ingestion.iceberg_writer import (
-            load_iceberg_table,
-            scan_iceberg_rows,
-            write_iceberg_table,
-        )
-        from det.runtime.lake import open_lake
 
         self.tmp_path = tmp_path
         self.lake = open_lake(str(tmp_path / "lake"), tmp_path)
@@ -290,12 +282,8 @@ class _IcebergHarness:
                     "event_id": r.get("event_id"),
                     "label": r.get("label"),
                     "__row_hash": r.get("__row_hash"),
-                    "__interval_start_datetime": identity_iso(
-                        r["__interval_start_datetime"]
-                    ),
-                    "__interval_end_datetime": identity_iso(
-                        r["__interval_end_datetime"]
-                    ),
+                    "__interval_start_datetime": identity_iso(r["__interval_start_datetime"]),
+                    "__interval_end_datetime": identity_iso(r["__interval_end_datetime"]),
                     "__extract_run_datetime": run,
                 }
             )

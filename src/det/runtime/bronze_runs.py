@@ -9,9 +9,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import det.ingestion.iceberg_writer as iceberg_writer
 from det.destinations.models import (
     bronze_dataset_dir,
     duckdb_connection_path,
+    lake_root,
     postgres_dsn,
 )
 from det.optional_deps import require_duckdb
@@ -206,7 +208,7 @@ def _list_bronze_sql_runs(
 
     if dest.type == "postgres":
         try:
-            import psycopg
+            import psycopg  # noqa: PLC0415
         except ImportError:
             return [], (
                 'Postgres inspect requires the optional extra: pip install -e ".[postgres]"'
@@ -239,9 +241,7 @@ def _list_bronze_sql_runs(
                     order by 1, 2, 3
                     limit %s
                     """  # noqa: S608
-                cur.execute(
-                    query, (*params, limit)
-                )  # pyright: ignore[reportArgumentType]
+                cur.execute(query, (*params, limit))  # pyright: ignore[reportArgumentType]
                 rows = cur.fetchall()
         return [
             run_dict(
@@ -264,16 +264,13 @@ def _list_bronze_iceberg_runs(
     interval_end: str | None = None,
     extract_run_since: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
-    from det.destinations.models import lake_root
-    from det.ingestion.iceberg_writer import list_iceberg_extract_runs, load_iceberg_table
-
     schema, table = sql_names_for_config(config)
     window: tuple[str, str] | None = None
     if interval_start is not None:
         window = resolve_interval(interval_start, interval_end)
     since = identity_iso(extract_run_since) if extract_run_since else None
     try:
-        ice = load_iceberg_table(
+        ice = iceberg_writer.load_iceberg_table(
             lake=lake_root(config.destination, root),
             namespace=schema,
             table=table,
@@ -283,7 +280,7 @@ def _list_bronze_iceberg_runs(
         return [], str(exc)
     if ice is None:
         return [], f"Iceberg table not found: {schema}.{table}"
-    rows = list_iceberg_extract_runs(
+    rows = iceberg_writer.list_iceberg_extract_runs(
         ice,
         window_start=window[0] if window else None,
         window_end=window[1] if window else None,

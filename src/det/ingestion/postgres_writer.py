@@ -26,7 +26,7 @@ def _cell(value: Any) -> Any:
 
 def _import_psycopg():
     try:
-        import psycopg
+        import psycopg  # noqa: PLC0415
     except ImportError as exc:
         raise ImportError(
             'Postgres destination requires the optional extra: pip install -e ".[postgres]"'
@@ -102,14 +102,10 @@ def write_postgres_table(
                 if first_chunk is not None:
                     col_list = ", ".join(quote_ident(c) for c in columns)
                     placeholders = ", ".join(["%s"] * len(columns))
-                    insert_sql = (
-                        f"INSERT INTO {qualified} ({col_list}) VALUES ({placeholders})"
-                    )
+                    insert_sql = f"INSERT INTO {qualified} ({col_list}) VALUES ({placeholders})"
 
                     def _insert(chunk: list[dict[str, Any]]) -> None:
-                        rows = [
-                            tuple(_cell(row.get(c)) for c in columns) for row in chunk
-                        ]
+                        rows = [tuple(_cell(row.get(c)) for c in columns) for row in chunk]
                         cur.executemany(insert_sql, rows)  # type: ignore[arg-type]
 
                     assert_chunk_matches_identity(first_chunk, identity)

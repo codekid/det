@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 from det.logging import get_logger
+from det.runtime.slo import SLO_SEED_RELPATH
 from det.scaffold.dbt import (
     _bootstrap_generate_schema_name,
     _ensure_under_root,
@@ -74,15 +75,9 @@ _OPS_SEED_CONFIG: dict[str, Any] = {
         "pipeline": "{% if target.name == 'bigquery' %}string{% else %}varchar{% endif %}",
         "command": "{% if target.name == 'bigquery' %}string{% else %}varchar{% endif %}",
         "cadence": "{% if target.name == 'bigquery' %}string{% else %}varchar{% endif %}",
-        "recency_hours": (
-            "{% if target.name == 'bigquery' %}int64{% else %}integer{% endif %}"
-        ),
-        "score_hours": (
-            "{% if target.name == 'bigquery' %}int64{% else %}integer{% endif %}"
-        ),
-        "max_error_rate": (
-            "{% if target.name == 'bigquery' %}float64{% else %}double{% endif %}"
-        ),
+        "recency_hours": ("{% if target.name == 'bigquery' %}int64{% else %}integer{% endif %}"),
+        "score_hours": ("{% if target.name == 'bigquery' %}int64{% else %}integer{% endif %}"),
+        "max_error_rate": ("{% if target.name == 'bigquery' %}float64{% else %}double{% endif %}"),
         "p95_ms": "{% if target.name == 'bigquery' %}int64{% else %}integer{% endif %}",
     },
 }
@@ -325,7 +320,6 @@ def scaffold_ops(
     regenerated. ``dbt_project.yml`` / ``profiles.yml`` are merged so ops config
     exists without wiping unrelated keys.
     """
-    from det.runtime.slo import SLO_SEED_RELPATH
 
     root = project_root.resolve()
     dbt_root = root / "dbt"

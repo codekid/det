@@ -5,9 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import structlog
 import yaml
+from typer.testing import CliRunner
 
 from det.cli import app
+from det.logging import configure_logging
 from det.mcp.tools import scaffold_ops_dry_run
 from det.scaffold import ops as ops_mod
 from det.scaffold.ops import iter_ops_template_pairs, scaffold_ops
@@ -17,9 +20,9 @@ def test_ops_templates_match_monorepo_canonical():
     for label, canonical, template in iter_ops_template_pairs():
         assert canonical.is_file(), f"missing canonical {label}"
         assert template.is_file(), f"missing template for {label}"
-        assert canonical.read_text(encoding="utf-8") == template.read_text(
-            encoding="utf-8"
-        ), f"drift between {label} and packaged template"
+        assert canonical.read_text(encoding="utf-8") == template.read_text(encoding="utf-8"), (
+            f"drift between {label} and packaged template"
+        )
 
 
 def test_scaffold_ops_dry_run_and_write(tmp_path: Path):
@@ -52,9 +55,7 @@ def test_scaffold_ops_skips_existing_without_force(tmp_path: Path):
 
     again = scaffold_ops(project_root=tmp_path, force=False, dry_run=False)
     assert stg.read_text(encoding="utf-8") == "-- custom\n"
-    assert any(
-        a.action == "skip" and a.path == stg.resolve() for a in again.actions
-    )
+    assert any(a.action == "skip" and a.path == stg.resolve() for a in again.actions)
 
     forced = scaffold_ops(project_root=tmp_path, force=True, dry_run=False)
     text = stg.read_text(encoding="utf-8")
@@ -71,9 +72,7 @@ def test_scaffold_ops_never_overwrites_generate_schema_name(tmp_path: Path):
 
     forced = scaffold_ops(project_root=tmp_path, force=True, dry_run=False)
     assert macro.read_text(encoding="utf-8") == "-- embedder custom\n"
-    assert any(
-        a.action == "skip" and a.path == macro.resolve() for a in forced.actions
-    )
+    assert any(a.action == "skip" and a.path == macro.resolve() for a in forced.actions)
     # DET-owned macro still refreshes under --force.
     compat = tmp_path / "dbt" / "macros" / "det_sql_compat.sql"
     assert any(a.action == "write" and a.path == compat.resolve() for a in forced.actions)
@@ -165,11 +164,6 @@ def test_scaffold_ops_rejects_destination_outside_project_root(
 
 
 def test_scaffold_ops_cli_dry_run(tmp_path: Path):
-    import structlog
-    from typer.testing import CliRunner
-
-    from det.logging import configure_logging
-
     runner = CliRunner()
     try:
         result = runner.invoke(

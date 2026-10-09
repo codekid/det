@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from datetime import UTC, datetime, timedelta
@@ -7,9 +8,12 @@ from pathlib import Path
 
 import pytest
 import structlog
+import typer.main
+import yaml
 from typer.testing import CliRunner
 
-from det.cli import app
+from det.cli import app, common
+from det.cli.common import _BOUND_PARAMS, _NEUTRAL_PARAMS, _approval_lake_kwargs, _settings
 from det.logging import configure_logging
 from det.runtime.approval import (
     ApprovalError,
@@ -37,6 +41,11 @@ from det.runtime.approval import (
     silver_catchup_cleanup_write_argv,
     silver_catchup_plan_write_argv,
 )
+from det.runtime.approval_bound import APPROVAL_BOUND_PARAMS, CLI_ONLY_BOUND_PARAMS
+from det.runtime.biglake_register import biglake_register_write_argv
+from det.runtime.iceberg_register import iceberg_register_write_argv
+from det.runtime.runner import PipelineRunner
+from det.runtime.settings import DetSettings
 
 NOW = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
 
@@ -226,7 +235,6 @@ def test_cli_approve_show_consume_round_trip(tmp_path: Path, monkeypatch):
     pipeline = _pipe_yaml(tmp_path)
     # Approve by canonical id and bare date; invoke by YAML path. Both surfaces
     # normalize to the same argv, so the digest still matches.
-    from det.cli.common import _approval_lake_kwargs, _settings
 
     argv = prune_write_argv(
         "noaa.storm_events",
@@ -348,7 +356,6 @@ def test_cli_lake_path_under_valid_approval_is_rejected(tmp_path: Path, monkeypa
     """--lake-path redirects where data lands, so it must be inside the digest."""
     monkeypatch.delenv("DET_APPROVED_BY", raising=False)
     pipeline = _pipe_yaml(tmp_path)
-    from det.cli.common import _approval_lake_kwargs, _settings
 
     argv = prune_write_argv(
         "noaa.storm_events",
@@ -357,9 +364,7 @@ def test_cli_lake_path_under_valid_approval_is_rejected(tmp_path: Path, monkeypa
         keep=1,
         **_approval_lake_kwargs(_settings(tmp_path)),
     )
-    rec = create_approval(
-        tmp_path, command="prune", argv=argv, approved_by="tester", now=None
-    )
+    rec = create_approval(tmp_path, command="prune", argv=argv, approved_by="tester", now=None)
     monkeypatch.setenv("DET_REQUIRE_APPROVAL", "1")
     result = _invoke(
         [
@@ -391,7 +396,6 @@ def test_cli_unbound_flag_is_rejected_fail_closed(tmp_path: Path, monkeypatch):
     This is the property pure argv binding cannot provide: a flag added to the CLI
     later cannot silently escape plan_digest.
     """
-    from det.cli import common
 
     monkeypatch.delenv("DET_APPROVED_BY", raising=False)
     # Simulate a newly added flag by dropping --keep from prune's bound set.
@@ -401,7 +405,6 @@ def test_cli_unbound_flag_is_rejected_fail_closed(tmp_path: Path, monkeypatch):
         common._BOUND_PARAMS["prune"] - {"keep"},
     )
     pipeline = _pipe_yaml(tmp_path)
-    from det.cli.common import _approval_lake_kwargs, _settings
 
     argv = prune_write_argv(
         "noaa.storm_events",
@@ -468,9 +471,7 @@ def test_mutating_flags_change_the_digest():
     base = extract_write_argv("noaa.storm_events", "2026-08-06")
     redirected = extract_write_argv("noaa.storm_events", "2026-08-06", lake_path="s3://other")
     overridden = extract_write_argv("noaa.storm_events", "2026-08-06", set_=["destination.path=/x"])
-    digests = {
-        make_plan("extract", argv).plan_digest for argv in (base, redirected, overridden)
-    }
+    digests = {make_plan("extract", argv).plan_digest for argv in (base, redirected, overridden)}
     assert len(digests) == 3
 
 
@@ -485,16 +486,13 @@ def test_dbt_full_refresh_and_target_are_bound():
     base = dbt_write_argv("noaa.storm_events")
     refreshed = dbt_write_argv("noaa.storm_events", full_refresh=True)
     retargeted = dbt_write_argv("noaa.storm_events", target="prod")
-    catchup = dbt_write_argv(
-        "noaa.storm_events", catchup=True, catchup_manifest=mid
-    )
+    catchup = dbt_write_argv("noaa.storm_events", catchup=True, catchup_manifest=mid)
     assert "--full-refresh" in refreshed
     assert "--catchup" in catchup
     assert "--catchup-manifest" in catchup and mid in catchup
     assert ["--target", "prod"] == retargeted[-2:]
     digests = {
-        make_plan("dbt", argv).plan_digest
-        for argv in (base, refreshed, retargeted, catchup)
+        make_plan("dbt", argv).plan_digest for argv in (base, refreshed, retargeted, catchup)
     }
     assert len(digests) == 4
 
@@ -706,7 +704,6 @@ def test_cli_release_round_trip(tmp_path: Path, monkeypatch):
 
 def test_cli_release_honors_lake_path(tmp_path: Path, monkeypatch):
     """approval-release must open the same {ops}/approvals as the claimed run."""
-    from det.runtime.settings import DetSettings
 
     monkeypatch.delenv("DET_APPROVED_BY", raising=False)
     monkeypatch.delenv("DET_LAKE_PATH", raising=False)
@@ -716,9 +713,7 @@ def test_cli_release_honors_lake_path(tmp_path: Path, monkeypatch):
 
     lake = tmp_path / "alt-lake"
     lake.mkdir()
-    settings = DetSettings.from_env(project_root=tmp_path).with_overrides(
-        lake_override=str(lake)
-    )
+    settings = DetSettings.from_env(project_root=tmp_path).with_overrides(lake_override=str(lake))
     rec = create_approval(
         tmp_path,
         command="prune",
@@ -790,10 +785,6 @@ def test_every_gated_command_param_is_classified():
     deciding whether it changes the write, rather than leaving the runtime
     backstop to reject it in front of an operator.
     """
-    import typer.main
-
-    from det.cli import app
-    from det.cli.common import _BOUND_PARAMS, _NEUTRAL_PARAMS
 
     group = typer.main.get_command(app)
     unclassified: dict[str, list[str]] = {}
@@ -811,10 +802,6 @@ def test_every_gated_command_param_is_classified():
 
 def test_gated_commands_are_all_covered():
     """Every command that gates an approval needs an entry in _BOUND_PARAMS."""
-    import typer.main
-
-    from det.cli import app
-    from det.cli.common import _BOUND_PARAMS
 
     group = typer.main.get_command(app)
     gated = {
@@ -873,15 +860,12 @@ def test_migrate_write_argv_all_raw_and_all_raw_runs():
     )
     assert "-s" in with_window
     assert "--all-raw-runs" in with_window
-    assert make_plan("migrate", argv).plan_digest != make_plan(
-        "migrate", with_window
-    ).plan_digest
+    assert make_plan("migrate", argv).plan_digest != make_plan("migrate", with_window).plan_digest
 
 
 def test_failed_write_prints_claimed_approval_hint(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
     pipeline = _pipe_yaml(tmp_path)
-    from det.cli.common import _approval_lake_kwargs, _settings
 
     # Match CLI gate: effective layout + configured DET_LAKE_PATH* when present.
     argv = extract_write_argv(
@@ -925,11 +909,8 @@ def test_failed_write_prints_claimed_approval_hint(tmp_path: Path, monkeypatch):
 def test_dbt_config_load_failure_prints_claimed_approval_hint(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
     pipeline = _pipe_yaml(tmp_path)
-    from det.cli.common import _approval_lake_kwargs, _settings
 
-    argv = dbt_write_argv(
-        "noaa.storm_events", **_approval_lake_kwargs(_settings(tmp_path))
-    )
+    argv = dbt_write_argv("noaa.storm_events", **_approval_lake_kwargs(_settings(tmp_path)))
     rec = _create(tmp_path, command="dbt", argv=argv, now=None)
     approval_id = rec["id"]
 
@@ -960,11 +941,6 @@ def test_dbt_config_load_failure_prints_claimed_approval_hint(tmp_path: Path, mo
 
 def test_bound_params_match_write_argv_signatures():
     """Builder kwargs and APPROVAL_BOUND_PARAMS stay in lockstep (minus CLI-only)."""
-    import inspect
-
-    from det.runtime.approval_bound import APPROVAL_BOUND_PARAMS, CLI_ONLY_BOUND_PARAMS
-    from det.runtime.biglake_register import biglake_register_write_argv
-    from det.runtime.iceberg_register import iceberg_register_write_argv
 
     builders = {
         "extract": extract_write_argv,
@@ -997,9 +973,7 @@ def test_bound_params_match_write_argv_signatures():
 def test_bound_params_spot_check_argv_tokens():
     """A few builders still prove kwargs change canonical argv tokens."""
     base = extract_write_argv("noaa.storm_events", "2026-08-06")
-    with_lake = extract_write_argv(
-        "noaa.storm_events", "2026-08-06", lake_path="/tmp/lake"
-    )
+    with_lake = extract_write_argv("noaa.storm_events", "2026-08-06", lake_path="/tmp/lake")
     assert "--lake-path" in with_lake and with_lake != base
     prune_base = prune_write_argv("example_api.events", "2026-08-01")
     prune_keep = prune_write_argv("example_api.events", "2026-08-01", keep=3)
@@ -1009,14 +983,9 @@ def test_bound_params_spot_check_argv_tokens():
     assert "--full-refresh" in dbt_fr and dbt_fr != dbt_base
 
 
-
 def test_migrate_dry_run_failure_skips_claimed_hint(
     tmp_path: Path, project_root: Path, monkeypatch
 ):
-    import yaml
-
-    from det.runtime.runner import PipelineRunner
-
     monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
     pipeline = {
         "name": "example_api.events",
@@ -1079,8 +1048,6 @@ def test_migrate_dry_run_failure_skips_claimed_hint(
 
 def test_approval_lake_kwargs_binds_configured_path(tmp_path: Path, monkeypatch):
     """DET_LAKE_PATH binds --lake-path; implicit default omitted; no layout flag."""
-    from det.cli.common import _approval_lake_kwargs, _settings
-    from det.runtime.approval import extract_write_argv, make_plan, prune_write_argv
 
     monkeypatch.delenv("DET_LAKE_PATH", raising=False)
     monkeypatch.delenv("DET_LAKE_PATH_RAW", raising=False)
@@ -1105,22 +1072,19 @@ def test_approval_lake_kwargs_binds_configured_path(tmp_path: Path, monkeypatch)
     assert str(tmp_path / "ci-lake") in extract_argv
     assert "--lake-layout" not in extract_argv
 
-    prune_argv = prune_write_argv(
-        "noaa.storm_events", "2026-08-06", **configured_kw
-    )
+    prune_argv = prune_write_argv("noaa.storm_events", "2026-08-06", **configured_kw)
     assert "--lake-path" in prune_argv
     assert "--lake-layout" not in prune_argv
-    assert make_plan("extract", extract_argv).plan_digest != make_plan(
-        "extract",
-        extract_write_argv(
-            "noaa.storm_events", "2026-08-06", interval_end="2026-08-07"
-        ),
-    ).plan_digest
+    assert (
+        make_plan("extract", extract_argv).plan_digest
+        != make_plan(
+            "extract",
+            extract_write_argv("noaa.storm_events", "2026-08-06", interval_end="2026-08-07"),
+        ).plan_digest
+    )
 
 
 def test_approval_lake_kwargs_binds_split_roots(tmp_path: Path, monkeypatch):
-    from det.cli.common import _approval_lake_kwargs, _settings
-
     monkeypatch.delenv("DET_LAKE_PATH", raising=False)
     monkeypatch.setenv("DET_LAKE_PATH_RAW", str(tmp_path / "raw"))
     monkeypatch.setenv("DET_LAKE_PATH_BRONZE", str(tmp_path / "bronze"))
@@ -1135,11 +1099,8 @@ def test_approval_lake_kwargs_binds_split_roots(tmp_path: Path, monkeypatch):
     assert "lake_layout" not in kw
 
 
-def test_approval_lake_kwargs_rejects_lake_path_with_split_roots(
-    tmp_path: Path, monkeypatch
-):
+def test_approval_lake_kwargs_rejects_lake_path_with_split_roots(tmp_path: Path, monkeypatch):
     """Explicit --lake-path must not silently lose to DET_LAKE_PATH_* in digests."""
-    from det.cli.common import _approval_lake_kwargs, _settings
 
     monkeypatch.setenv("DET_LAKE_PATH_RAW", str(tmp_path / "raw"))
     monkeypatch.setenv("DET_LAKE_PATH_BRONZE", str(tmp_path / "bronze"))
@@ -1148,12 +1109,8 @@ def test_approval_lake_kwargs_rejects_lake_path_with_split_roots(
         _approval_lake_kwargs(_settings(tmp_path, lake_path=str(tmp_path / "other")))
 
 
-def test_migrate_write_argv_with_approval_lake_kwargs_binds_path(
-    tmp_path: Path, monkeypatch
-):
+def test_migrate_write_argv_with_approval_lake_kwargs_binds_path(tmp_path: Path, monkeypatch):
     """Dry-run / CLI gate share _approval_lake_kwargs so digests include lake path."""
-    from det.cli.common import _approval_lake_kwargs, _settings
-    from det.runtime.approval import migrate_write_argv
 
     monkeypatch.delenv("DET_LAKE_LAYOUT", raising=False)
     monkeypatch.setenv("DET_LAKE_PATH", str(tmp_path / "ci-lake"))

@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+import det.ingestion.iceberg_writer as iceberg_writer
 from det.destinations.models import (
     bronze_dataset_dir,
     hive_partition_dir,
@@ -23,7 +24,7 @@ from det.runtime.config import (
     ValidationConfig,
     load_pipeline,
 )
-from det.runtime.ids import validate_canonical_id
+from det.runtime.ids import sql_names_for_config, validate_canonical_id
 from det.runtime.lake import LakeRef
 from det.runtime.lake import relpath as lake_relpath
 from det.runtime.lease import pipeline_lease, refresh_bronze_locks, resolve_lease_options
@@ -180,18 +181,14 @@ def _raw_partitions_for_migrate(
     if not raw_dataset.exists():
         return parts
     for start_dir in sorted(raw_dataset.iterdir()):
-        if not start_dir.is_dir() or not start_dir.name.startswith(
-            "__interval_start_datetime="
-        ):
+        if not start_dir.is_dir() or not start_dir.name.startswith("__interval_start_datetime="):
             continue
         key = start_dir.name.split("=", 1)[1]
         if start_key is not None and end_key is not None:
             if not (start_key <= key < end_key):
                 continue
         for end_dir in sorted(start_dir.iterdir()):
-            if not end_dir.is_dir() or not end_dir.name.startswith(
-                "__interval_end_datetime="
-            ):
+            if not end_dir.is_dir() or not end_dir.name.startswith("__interval_end_datetime="):
                 continue
             runs = committed_extract_run_dirs(end_dir)
             if not runs:
@@ -333,9 +330,7 @@ class BronzeMigrator:
             raise ValueError("-s/--interval-start is required unless --all-raw")
 
         job_ts = format_extract_run_datetime()
-        config = load_pipeline(
-            pipeline, project_root=self.project_root, overrides=overrides
-        )
+        config = load_pipeline(pipeline, project_root=self.project_root, overrides=overrides)
         if bronze_prefix is not None or raw_prefix is not None:
             config.medallion = MedallionConfig(
                 bronze_prefix=bronze_prefix or config.medallion.bronze_prefix,
@@ -370,20 +365,23 @@ class BronzeMigrator:
             if lake_path is None
             else self.settings.with_overrides(lake_override=lake_path)
         )
-        with use_settings(ctx_settings), bound_run_context(
-            command="migrate",
-            pipeline=config.name,
-            interval_start=window_start,
-            interval_end=window_end,
-            extract_run_datetime=job_ts,
-            destination=config.destination.type,
-            lake=sanitize_lake_uri(
-                str(
-                    lake_roots_for(
-                        self.project_root,
-                        settings=ctx_settings,
-                    ).ops
-                )
+        with (
+            use_settings(ctx_settings),
+            bound_run_context(
+                command="migrate",
+                pipeline=config.name,
+                interval_start=window_start,
+                interval_end=window_end,
+                extract_run_datetime=job_ts,
+                destination=config.destination.type,
+                lake=sanitize_lake_uri(
+                    str(
+                        lake_roots_for(
+                            self.project_root,
+                            settings=ctx_settings,
+                        ).ops
+                    )
+                ),
             ),
         ):
             raw_name = validate_canonical_id(from_raw or config.bronze_dataset())
@@ -443,9 +441,7 @@ class BronzeMigrator:
             )
             to_config._lake_id = to_bronze_id
 
-            bronze_loc = bronze_dataset_dir(
-                to_config, self.project_root, dataset=to_bronze_id
-            )
+            bronze_loc = bronze_dataset_dir(to_config, self.project_root, dataset=to_bronze_id)
             recreate_warning = None
             yaml_partition = None
             if recreate_iceberg:
@@ -496,9 +492,6 @@ class BronzeMigrator:
                 )
 
             if recreate_iceberg:
-                from det.ingestion.iceberg_writer import purge_iceberg_table
-                from det.runtime.ids import sql_names_for_config
-
                 sql_schema, sql_table = sql_names_for_config(to_config)
                 migrate_roots = lake_roots_for(
                     self.project_root,
@@ -537,7 +530,7 @@ class BronzeMigrator:
                         all_raw=all_raw,
                         all_raw_runs=all_raw_runs,
                     )
-                    purge_iceberg_table(
+                    iceberg_writer.purge_iceberg_table(
                         lake=migrate_bronze,
                         table_location=bronze_loc,
                         namespace=sql_schema,

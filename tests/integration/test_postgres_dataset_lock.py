@@ -12,9 +12,7 @@ from det.runtime.lease import LeaseFencedError, LeaseHeldError
 from det.runtime.lease.dataset_lock import assert_dataset_lock_held
 from det.runtime.lease.dataset_lock_postgres import PostgresDatasetLockStore
 
-_DSN = (
-    os.environ.get("DET_LOCK_PG_DSN") or os.environ.get("DET_POSTGRES_DSN") or ""
-).strip()
+_DSN = (os.environ.get("DET_LOCK_PG_DSN") or os.environ.get("DET_POSTGRES_DSN") or "").strip()
 
 
 def _postgres_available() -> bool:
@@ -54,7 +52,7 @@ def store(monkeypatch: pytest.MonkeyPatch):
     )
     s.ensure()
     yield s
-    import psycopg
+    import psycopg  # noqa: PLC0415
 
     with psycopg.connect(_DSN) as conn:
         with conn.cursor() as cur:
@@ -123,7 +121,7 @@ def test_postgres_ensure_held_fences_lost_token(store) -> None:
         ttl_sec=120,
         owner="stale",
     )
-    import psycopg
+    import psycopg  # noqa: PLC0415
 
     past = datetime.now(UTC) - timedelta(seconds=5)
     with psycopg.connect(_DSN) as conn:

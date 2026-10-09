@@ -8,11 +8,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+import det
+from det.ingestion.jsonl import write_jsonl_partition
+
 
 def main() -> int:
-    import det
-    from det.ingestion.jsonl import write_jsonl_partition
-
     typed = importlib.resources.files("det").joinpath("py.typed")
     if not typed.is_file():
         print("py.typed missing from package", file=sys.stderr)

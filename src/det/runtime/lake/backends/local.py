@@ -19,7 +19,7 @@ logger = get_logger("det.runtime.lake")
 
 def _lake_pkg():
     """Resolve package module at call time so tests can monkeypatch it."""
-    import det.runtime.lake as lake_mod
+    import det.runtime.lake as lake_mod  # noqa: PLC0415
 
     return lake_mod
 
@@ -63,21 +63,15 @@ def _local_read_gen(key: str) -> int:
     except FileNotFoundError:
         return 0
     except OSError as exc:
-        raise RuntimeError(
-            f"local lease generation unreadable for {key}: {exc}"
-        ) from exc
+        raise RuntimeError(f"local lease generation unreadable for {key}: {exc}") from exc
     except UnicodeDecodeError as exc:
-        raise RuntimeError(
-            f"local lease generation not utf-8 for {key}"
-        ) from exc
+        raise RuntimeError(f"local lease generation not utf-8 for {key}") from exc
     if not text:
         raise RuntimeError(f"local lease generation empty for {key}")
     try:
         value = int(text)
     except ValueError as exc:
-        raise RuntimeError(
-            f"local lease generation corrupt for {key}: {text!r}"
-        ) from exc
+        raise RuntimeError(f"local lease generation corrupt for {key}: {text!r}") from exc
     if value < 0:
         raise RuntimeError(f"local lease generation negative for {key}: {value}")
     return value
@@ -151,11 +145,7 @@ class _LocalBackend(_Backend):
             return []
         if p.is_file():
             return [] if _is_local_sidecar(p) else [str(p)]
-        return sorted(
-            str(c)
-            for c in p.rglob("*")
-            if c.is_file() and not _is_local_sidecar(c)
-        )
+        return sorted(str(c) for c in p.rglob("*") if c.is_file() and not _is_local_sidecar(c))
 
     def open(self, key: str, mode: str, **kwargs):
         encoding = kwargs.get("encoding")
@@ -209,9 +199,7 @@ class _LocalBackend(_Backend):
             if current is None or current != expected_version:
                 raise ObjectVersionConflict(key)
             path = Path(key)
-            tmp = path.with_name(
-                f".{path.name}.tmp.{os.getpid()}.{secrets.token_hex(4)}"
-            )
+            tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}.{secrets.token_hex(4)}")
             lake = _lake_pkg()
             prior_gen = lake._local_read_gen(key)
             next_gen = prior_gen + 1

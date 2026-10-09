@@ -45,7 +45,7 @@ def _row(event_id: int, run: str, row_hash: str) -> dict[str, Any]:
 
 
 def _drop_schema() -> None:
-    import psycopg
+    import psycopg  # noqa: PLC0415
 
     with psycopg.connect(_DSN) as conn:
         with conn.cursor() as cur:
@@ -54,7 +54,7 @@ def _drop_schema() -> None:
 
 
 def test_postgres_retry_replaces_same_extract_run_keeps_sibling():
-    import psycopg
+    import psycopg  # noqa: PLC0415
 
     kwargs = {
         "dsn": _DSN,

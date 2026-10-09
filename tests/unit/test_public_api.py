@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import det
 from det.runtime import lease as lease_mod
+from det.sources import http, http_json
 
 
 def test_all_exports_are_defined() -> None:
@@ -33,16 +34,12 @@ def test_load_pipeline_exported() -> None:
 
 
 def test_http_json_submodule_all() -> None:
-    from det.sources import http_json
-
     assert set(http_json.__all__) <= set(dir(http_json))
     for name in http_json.__all__:
         assert hasattr(http_json, name)
 
 
 def test_http_submodule_all() -> None:
-    from det.sources import http
-
     assert set(http.__all__) <= set(dir(http))
     for name in http.__all__:
         assert hasattr(http, name)

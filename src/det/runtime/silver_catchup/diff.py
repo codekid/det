@@ -54,6 +54,7 @@ def _intervals_from_runs(
         out.append(key)
     return out
 
+
 def list_silver_extract_runs(
     config: PipelineConfig,
     *,
@@ -156,9 +157,7 @@ def _load_bronze_candidates(
     extract_lookback: str | None,
 ) -> tuple[list[dict[str, Any]], str | None, str, str | None]:
     """Return (bronze_runs, note, candidate_mode, lookback_raw)."""
-    lookback_raw = (
-        str(extract_lookback).strip() if extract_lookback is not None else ""
-    ) or None
+    lookback_raw = (str(extract_lookback).strip() if extract_lookback is not None else "") or None
     validate_catchup_candidate_scope(
         interval_start=interval_start,
         interval_end=interval_end,
@@ -259,10 +258,7 @@ def diff_bronze_silver(
         intervals=probe_intervals,
     )
     if complete and silver_note:
-        raise ValueError(
-            "catch-up apply requires readable silver coverage; "
-            f"{silver_note}"
-        )
+        raise ValueError(f"catch-up apply requires readable silver coverage; {silver_note}")
 
     latest = _latest_per_interval(bronze_runs)
     stamp = detected_at or datetime.now(UTC).isoformat()
@@ -360,6 +356,7 @@ def diff_bronze_silver(
         out["note"] = "; ".join(notes)
     return out
 
+
 def diff_bronze_silver_fleet(
     *,
     project_root: Path,
@@ -383,7 +380,7 @@ def diff_bronze_silver_fleet(
     display_truncated = False
     for pipe_id in ids:
         # Resolve via package so monkeypatch on det.runtime.silver_catchup.diff_bronze_silver works.
-        from det.runtime import silver_catchup as _sc
+        from det.runtime import silver_catchup as _sc  # noqa: PLC0415
 
         one = _sc.diff_bronze_silver(
             pipe_id,
@@ -421,4 +418,3 @@ def diff_bronze_silver_fleet(
     if extract_lookback and str(extract_lookback).strip():
         out["extract_lookback"] = str(extract_lookback).strip()
     return out
-

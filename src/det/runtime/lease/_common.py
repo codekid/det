@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import secrets
 from collections.abc import Mapping
@@ -55,6 +56,7 @@ class Lease:
     # Bound LeaseStore for mid-run refresh/release (esp. Postgres where path is None).
     store: Any | None = field(default=None, repr=False, compare=False)
 
+
 _ACTIVE: ContextVar[Lease | None] = ContextVar("det_lease_active", default=None)
 
 
@@ -92,10 +94,7 @@ def default_lock_owner(env: Mapping[str, str] | None = None) -> str:
 
 
 def lock_id(pipeline: str, interval_start: str, interval_end: str) -> str:
-    return (
-        f"{pipeline}/"
-        f"{to_partition_value(interval_start)}_{to_partition_value(interval_end)}"
-    )
+    return f"{pipeline}/{to_partition_value(interval_start)}_{to_partition_value(interval_end)}"
 
 
 def lock_path(
@@ -111,7 +110,6 @@ def lock_path(
 
 def advisory_lock_keys(pipeline: str, interval_start: str, interval_end: str) -> tuple[int, int]:
     """Two int4 keys for pg_advisory_lock (same identity as the lake path)."""
-    import hashlib
 
     def i32(text: str) -> int:
         digest = hashlib.sha256(text.encode("utf-8")).digest()

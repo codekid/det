@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
+from det import plugins as plugs
 from det.logging import clear_secret_values
 from det.plugins import load_plugins
+from det.runtime import registry as reg
 from det.runtime.registry import clear_registries, register_source
 from det.runtime.secrets import clear_secret_cache
 from det.sources.base import SourcePlugin
@@ -37,8 +39,6 @@ def isolated_registries() -> Iterator[None]:
     Clears process secret caches before and after the block. Reloads built-in
     ingestion backends after restore when the snapshot was empty.
     """
-    from det import plugins as plugs
-    from det.runtime import registry as reg
 
     src_snap = dict(reg._SOURCE_REGISTRY)
     ing_snap = dict(reg._INGESTION_REGISTRY)

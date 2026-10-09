@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 
 from det.mcp.context import project_root, resolve_under_root
-from det.mcp.inspect import clamp_sample_limit, sample_raw
+from det.mcp.inspect import MAX_SAMPLE_LIMIT, clamp_sample_limit, sample_raw
 from det.runtime.config import load_pipeline_config
 from det.runtime.ids import default_schema_path
 from det.runtime.naming import to_snake_case
@@ -68,9 +68,7 @@ def _emit_type(types: set[str]) -> Any:
     return ordered
 
 
-def _resolve_scalar_conflict(
-    types: set[str], *, path: str, warnings: list[str]
-) -> set[str]:
+def _resolve_scalar_conflict(types: set[str], *, path: str, warnings: list[str]) -> set[str]:
     """Apply DET widen rules for scaffold-safe ``type`` unions."""
     out = set(types)
     if "integer" in out and "number" in out:
@@ -79,16 +77,13 @@ def _resolve_scalar_conflict(
     if "string" in non_null and (non_null & {"integer", "number", "boolean"}):
         kept = {"string"} | ({"null"} & out)
         dropped = sorted(non_null - {"string"})
-        warnings.append(
-            f"{path}: mixed {', '.join(dropped)}+string in sample; widened to string"
-        )
+        warnings.append(f"{path}: mixed {', '.join(dropped)}+string in sample; widened to string")
         return kept
     hard = non_null - _SCALAR_TYPES
     # object/array mixed with scalars → string (opaque) + warn
     if hard and (non_null & _SCALAR_TYPES):
         warnings.append(
-            f"{path}: mixed structural+scalar types {sorted(non_null)}; "
-            "widened to string"
+            f"{path}: mixed structural+scalar types {sorted(non_null)}; widened to string"
         )
         return {"string"} | ({"null"} & out)
     if len(non_null) > 1 and not hard:
@@ -96,9 +91,7 @@ def _resolve_scalar_conflict(
         if non_null <= _SCALAR_TYPES and "string" not in non_null:
             if non_null <= {"integer", "number"}:
                 return out  # already collapsed above
-            warnings.append(
-                f"{path}: mixed scalar types {sorted(non_null)}; widened to string"
-            )
+            warnings.append(f"{path}: mixed scalar types {sorted(non_null)}; widened to string")
             return {"string"} | ({"null"} & out)
     return out
 
@@ -152,9 +145,7 @@ def _fold_type_options(
     return {"type": _emit_type(merged)}
 
 
-def _normalize_union_branches(
-    branches: list[Any], *, path: str, warnings: list[str]
-) -> list[Any]:
+def _normalize_union_branches(branches: list[Any], *, path: str, warnings: list[str]) -> list[Any]:
     """Normalize each retained anyOf/oneOf branch (close objects, nest)."""
     out: list[Any] = []
     for i, opt in enumerate(branches):
@@ -163,9 +154,7 @@ def _normalize_union_branches(
     return out
 
 
-def _normalize_schema_node(
-    node: Any, *, path: str, warnings: list[str]
-) -> Any:
+def _normalize_schema_node(node: Any, *, path: str, warnings: list[str]) -> Any:
     """Recursively close objects and fold simple unions for DET bronze drafts."""
     if not isinstance(node, dict):
         return node
@@ -183,9 +172,7 @@ def _normalize_schema_node(
                 for key in ("properties", "required", "items", "additionalProperties"):
                     out.pop(key, None)
         else:
-            warnings.append(
-                f"{path or '$'}: left anyOf intact (not a simple scalar union); review"
-            )
+            warnings.append(f"{path or '$'}: left anyOf intact (not a simple scalar union); review")
             out["anyOf"] = _normalize_union_branches(
                 out["anyOf"], path=path or "$", warnings=warnings
             )
@@ -200,9 +187,7 @@ def _normalize_schema_node(
                 for key in ("properties", "required", "items", "additionalProperties"):
                     out.pop(key, None)
         else:
-            warnings.append(
-                f"{path or '$'}: left oneOf intact (not a simple scalar union); review"
-            )
+            warnings.append(f"{path or '$'}: left oneOf intact (not a simple scalar union); review")
             out["oneOf"] = _normalize_union_branches(
                 out["oneOf"], path=path or "$", warnings=warnings
             )
@@ -210,9 +195,7 @@ def _normalize_schema_node(
     if "type" in out:
         types = set(_type_list(out["type"]))
         if types:
-            resolved = _resolve_scalar_conflict(
-                types, path=path or "$", warnings=warnings
-            )
+            resolved = _resolve_scalar_conflict(types, path=path or "$", warnings=warnings)
             out["type"] = _emit_type(resolved)
 
     types_now = set(_type_list(out.get("type")))
@@ -228,18 +211,14 @@ def _normalize_schema_node(
             new_props: dict[str, Any] = {}
             for key, prop in props.items():
                 child_path = f"{path}.{key}" if path else str(key)
-                new_props[key] = _normalize_schema_node(
-                    prop, path=child_path, warnings=warnings
-                )
+                new_props[key] = _normalize_schema_node(prop, path=child_path, warnings=warnings)
             out["properties"] = new_props
         if "required" in out and not isinstance(out["required"], list):
             out["required"] = []
 
     if "items" in out:
         items_path = f"{path}.items" if path else "items"
-        out["items"] = _normalize_schema_node(
-            out["items"], path=items_path, warnings=warnings
-        )
+        out["items"] = _normalize_schema_node(out["items"], path=items_path, warnings=warnings)
 
     return out
 
@@ -254,9 +233,7 @@ def _normalize_inferred_schema(
     if not isinstance(body, dict):
         body = {"type": "object", "properties": {}, "additionalProperties": False}
     props = body.get("properties") if isinstance(body.get("properties"), dict) else {}
-    required = (
-        list(body["required"]) if isinstance(body.get("required"), list) else []
-    )
+    required = list(body["required"]) if isinstance(body.get("required"), list) else []
     schema: dict[str, Any] = {
         "$schema": _DRAFT_2020_12,
         "type": "object",
@@ -264,8 +241,7 @@ def _normalize_inferred_schema(
         "additionalProperties": False,
         "required": required,
         "description": (
-            "Inferred from sample rows via genson (dry-run). "
-            "Review before production use."
+            "Inferred from sample rows via genson (dry-run). Review before production use."
         ),
     }
     if title:
@@ -295,7 +271,7 @@ def infer_schema_from_records(
     warning — never invents ``format: date-time``.
     """
     try:
-        from genson import SchemaBuilder
+        from genson import SchemaBuilder  # noqa: PLC0415
     except ImportError as exc:
         raise ImportError(
             "schema inference requires the mcp extra (genson). "
@@ -312,8 +288,7 @@ def infer_schema_from_records(
             "additionalProperties": False,
             "required": [],
             "description": (
-                "Inferred from sample rows via genson (dry-run). "
-                "Review before production use."
+                "Inferred from sample rows via genson (dry-run). Review before production use."
             ),
         }
         if title:
@@ -352,7 +327,6 @@ def schema_from_sample_dry_run(
     Dry-run only — never writes ``schema_out``. Deep nested / array-of-object
     structure comes from genson; review ``warnings`` before writing.
     """
-    from det.mcp.inspect import MAX_SAMPLE_LIMIT
 
     base = _root(root)
     capped = clamp_sample_limit(limit if limit is not None else MAX_SAMPLE_LIMIT)
@@ -409,9 +383,7 @@ def schema_from_sample_dry_run(
         + (" Path already exists." if (base / out_path).is_file() else "")
     )
     if warnings:
-        note += (
-            " Review warnings (mechanical type widenings) before accepting the draft."
-        )
+        note += " Review warnings (mechanical type widenings) before accepting the draft."
     return {
         "dry_run": True,
         "pipeline": pipeline,
@@ -580,9 +552,7 @@ def mapper_from_diff_dry_run(
 
     name = (mapper_name or "").strip()
     if not name.isidentifier():
-        raise ValueError(
-            f"mapper_name must be a valid Python identifier, got {mapper_name!r}"
-        )
+        raise ValueError(f"mapper_name must be a valid Python identifier, got {mapper_name!r}")
 
     from_doc = load_json_schema(from_path)
     to_doc = load_json_schema(to_path)

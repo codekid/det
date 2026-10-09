@@ -6,7 +6,13 @@ from pathlib import Path
 from det.destinations.models import (
     bronze_dataset_dir,
     duckdb_connection_path,
+    lake_roots_for,
     postgres_dsn,
+)
+from det.ingestion.iceberg_writer import (
+    delete_iceberg_extract_run,
+    list_iceberg_extract_runs,
+    load_iceberg_table,
 )
 from det.ingestion.sql_replace import delete_extract_run_sql
 from det.logging import bound_run_context, get_logger, sanitize_lake_uri
@@ -66,8 +72,6 @@ class BronzePruner:
         self.project_root = settings.project_root
 
     def _lake_roots(self, dest=None):
-        from det.destinations.models import lake_roots_for
-
         del dest  # unused; lake roots ignore destination.path
         return lake_roots_for(self.project_root, settings=self.settings)
 
@@ -199,9 +203,7 @@ class BronzePruner:
                     command="prune",
                     **lease_kwargs,
                 ) as dataset_lock:
-                    assert_lease_held(
-                        lease, store=None if lease is None else lease.store
-                    )
+                    assert_lease_held(lease, store=None if lease is None else lease.store)
                     assert_dataset_lock_held(dataset_lock)
                     return self._apply_body(config, plan)
         with dataset_shared_lock(
@@ -260,20 +262,14 @@ class BronzePruner:
                     continue
                 end_iso = from_partition_value(end_dir.name[len(end_prefix) :])
                 runs = sorted(
-                    (
-                        p
-                        for p in end_dir.iterdir()
-                        if p.is_dir() and p.name.startswith(run_prefix)
-                    ),
+                    (p for p in end_dir.iterdir() if p.is_dir() and p.name.startswith(run_prefix)),
                     key=lambda p: p.name,
                 )
                 refs = [
                     BronzeRunRef(
                         interval_start=start_iso,
                         interval_end=end_iso,
-                        extract_run_datetime=from_partition_value(
-                            p.name[len(run_prefix) :]
-                        ),
+                        extract_run_datetime=from_partition_value(p.name[len(run_prefix) :]),
                         path=p,
                     )
                     for p in runs
@@ -339,7 +335,7 @@ class BronzePruner:
         keep: int,
     ) -> PrunePlan:
         try:
-            import psycopg
+            import psycopg  # noqa: PLC0415
         except ImportError as exc:
             raise ImportError(
                 'Postgres prune requires the optional extra: pip install -e ".[postgres]"'
@@ -381,9 +377,7 @@ class BronzePruner:
             if ref.path is None or not ref.path.exists():
                 continue
             if not ref.path.is_relative_to(bronze_root):
-                raise RuntimeError(
-                    f"refusing to delete path outside bronze dataset: {ref.path}"
-                )
+                raise RuntimeError(f"refusing to delete path outside bronze dataset: {ref.path}")
             ref.path.rmtree()
             removed += 1
             logger.info("pruned bronze run dir", path=str(ref.path))
@@ -419,7 +413,7 @@ class BronzePruner:
 
     def _apply_postgres(self, config: PipelineConfig, plan: PrunePlan) -> int:
         try:
-            import psycopg
+            import psycopg  # noqa: PLC0415
         except ImportError as exc:
             raise ImportError(
                 'Postgres prune requires the optional extra: pip install -e ".[postgres]"'
@@ -459,8 +453,6 @@ class BronzePruner:
         window_end: str,
         keep: int,
     ) -> PrunePlan:
-        from det.ingestion.iceberg_writer import list_iceberg_extract_runs, load_iceberg_table
-
         schema, table = sql_names_for_config(config)
         ice = load_iceberg_table(
             lake=self._bronze_lake(config.destination),
@@ -470,14 +462,10 @@ class BronzePruner:
         )
         if ice is None:
             return PrunePlan(keep=keep)
-        rows = list_iceberg_extract_runs(
-            ice, window_start=window_start, window_end=window_end
-        )
+        rows = list_iceberg_extract_runs(ice, window_start=window_start, window_end=window_end)
         return _plan_from_run_rows(rows, keep=keep)
 
     def _apply_iceberg(self, config: PipelineConfig, plan: PrunePlan) -> int:
-        from det.ingestion.iceberg_writer import delete_iceberg_extract_run, load_iceberg_table
-
         schema, table = sql_names_for_config(config)
         ice = load_iceberg_table(
             lake=self._bronze_lake(config.destination),

@@ -16,6 +16,17 @@ from det.cli.common import (
     _project_root,
     _resolve_pipeline,
 )
+from det.runtime.approval import (
+    init_pipeline_write_argv,
+    scaffold_dbt_write_argv,
+    scaffold_ops_write_argv,
+)
+from det.runtime.config import load_pipeline_config
+from det.scaffold.dbt import scaffold_dbt
+from det.scaffold.init_pipeline import init_pipeline, reject_init_lake_path
+from det.scaffold.init_source import init_source
+from det.scaffold.ops import scaffold_ops
+from det.scaffold.view_warn import collect_view_size_warnings
 
 
 @app.command("init-source")
@@ -51,7 +62,6 @@ def init_source_cmd(
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
 ) -> None:
     """Scaffold a project-local source plugin (+ pipeline YAML / schema by default)."""
-    from det.scaffold.init_source import init_source
 
     if destination_type not in {"filesystem", "duckdb", "postgres", "iceberg"}:
         raise typer.BadParameter(
@@ -123,8 +133,6 @@ def init_pipeline_cmd(
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Create pipeline YAML + minimal schema + scaffold-dbt models."""
-    from det.runtime.approval import init_pipeline_write_argv
-    from det.scaffold.init_pipeline import init_pipeline, reject_init_lake_path
 
     if destination_type not in {"filesystem", "duckdb", "postgres", "iceberg"}:
         raise typer.BadParameter(
@@ -205,9 +213,6 @@ def scaffold_dbt_cmd(
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Generate dbt source + stg + silver from a pipeline schema (gold is hand-written)."""
-    from det.runtime.approval import scaffold_dbt_write_argv
-    from det.runtime.config import load_pipeline_config
-    from det.scaffold.dbt import scaffold_dbt
 
     root = _project_root(project_root)
     resolved = _resolve_pipeline(pipeline, root)
@@ -222,7 +227,6 @@ def scaffold_dbt_cmd(
             require_approval,
             ctx=ctx,
         )
-    from det.scaffold.view_warn import collect_view_size_warnings
 
     with _claimed_approval_work(claimed, approval, root):
         result = scaffold_dbt(config, project_root=root, force=force, dry_run=dry_run, warn=False)
@@ -259,8 +263,6 @@ def scaffold_ops_cmd(
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
 ) -> None:
     """Emit ops dbt models/tests/macros + SLO seed (after det runs-materialize)."""
-    from det.runtime.approval import scaffold_ops_write_argv
-    from det.scaffold.ops import scaffold_ops
 
     root = _project_root(project_root)
     claimed = False

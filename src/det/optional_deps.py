@@ -15,7 +15,7 @@ def pip_extra_hint(extra: str) -> str:
 
 def require_duckdb() -> ModuleType:
     try:
-        import duckdb
+        import duckdb  # noqa: PLC0415
     except ImportError as exc:
         raise ImportError(
             "duckdb is required for this operation; install with: "
@@ -26,7 +26,7 @@ def require_duckdb() -> ModuleType:
 
 def require_jinja2() -> ModuleType:
     try:
-        import jinja2
+        import jinja2  # noqa: PLC0415
     except ImportError as exc:
         raise ImportError(
             "jinja2 is required for scaffolding; install with: "
@@ -38,9 +38,9 @@ def require_jinja2() -> ModuleType:
 def require_dlt_rest() -> tuple[Any, ModuleType, ModuleType]:
     """Return ``(RESTClient, auth_module, paginators_module)`` helpers."""
     try:
-        from dlt.sources.helpers.rest_client import auth as rest_auth
-        from dlt.sources.helpers.rest_client import paginators as rest_paginators
-        from dlt.sources.helpers.rest_client.client import RESTClient
+        from dlt.sources.helpers.rest_client import auth as rest_auth  # noqa: PLC0415
+        from dlt.sources.helpers.rest_client import paginators as rest_paginators  # noqa: PLC0415
+        from dlt.sources.helpers.rest_client.client import RESTClient  # noqa: PLC0415
     except ImportError as exc:
         raise ImportError(
             "dlt is required for this HTTP source; install with: "
@@ -52,7 +52,7 @@ def require_dlt_rest() -> tuple[Any, ModuleType, ModuleType]:
 def require_beautifulsoup() -> Any:
     """Return the ``BeautifulSoup`` class (callable), not the ``bs4`` module."""
     try:
-        from bs4 import BeautifulSoup
+        from bs4 import BeautifulSoup  # noqa: PLC0415
     except ImportError as exc:
         raise ImportError(
             "beautifulsoup4 is required for NOAA HTML listing; install with: "
