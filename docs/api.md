@@ -67,7 +67,7 @@ buckets (or prefixes) + re-extract; there is no layout migrator.
 | --- | --- |
 | `DetSettings` | Frozen embedder settings (`from_env`, lake, locks, secrets callable) |
 | `PipelineConfig`, `load_pipeline`, `load_pipeline_config` | Pipeline YAML model; `load_pipeline` accepts canonical id / path / config |
-| `IcebergMaintainPlan`, `iter_iceberg_maintain_plans` | Pure Iceberg maintain/reconcile plans for external Airflow/Spark runners |
+| `IcebergMaintainPlan`, `iter_iceberg_maintain_plans`, `render_iceberg_maintain_spark_sql` | Pure Iceberg maintain/reconcile plans + Spark procedure SQL renderer for external runners (DET does not execute GC) |
 | `SilverCatchupHole`, `iter_silver_catchup_holes`, `run_silver_catchup_heal` | Mode A (default 48h) bronze↔silver hole detect + heal (apply manifest, dbt catch-up build, verify). Reference DAG: `dags/det_silver_catchup_dag.py` — embedders copy/adapt (Tier 1). Not census/Mode B. |
 | `Interval`, `SourceRow`, `SourcePlugin` | Source protocol |
 | `mapper`, `merge_source_config`, `identity_mapper` | Config merge and migrate mappers |

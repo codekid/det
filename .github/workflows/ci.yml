@@ -68,21 +68,19 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Start MinIO + Polaris
         # Shared MinIO for -m minio and -m polaris (docker/polaris-minio).
-        # compose --wait requires polaris-setup (one-shot) to exit 0; we also
-        # assert that exit code before the health loop so soak never starts on
-        # a failed catalog bootstrap / grants call.
+        # compose --wait treats one-shot exits (setup_bucket, polaris-setup) as
+        # failure even when ExitCode is 0, so wait only on long-running daemons
+        # then run catalog bootstrap and assert its exit code.
         run: |
           COMPOSE="docker compose -f docker/polaris-minio/docker-compose.yml"
-          if ! $COMPOSE up -d --wait; then
-            echo "compose --wait failed; dumping logs" >&2
+          if ! $COMPOSE up -d --wait minio polaris; then
+            echo "compose --wait (minio/polaris) failed; dumping logs" >&2
             $COMPOSE ps -a >&2 || true
             $COMPOSE logs >&2 || true
             exit 1
           fi
-          SETUP_ID=$($COMPOSE ps -aq polaris-setup)
-          SETUP_EC=$(docker inspect -f '{{.State.ExitCode}}' "$SETUP_ID")
-          if [ "$SETUP_EC" != "0" ]; then
-            echo "polaris-setup exited ${SETUP_EC}" >&2
+          if ! $COMPOSE run --rm --no-deps polaris-setup; then
+            echo "polaris-setup failed" >&2
             $COMPOSE logs polaris-setup >&2 || true
             exit 1
           fi

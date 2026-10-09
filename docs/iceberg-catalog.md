@@ -174,17 +174,47 @@ destination:
 | **External runner** (Airflow/Spark/Athena) | Reconcile `table_properties` on existing tables (`SET TBLPROPERTIES` — metadata only; new file-size targets apply to **future** writes). Expire / rewrite / remove orphans from `maintain` (+ fleet `DET_ICEBERG_MAINTAIN_*` defaults). |
 | **DET migrate** | Partition/schema shape changes → `det migrate --recreate-iceberg`. Not the maintain DAG. |
 
-`det prune` remains **logical** extract-run sibling retention. Snapshot GC is
-separate physical maintenance.
+### What Iceberg GC is (vs `det prune`)
 
-Plan API (SemVer): `iter_iceberg_maintain_plans(project_root)` returns per-pipeline
-plans (`actionable=False` when catalog is unset/`hadoop`). Reference DAG
+Iceberg **garbage collection** is **physical** cleanup of snapshot history and
+files after many writes:
+
+- **Expire snapshots** — drop old snapshot metadata past `expire_older_than`
+- **Remove orphan files** — delete unreferenced files under the table location
+  (aggressive windows can delete live data)
+- **Rewrite data / manifests** — compact small files / rewrite manifests
+  (`rewrite_data`, `rewrite_manifests`, optional `z_order`)
+
+`det prune` is different: it removes **logical** bronze extract-run siblings DET
+tracks. Snapshot GC only happens when something executes Iceberg procedures
+(Spark/Athena) — **DET never runs those in-process.** Spark can target any
+catalog it is configured with (including Hadoop). DET's plan API still marks
+unset/`hadoop` plans `actionable=False`, so the reference renderer and DAG
+mapped submits only accept `rest` / `glue` plans.
+
+### Plan API + reference Spark SQL
+
+SemVer: `iter_iceberg_maintain_plans(project_root)` returns per-pipeline plans
+(`actionable=False` when catalog is unset/`hadoop` — DET gating for the
+reference path, not a Spark limitation).
+
+`render_iceberg_maintain_spark_sql(plan)` turns one **actionable** plan (object
+or DAG dict) into Apache Spark Iceberg `CALL … system.*` / `ALTER TABLE … SET
+TBLPROPERTIES` statements. Catalog name defaults to `iceberg`, override with
+`DET_ICEBERG_SPARK_CATALOG` or `catalog=`. Athena/Trino: adapt the statements.
+
+Reference DAG
 [`dags/det_iceberg_maintain_dag.py`](../dags/det_iceberg_maintain_dag.py):
 `build_plans` → mapped `submit_one` (one plan each), capped by
 `DET_ICEBERG_MAINTAIN_MAX_ACTIVE` (default 4) and optional pool
 `DET_ICEBERG_MAINTAIN_POOL`. Submit hook is `module:function(plan: dict)`.
-Embedders wire the plan API into **their** runner — see
-[getting-started-library.md](getting-started-library.md).
+
+- **Unset `DET_ICEBERG_MAINTAIN_SUBMIT`** → plan-only run (logs plans, **no GC**).
+- **Log-only reference hook** (prints SQL; still does not GC):
+  `DET_ICEBERG_MAINTAIN_SUBMIT=det.runtime.iceberg_maintain_submit:submit_log_spark_sql`
+- **Real GC** → your hook runs `spark.sql(stmt)` for each rendered statement.
+
+See [getting-started-library.md](getting-started-library.md).
 
 Fleet env defaults (when pipeline omits `maintain`, or for keys omitted from a
 partial `maintain` block):
@@ -196,6 +226,7 @@ partial `maintain` block):
 | `DET_ICEBERG_MAINTAIN_REWRITE_DATA` | `true` / `false` |
 | `DET_ICEBERG_MAINTAIN_REWRITE_MANIFESTS` | `true` / `false` |
 | `DET_ICEBERG_MAINTAIN_REMOVE_ORPHANS_OLDER_THAN` | e.g. `3d` |
+| `DET_ICEBERG_SPARK_CATALOG` | Spark catalog identifier for rendered SQL (default `iceberg`) |
 
 ## Related
 

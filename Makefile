@@ -90,8 +90,11 @@ cube-logs:
 	cd cube && docker compose logs -f
 
 # Local Polaris REST catalog + MinIO (docker/polaris-minio).
+# --wait only on daemons; one-shot setup_bucket/polaris-setup exit 0 and make
+# compose --wait fail on current Docker Compose even when bootstrap succeeded.
 polaris-up:
-	docker compose -f $(POLARIS_COMPOSE) up -d --wait
+	docker compose -f $(POLARIS_COMPOSE) up -d --wait minio polaris
+	docker compose -f $(POLARIS_COMPOSE) run --rm --no-deps polaris-setup
 	@echo "Polaris REST http://127.0.0.1:8181/api/catalog warehouse=det_lake"
 	@echo "MinIO API http://127.0.0.1:9000 (minioadmin/minioadmin)"
 	@$(MAKE) --no-print-directory polaris-env

@@ -16,9 +16,13 @@ from det.runtime.config import (
     IcebergMaintainConfig,
 )
 from det.runtime.iceberg_maintain import (
+    IcebergMaintainPlan,
+    _sql_string,
     fleet_maintain_defaults,
     iter_iceberg_maintain_plans,
+    render_iceberg_maintain_spark_sql,
 )
+from det.runtime.iceberg_maintain_submit import submit_log_spark_sql
 
 
 def test_iceberg_block_rejected_on_non_iceberg():
@@ -234,3 +238,198 @@ def test_plan_mutation_isolated_from_fleet_and_siblings(tmp_path: Path):
     assert first.maintain.z_order == ["col_a"]
     assert first.maintain is not second.maintain
     assert first.maintain is not fleet
+
+
+def _actionable_plan(
+    *,
+    pipeline: str = "acme.feed",
+    sql_schema: str = "bronze_acme",
+    sql_table: str = "feed_v1",
+    table_properties: dict[str, str] | None = None,
+    maintain: dict[str, object] | None = None,
+) -> IcebergMaintainPlan:
+    maintain_kw: dict[str, object] = {
+        "expire": True,
+        "expire_older_than": "7d",
+        "rewrite_data": False,
+        "rewrite_manifests": False,
+        "remove_orphans_older_than": "3d",
+        "z_order": [],
+    }
+    if maintain is not None:
+        maintain_kw.update(maintain)
+    props = (
+        {"write.target-file-size-bytes": "536870912"}
+        if table_properties is None
+        else table_properties
+    )
+    return IcebergMaintainPlan(
+        pipeline=pipeline,
+        sql_schema=sql_schema,
+        sql_table=sql_table,
+        table_properties=props,
+        maintain=IcebergMaintainConfig(**maintain_kw),
+        catalog_kind="rest",
+        actionable=True,
+        skip_reason=None,
+    )
+
+
+def test_render_spark_sql_typical_plan():
+    stmts = render_iceberg_maintain_spark_sql(_actionable_plan(), catalog="iceberg")
+    assert stmts == [
+        (
+            "ALTER TABLE iceberg.bronze_acme.feed_v1 SET TBLPROPERTIES "
+            "('write.target-file-size-bytes'='536870912')"
+        ),
+        (
+            "CALL iceberg.system.expire_snapshots("
+            "table => 'bronze_acme.feed_v1', "
+            "older_than => current_timestamp() - INTERVAL 7 DAYS)"
+        ),
+        (
+            "CALL iceberg.system.remove_orphan_files("
+            "table => 'bronze_acme.feed_v1', "
+            "older_than => current_timestamp() - INTERVAL 3 DAYS)"
+        ),
+    ]
+
+
+def test_render_spark_sql_duration_hours_and_zorder():
+    stmts = render_iceberg_maintain_spark_sql(
+        _actionable_plan(
+            table_properties={},
+            maintain={
+                "expire": True,
+                "expire_older_than": "48h",
+                "rewrite_data": True,
+                "rewrite_manifests": True,
+                "remove_orphans_older_than": None,
+                "z_order": ["lat", "lon"],
+            },
+        ),
+        catalog="lake",
+    )
+    assert stmts[0] == (
+        "CALL lake.system.expire_snapshots("
+        "table => 'bronze_acme.feed_v1', "
+        "older_than => current_timestamp() - INTERVAL 48 HOURS)"
+    )
+    assert stmts[1] == (
+        "CALL lake.system.rewrite_data_files("
+        "table => 'bronze_acme.feed_v1', "
+        "strategy => 'sort', "
+        "sort_order => 'zorder(lat, lon)')"
+    )
+    assert stmts[2] == ("CALL lake.system.rewrite_manifests(table => 'bronze_acme.feed_v1')")
+
+
+def test_sql_string_escapes_backslash_and_apostrophe():
+    assert _sql_string(r"a\b'c") == r"'a\\b''c'"
+    stmts = render_iceberg_maintain_spark_sql(
+        _actionable_plan(
+            table_properties={"path.style": r"C:\data"},
+            maintain={
+                "expire": False,
+                "expire_older_than": None,
+                "remove_orphans_older_than": None,
+            },
+        )
+    )
+    assert stmts == [
+        (
+            "ALTER TABLE iceberg.bronze_acme.feed_v1 SET TBLPROPERTIES "
+            r"('path.style'='C:\\data')"
+        )
+    ]
+
+
+def test_render_spark_sql_rejects_invalid_schema_or_table():
+    with pytest.raises(ValueError, match="sql_schema"):
+        render_iceberg_maintain_spark_sql(
+            _actionable_plan(
+                sql_schema="bronze; DROP",
+                table_properties={},
+                maintain={
+                    "expire": False,
+                    "expire_older_than": None,
+                    "remove_orphans_older_than": None,
+                },
+            )
+        )
+    with pytest.raises(ValueError, match="sql_table"):
+        render_iceberg_maintain_spark_sql(
+            _actionable_plan(
+                sql_table="feed-v1",
+                table_properties={},
+                maintain={
+                    "expire": False,
+                    "expire_older_than": None,
+                    "remove_orphans_older_than": None,
+                },
+            )
+        )
+
+
+def test_render_spark_sql_rejects_invalid_z_order_ident():
+    with pytest.raises(ValueError, match="z_order"):
+        render_iceberg_maintain_spark_sql(
+            _actionable_plan(
+                table_properties={},
+                maintain={
+                    "expire": False,
+                    "expire_older_than": None,
+                    "rewrite_data": True,
+                    "remove_orphans_older_than": None,
+                    "z_order": ["lat; DROP TABLE t"],
+                },
+            )
+        )
+
+
+def test_render_spark_sql_skips_expire_when_disabled_or_window_missing():
+    no_expire = render_iceberg_maintain_spark_sql(
+        _actionable_plan(
+            table_properties={},
+            maintain={
+                "expire": False,
+                "expire_older_than": "7d",
+                "remove_orphans_older_than": None,
+            },
+        )
+    )
+    assert no_expire == []
+    no_window = render_iceberg_maintain_spark_sql(
+        _actionable_plan(
+            table_properties={},
+            maintain={"expire": True, "expire_older_than": None, "remove_orphans_older_than": None},
+        )
+    )
+    assert no_window == []
+
+
+def test_render_spark_sql_rejects_non_actionable():
+    plan = IcebergMaintainPlan(
+        pipeline="acme.feed",
+        sql_schema="bronze_acme",
+        sql_table="feed_v1",
+        actionable=False,
+        skip_reason="DET_ICEBERG_CATALOG='hadoop'; maintain procedures require rest|glue",
+    )
+    with pytest.raises(ValueError, match="hadoop"):
+        render_iceberg_maintain_spark_sql(plan)
+
+
+def test_render_spark_sql_accepts_plan_dict():
+    plan = _actionable_plan(table_properties={})
+    stmts = render_iceberg_maintain_spark_sql(plan.to_dict())
+    assert any("expire_snapshots" in s for s in stmts)
+
+
+def test_submit_log_spark_sql_prints_statements(capsys: pytest.CaptureFixture[str]):
+    submit_log_spark_sql(_actionable_plan().to_dict())
+    out = capsys.readouterr().out
+    assert "log-only; not executed" in out
+    assert "ALTER TABLE" in out
+    assert "expire_snapshots" in out
+    assert "remove_orphan_files" in out
