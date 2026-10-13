@@ -8,7 +8,7 @@ Extract → **raw** (wire bytes) → **bronze** (typed Iceberg). **dbt** owns si
 | Audience | Start here |
 | --- | --- |
 | **Operator** (this monorepo: CLI, examples, dbt, Airflow, MCP) | [Try it](#try-it-fixtures-no-noaa-download) · [Day-2 runbook](docs/operator-runbook.md) |
-| **Library** (embed extract→raw→bronze in your app) | **[docs/getting-started-library.md](docs/getting-started-library.md)** · [docs/api.md](docs/api.md) |
+| **Library** (embed extract→raw→bronze in your app) | **[docs/getting-started-library.md](docs/getting-started-library.md)** · [docs/api.md](docs/api.md) · [CHANGELOG.md](CHANGELOG.md) |
 
 This checkout is the operator product **and** the library source. Embedders install
 the PyPI package **`det-elt`** (import `det`) and keep pipelines under
@@ -275,6 +275,7 @@ src/det/                 CLI, runtime, example sources, writers, det.testing
 configs/pipelines/       provider.source YAML
 schemas/                 bronze JSON Schema
 docs/api.md              public Python API (SemVer / __all__)
+CHANGELOG.md             package release notes (0.9+)
 docs/getting-started-library.md  embedder first hour
 docs/operator-runbook.md  day-2 stuck states + deploy profiles
 docs/lake-layout.md      hive / SQL compatibility

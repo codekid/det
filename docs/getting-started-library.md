@@ -276,5 +276,6 @@ Concurrency (leases, processes vs threads): [api.md § Concurrency](api.md#concu
 | Approvals / `det approve` | CLI/agent only — not on embedder runners |
 | Cube metrics | Operator product |
 
-Library packaging epic: [#24](https://github.com/codekid/det/issues/24). PyPI
-distribution: **`det-elt`** (MIT).
+PyPI distribution: **`det-elt`** (MIT). Library packaging epic
+[#24](https://github.com/codekid/det/issues/24) is closed. Release notes:
+[CHANGELOG.md](../CHANGELOG.md).

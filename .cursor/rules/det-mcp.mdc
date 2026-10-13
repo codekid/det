@@ -27,7 +27,8 @@ plans, or scaffold/dbt previews.
 `det_dbt` / `det_airflow` (skill playbooks).
 
 Dry-runs that preview a write include `approval_plan` (`command`, `argv`,
-`plan_digest`). MCP never creates `.det/approvals/` files — that is `det approve`.
+`plan_digest`). MCP never creates approval records — that is `det approve`
+(lake `{ops}/approvals/` or Postgres).
 
 Approvals are **audit and intent-binding, not authorization** (the same shell can
 run `det approve`). The record is guaranteed to describe the command that runs:

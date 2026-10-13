@@ -31,7 +31,7 @@ In-tree demos (`noaa`, `example_api`, `openlibrary`) list only when
 
 Package version is **not** lake layout. A DET release can change Python helpers
 without bumping `LAKE_LAYOUT`. Bumping `wire_version` in YAML does **not** require
-a DET major.
+a DET major. Release history: [CHANGELOG.md](../CHANGELOG.md).
 
 **Implemented:** refuse loads when `manifest.lake_layout` is greater than this
 install’s `LAKE_LAYOUT` (`DetContractError`). Missing `lake_layout` means
@@ -145,9 +145,9 @@ Typer params, and the bound map aligned.
 
 **Store:** default is the lake ops root `{ops}/approvals/apr_….json` (shared by
 local CLI and managed Airflow). Opt-in Postgres with `DET_APPROVAL_BACKEND=postgres`
-and `DET_APPROVAL_PG_DSN` (schema/table default `det_approval.approvals`). Legacy
-`{project_root}/.det/approvals` is **read-only fallback** for one release; new
-creates never write there.
+and `DET_APPROVAL_PG_DSN` (schema/table default `det_approval.approvals`).
+Project-local `{project_root}/.det/approvals` is ignored — re-run `det approve`
+if you still have files there from before the ops-lake store.
 
 A crash between claim and consume leaves the record `claimed`, and a claim never
 ages out (TTL gates *claiming*, not finishing), so it is excluded from the default
@@ -277,13 +277,3 @@ pytest; not imported by the core helpers).
 | `read_lock` / `force_release_lock` | Prefer `inspect_lease` / `release_lock` |
 | In-tree example sources | Content demos behind `DET_DISCOVER_EXAMPLES`; not SemVer surface |
 | `get_source` / `get_mapper` | Advanced; prefer discovery lists + runners |
-
----
-
-## Planned (linked issues)
-
-| Feature | Issue |
-| --- | --- |
-| Thin `det.http_json` recipe + eject (optional) | [#35](https://github.com/codekid/det/issues/35) |
-
-Epic: [#24](https://github.com/codekid/det/issues/24).
