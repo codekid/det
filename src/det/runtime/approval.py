@@ -2,8 +2,7 @@
 
 MCP never creates these records. ``det approve`` writes to the configured store
 (default: ``{ops_root}/approvals/`` on the lake; opt-in Postgres via
-``DET_APPROVAL_BACKEND=postgres``). Legacy ``.det/approvals`` remains a read-only
-fallback for one release.
+``DET_APPROVAL_BACKEND=postgres``). Project-local ``.det/approvals`` is ignored.
 
 Writing CLI validates ``--approval`` (always if passed; required when
 ``DET_REQUIRE_APPROVAL=1`` or ``--require-approval``).
@@ -36,7 +35,6 @@ from det.runtime.approval_store import (
     enrich_heartbeat_fields,
     open_approval_store,
 )
-from det.runtime.approval_store.legacy import legacy_approvals_dir
 from det.runtime.meta import identity_iso, to_interval_datetime
 from det.runtime.silver_catchup.ids import resolve_catchup_candidate_scope
 
@@ -78,11 +76,6 @@ class ApprovalPlan:
                 "turn (never the same turn as this dry-run)."
             ),
         }
-
-
-def approvals_dir(project_root: Path) -> Path:
-    """Legacy local approvals directory (read fallback / tests)."""
-    return legacy_approvals_dir(project_root)
 
 
 def require_approvals_enabled() -> bool:
@@ -281,9 +274,6 @@ def check_approval(
 
     Returns the record when validation ran; ``None`` when enforcement is off
     and no id was given.
-
-    Rejects legacy-only ``.det/approvals`` ids so Airflow check→consume and CLI
-    claim cannot validate a ticket that the primary store cannot mutate.
     """
     if not approval_id:
         if require:
@@ -293,9 +283,6 @@ def check_approval(
             )
         return None
     store = _store(project_root, settings=settings)
-    ensure = getattr(store, "ensure_writable", None)
-    if callable(ensure):
-        ensure(approval_id)
     rec = store.load(approval_id)
     status = effective_status(rec, now=now)
     if status == "expired":

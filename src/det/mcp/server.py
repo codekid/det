@@ -560,7 +560,7 @@ def create_server():
 
     @mcp.tool()
     def list_approvals(status: p.ApprovalStatusOpt = None) -> dict[str, Any]:
-        """List approval files under .det/approvals/. Never creates them.
+        """List approvals from the lake ops store (or Postgres). Never creates them.
 
         Defaults to unused, unexpired. Pass status="claimed" to find an approval
         stuck by a crashed run; recovery is `det approval-release <id> --force`.

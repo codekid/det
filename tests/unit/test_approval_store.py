@@ -1,4 +1,4 @@
-"""Lake approval store, heartbeat triage, and legacy fallback."""
+"""Lake approval store and heartbeat triage."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import pytest
 
 from det.runtime.approval import (
     ApprovalError,
-    check_approval,
     claim_approval,
     consume_approval,
     create_approval,
@@ -24,7 +23,6 @@ from det.runtime.approval import (
 from det.runtime.approval_store import open_approval_store, resolve_approval_options
 from det.runtime.approval_store.enrich import enrich_heartbeat_fields
 from det.runtime.approval_store.lake_store import LakeApprovalStore
-from det.runtime.approval_store.legacy import legacy_approvals_dir
 from det.runtime.settings import DetSettings, use_settings
 from det.runtime.silver_catchup.paths import resolve_ops_lake
 
@@ -87,9 +85,10 @@ def test_enrich_heartbeat_fresh_stale_unknown():
     assert bad["heartbeat_age_sec"] is None
 
 
-def test_legacy_dot_det_read_fallback(tmp_path: Path):
+def test_dot_det_approvals_are_ignored(tmp_path: Path):
+    """Project-local .det/approvals is not a store — only lake/postgres is."""
     settings = _settings(tmp_path)
-    legacy_dir = legacy_approvals_dir(tmp_path)
+    legacy_dir = tmp_path / ".det" / "approvals"
     legacy_dir.mkdir(parents=True)
 
     argv = prune_write_argv("example_api.events", "2026-08-01")
@@ -108,20 +107,15 @@ def test_legacy_dot_det_read_fallback(tmp_path: Path):
     }
     (legacy_dir / f"{apr}.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     with use_settings(settings):
-        loaded = load_approval(tmp_path, apr)
-        assert loaded["approved_by"] == "legacy"
         with pytest.raises(ApprovalError) as exc:
-            check_approval(tmp_path, "prune", argv, apr, require=True, now=NOW)
-        assert exc.value.code == "approval_legacy_readonly"
-        with pytest.raises(ApprovalError) as exc:
-            claim_approval(tmp_path, "prune", argv, apr, require=True, now=NOW)
-        assert exc.value.code == "approval_legacy_readonly"
-        with pytest.raises(ApprovalError) as exc:
-            release_approval(tmp_path, apr, released_by="ops", now=NOW)
-        assert exc.value.code == "approval_legacy_readonly"
-        with pytest.raises(ApprovalError) as exc:
-            touch_approval_heartbeat(tmp_path, apr, now=NOW)
-        assert exc.value.code == "approval_legacy_readonly"
+            load_approval(tmp_path, apr)
+        assert exc.value.code == "approval_not_found"
+        # Primary lake create/load still works alongside an inert .det tree.
+        rec = create_approval(
+            tmp_path, command="prune", argv=argv, approved_by="tester", now=NOW
+        )
+        assert load_approval(tmp_path, rec["id"])["id"] == rec["id"]
+        assert (tmp_path / "lake" / "approvals" / f"{rec['id']}.json").is_file()
 
 
 def test_store_uses_settings_lake_override(tmp_path: Path):
@@ -266,4 +260,4 @@ def test_settings_overrides_beat_env_for_approval_options(tmp_path: Path):
     assert opts.pg_table == "apr_table"
 
     store = open_approval_store(tmp_path, settings=settings)
-    assert isinstance(store._primary, LakeApprovalStore)
+    assert isinstance(store, LakeApprovalStore)
