@@ -8,7 +8,18 @@ breaks — not a full commit log.
 
 Releases older than **0.9.0**: [GitHub Releases](https://github.com/codekid/det/releases).
 
-## [0.11.1] - Unreleased
+## [0.11.2] - Unreleased
+
+### Fixed
+
+- `PipelineRunner.run()` raised `ValueError: overrides cannot be applied when
+  pipeline is already a PipelineConfig` when `--set` overrides were passed. `run()`
+  resolves the pipeline config (with overrides applied) upfront, then forwarded the
+  raw overrides sequence into `_extract()` and `_load()` as well, causing a
+  double-resolve. The fix drops `overrides=` from both inner calls; the resolved
+  `PipelineConfig` is already the source of truth at that point. (#116)
+
+## [0.11.1] - 2026-11-07
 
 ### Removed
 

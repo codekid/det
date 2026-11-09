@@ -427,11 +427,12 @@ class PipelineRunner:
                 command="run",
                 **self._lease_kwargs(lock_ttl_sec, config),
             ):
+                # Config already has --set applied; do not re-pass overrides
+                # (load_pipeline rejects overrides on an already resolved PipelineConfig).
                 extracted = self._extract(
                     config,
                     interval_start=interval_start,
                     interval_end=interval_end,
-                    overrides=overrides,
                     extract_run_datetime=extract_ts,
                     lock_ttl_sec=lock_ttl_sec,
                 )
@@ -439,7 +440,6 @@ class PipelineRunner:
                     config,
                     interval_start=extracted.interval_start,
                     interval_end=extracted.interval_end,
-                    overrides=overrides,
                     extract_run_datetime=extracted.extract_run_datetime,
                     lock_ttl_sec=lock_ttl_sec,
                 )
