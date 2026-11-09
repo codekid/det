@@ -57,6 +57,41 @@ def test_run_noaa_fixture_to_bronze(project_root: Path, tmp_path: Path):
     assert row["event_id"] == 9001
 
 
+@pytest.mark.integration
+def test_run_with_set_overrides_no_double_resolve(project_root: Path, tmp_path: Path):
+    """Regression #116: --set overrides must not raise ValueError via double-resolve in run().
+
+    run() resolves the pipeline YAML + overrides into a PipelineConfig upfront, then
+    must NOT forward the raw overrides sequence into _extract() / _load() — doing so
+    causes load_pipeline() to raise because it refuses to apply overrides to an already
+    resolved PipelineConfig.
+    """
+    # Pipeline YAML has no source overrides pre-baked; they arrive via --set at runtime.
+    pipeline = {
+        "name": "noaa.storm_events",
+        "source": {"type": "noaa.storm_events"},
+        "schema": str(project_root / "schemas/noaa/storm_events/storm_events.schema.yaml"),
+        "ingestion": {"library": "thin"},
+        "destination": {"type": "filesystem", "path": str(tmp_path / "lake")},
+        "medallion": {"bronze_prefix": "bronze", "raw_prefix": "raw"},
+    }
+    pipe_path = tmp_path / "pipeline_bare.yaml"
+    pipe_path.write_text(yaml.safe_dump(pipeline), encoding="utf-8")
+
+    result = PipelineRunner(tmp_path).run(
+        pipe_path,
+        interval_start="2026-08-06",
+        interval_end="2026-08-07",
+        overrides=[
+            f"source.overrides.local_csv_dir={project_root / 'fixtures/storm_events'}",
+            "source.overrides.filename_substr=details",
+        ],
+    )
+    assert result.rows == 2
+    assert result.raw_dir is not None
+    assert (result.raw_dir / "meta" / "manifest.json").exists()
+
+
 
 def _fatalities_pipeline(project_root: Path, tmp_path: Path) -> Path:
     pipeline = {
