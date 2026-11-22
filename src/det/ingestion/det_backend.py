@@ -6,6 +6,7 @@ from typing import Any
 
 import det.ingestion.iceberg_writer as iceberg_writer
 from det.destinations.models import duckdb_connection_path, lake_roots_for, postgres_dsn
+from det.ingestion.bq_writer import write_to_bigquery
 from det.ingestion.duckdb_writer import write_duckdb_table
 from det.ingestion.jsonl import write_jsonl_partition
 from det.ingestion.postgres_writer import write_postgres_table
@@ -14,6 +15,7 @@ from det.runtime.config import DestinationConfig, PipelineConfig, resolve_path
 from det.runtime.ids import fs_dataset_parts, sql_names_for_config
 from det.runtime.lake import LakeRef
 from det.runtime.manifest import publish_filesystem_bronze_commit
+from det.runtime.settings import get_active_settings
 from det.validation.jsonschema_validator import load_json_schema
 
 logger = get_logger(__name__)
@@ -21,7 +23,8 @@ logger = get_logger(__name__)
 
 class DetBackend:
     """
-    Default DET ingestion backend (filesystem / DuckDB / Postgres / Iceberg bronze writers).
+    Default DET ingestion backend (filesystem / DuckDB / Postgres / Iceberg /
+    BigQuery bronze writers).
 
     dlt is extraction-only on the source side (RESTClient, retries, resources as
     iterators). This backend never hands rows to ``dlt.pipeline``: no dlt state
@@ -75,6 +78,16 @@ class DetBackend:
             )
         if destination.type == "iceberg":
             return self._write_iceberg(
+                records,
+                config=config,
+                project_root=project_root,
+                destination=destination,
+                chunk_rows=size,
+                run_identity=run_identity,
+                on_chunk=on_chunk,
+            )
+        if destination.type == "bigquery":
+            return self._write_bigquery(
                 records,
                 config=config,
                 project_root=project_root,
@@ -194,6 +207,35 @@ class DetBackend:
             "iceberg load finished",
             table=f"{schema}.{table}",
             location=str(written),
+            pipeline=config.name,
+        )
+        return written
+
+    def _write_bigquery(
+        self,
+        records: Iterable[dict[str, Any]],
+        *,
+        config: PipelineConfig,
+        project_root: Path,
+        destination: DestinationConfig,
+        chunk_rows: int,
+        run_identity: tuple[str, str, str] | None = None,
+        on_chunk: Callable[[], None] | None = None,
+    ) -> Path:
+        json_schema = load_json_schema(resolve_path(project_root, config.schema_path))
+        written = write_to_bigquery(
+            records,
+            config=config,
+            json_schema=json_schema,
+            settings=get_active_settings(),
+            bq_dataset_override=destination.bq_dataset,
+            chunk_rows=chunk_rows,
+            run_identity=run_identity,
+            on_chunk=on_chunk,
+        )
+        logger.info(
+            "bigquery load finished",
+            partition=str(written),
             pipeline=config.name,
         )
         return written

@@ -898,6 +898,46 @@ def silver_catchup_cleanup_write_argv(
     return argv
 
 
+def export_bq_write_argv(
+    pipeline: str,
+    interval_start: str,
+    interval_end: str | None = None,
+    *,
+    extract_run_datetime: str | None = None,
+    bq_dataset: str | None = None,
+    lake_path: str | None = None,
+    lake_path_raw: str | None = None,
+    lake_path_bronze: str | None = None,
+    lake_path_ops: str | None = None,
+    set_: Sequence[str] | None = None,
+) -> list[str]:
+    argv = [
+        "export",
+        "bq",
+        "-p",
+        _norm_pipeline(pipeline),
+        "-s",
+        _require_interval(interval_start),
+    ]
+    end = _norm_interval(interval_end)
+    if end:
+        argv.extend(["-e", end])
+    if extract_run_datetime:
+        argv.extend(["--extract-run-datetime", str(extract_run_datetime).strip()])
+    if bq_dataset:
+        argv.extend(["--bq-dataset", str(bq_dataset).strip()])
+    argv.extend(
+        _lake_argv(
+            lake_path,
+            lake_path_raw=lake_path_raw,
+            lake_path_bronze=lake_path_bronze,
+            lake_path_ops=lake_path_ops,
+        )
+    )
+    argv.extend(_set_argv(set_))
+    return argv
+
+
 def lock_release_write_argv(
     pipeline: str,
     interval_start: str | None = None,
