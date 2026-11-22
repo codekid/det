@@ -170,7 +170,7 @@ class DetSettings:
     lake_override_raw: str | None = None
     lake_override_bronze: str | None = None
     lake_override_ops: str | None = None
-    # BigQuery bronze destination (destination.type: bigquery / det export bq).
+    # BigQuery bronze destination (destination.type: bigquery / det export-bq).
     # Project from DET_GCP_PROJECT / GOOGLE_CLOUD_PROJECT — never YAML.
     bq_project: str | None = None
     # Optional prefix for derived datasets ({prefix}_{provider}); unset → "bronze".

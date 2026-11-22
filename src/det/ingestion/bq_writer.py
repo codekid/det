@@ -89,7 +89,7 @@ def bq_layout_destination(config: PipelineConfig) -> DestinationConfig:
     Destination used for BigQuery table create/layout.
 
     Native ``destination.type: bigquery`` pipelines use their config as-is.
-    ``det export bq`` reads bronze from filesystem/iceberg, so this returns a
+    ``det export-bq`` reads bronze from filesystem/iceberg, so this returns a
     synthetic bigquery destination (default extract_run grain) without mutating
     the source config used for bronze reads.
     """
