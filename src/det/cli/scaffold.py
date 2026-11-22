@@ -40,7 +40,7 @@ def init_source_cmd(
     destination_type: str = typer.Option(
         "iceberg",
         "--destination-type",
-        help="iceberg (default lake) | filesystem (JSONL) | duckdb | postgres",
+        help="iceberg (default lake) | filesystem (JSONL) | duckdb | postgres | bigquery",
     ),
     connection: str | None = typer.Option(
         None,
@@ -63,9 +63,9 @@ def init_source_cmd(
 ) -> None:
     """Scaffold a project-local source plugin (+ pipeline YAML / schema by default)."""
 
-    if destination_type not in {"filesystem", "duckdb", "postgres", "iceberg"}:
+    if destination_type not in {"filesystem", "duckdb", "postgres", "iceberg", "bigquery"}:
         raise typer.BadParameter(
-            "must be filesystem, duckdb, postgres, or iceberg",
+            "must be filesystem, duckdb, postgres, iceberg, or bigquery",
             param_hint="--destination-type",
         )
     root = _project_root(project_root)
@@ -107,7 +107,7 @@ def init_pipeline_cmd(
     destination_type: str = typer.Option(
         "iceberg",
         "--destination-type",
-        help="iceberg (default lake) | filesystem (JSONL) | duckdb | postgres",
+        help="iceberg (default lake) | filesystem (JSONL) | duckdb | postgres | bigquery",
     ),
     connection: str | None = typer.Option(
         None,
@@ -134,9 +134,9 @@ def init_pipeline_cmd(
 ) -> None:
     """Create pipeline YAML + minimal schema + scaffold-dbt models."""
 
-    if destination_type not in {"filesystem", "duckdb", "postgres", "iceberg"}:
+    if destination_type not in {"filesystem", "duckdb", "postgres", "iceberg", "bigquery"}:
         raise typer.BadParameter(
-            "must be filesystem, duckdb, postgres, or iceberg",
+            "must be filesystem, duckdb, postgres, iceberg, or bigquery",
             param_hint="--destination-type",
         )
     root = _project_root(project_root)

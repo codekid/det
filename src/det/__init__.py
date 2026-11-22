@@ -71,7 +71,7 @@ from det.sources.base import (
     merge_source_config,
 )
 
-__version__ = "0.11.1"
+__version__ = "0.12.0"
 
 __all__ = [
     "DEFAULT_EXTRACT_LOOKBACK",
