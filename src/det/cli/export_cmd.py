@@ -37,6 +37,7 @@ from det.runtime.config import load_pipeline_config, resolve_path
 from det.runtime.settings import use_settings
 from det.validation.jsonschema_validator import load_json_schema
 
+
 @app.command("export-bq")
 def export_bq(
     ctx: typer.Context,

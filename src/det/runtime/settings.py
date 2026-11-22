@@ -391,9 +391,10 @@ class DetSettings:
             kwargs["_secret_cache"] = cache
             kwargs["resolve_secret"] = _caching_lookup(resolve_secret, ttl_sec=ttl, cache=cache)
         if bq_project is not _MISSING:
-            kwargs["bq_project"] = (
-                None if bq_project is None or not str(bq_project).strip() else str(bq_project).strip()
-            )
+            if bq_project is None or not str(bq_project).strip():
+                kwargs["bq_project"] = None
+            else:
+                kwargs["bq_project"] = str(bq_project).strip()
         if bq_dataset_prefix is not _MISSING:
             kwargs["bq_dataset_prefix"] = (
                 None
