@@ -335,8 +335,9 @@ def write_to_bigquery(
         logger.info("created BigQuery table", table=table_id)
 
     start, end, run = identity
+    # project/dataset/table are normalized BQ idents; values are query params.
     delete_sql = (
-        f"DELETE FROM `{project}.{dataset}.{table}` "
+        f"DELETE FROM `{project}.{dataset}.{table}` "  # noqa: S608
         f"WHERE __interval_start_datetime = @start "
         f"AND __interval_end_datetime = @end "
         f"AND __extract_run_datetime = @run"

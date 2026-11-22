@@ -18,6 +18,7 @@ from det.ingestion.bq_writer import (
     write_to_bigquery,
 )
 from det.optional_deps import try_import_bigquery
+from det.runtime.bronze_export import load_bronze_export_rows
 from det.runtime.config import load_pipeline_config
 from det.runtime.runner import PipelineRunner
 from det.runtime.settings import DetSettings, use_settings
@@ -132,8 +133,6 @@ def test_export_bq_from_filesystem_bronze(project_root: Path, tmp_path: Path, mo
             interval_end="2026-08-07",
         )
     assert landed.rows == 2
-
-    from det.runtime.bronze_export import load_bronze_export_rows
 
     config = load_pipeline_config(pipe_path)
     schema = load_json_schema(project_root / "schemas/noaa/storm_events/storm_events.schema.yaml")
