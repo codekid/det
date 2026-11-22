@@ -22,7 +22,7 @@ Releases older than **0.9.0**: [GitHub Releases](https://github.com/codekid/det/
   to a time partition on `__extract_run_datetime`.
 - `destination.bigquery.partition_by` / `cluster_by` — BigQuery-native source
   layout. When `partition_by` is set it wins over the extract_run default.
-- `det export bq` — push existing filesystem or Iceberg bronze into BigQuery
+- `det export-bq` — push existing filesystem or Iceberg bronze into BigQuery
   (Path B exploration). Same naming and replace-partition writer; gated by
   approvals like other write commands.
 

@@ -37,15 +37,7 @@ from det.runtime.config import load_pipeline_config, resolve_path
 from det.runtime.settings import use_settings
 from det.validation.jsonschema_validator import load_json_schema
 
-export_app = typer.Typer(
-    name="export",
-    help="Export existing bronze to an external system (BigQuery).",
-    no_args_is_help=True,
-)
-app.add_typer(export_app, name="export")
-
-
-@export_app.command("bq")
+@app.command("export-bq")
 def export_bq(
     ctx: typer.Context,
     pipeline: str = typer.Option(..., "--pipeline", "-p", help=_PIPELINE_HELP),

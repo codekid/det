@@ -1,4 +1,4 @@
-"""Read existing bronze rows for ``det export bq`` (filesystem or Iceberg)."""
+"""Read existing bronze rows for ``det export-bq`` (filesystem or Iceberg)."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def _resolve_run_dir(run_path: str, *, project_root: Path) -> Path:
         ref = open_lake(text, project_root)
         if not ref.is_local:
             raise ValueError(
-                f"det export bq filesystem source requires a local bronze path, got {text!r}"
+                f"det export-bq filesystem source requires a local bronze path, got {text!r}"
             )
         return ref.to_path()
     candidate = Path(text)
@@ -163,7 +163,7 @@ def load_bronze_export_rows(
             extract_run_datetime=extract_run_datetime,
         )
     raise ValueError(
-        f"det export bq supports filesystem and iceberg bronze sources, "
+        f"det export-bq supports filesystem and iceberg bronze sources, "
         f"got destination.type={dest!r}"
     )
 
