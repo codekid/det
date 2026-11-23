@@ -170,6 +170,11 @@ class DetSettings:
     lake_override_raw: str | None = None
     lake_override_bronze: str | None = None
     lake_override_ops: str | None = None
+    # BigQuery bronze destination (destination.type: bigquery / det export-bq).
+    # Project from DET_GCP_PROJECT / GOOGLE_CLOUD_PROJECT — never YAML.
+    bq_project: str | None = None
+    # Optional prefix for derived datasets ({prefix}_{provider}); unset → "bronze".
+    bq_dataset_prefix: str | None = None
     _secret_cache: _SecretCache = field(default_factory=_SecretCache, compare=False, repr=False)
 
     @classmethod
@@ -215,6 +220,14 @@ class DetSettings:
         else:
             lookup = _caching_lookup(resolve_secret, ttl_sec=ttl, cache=cache)
 
+        bq_project: str | None = None
+        for key in ("DET_GCP_PROJECT", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "GCP_PROJECT"):
+            text = (environ.get(key) or "").strip()
+            if text:
+                bq_project = text
+                break
+        bq_dataset_prefix = (environ.get("DET_BQ_DATASET_PREFIX") or "").strip() or None
+
         return cls(
             project_root=root,
             lake_path=lake_raw,
@@ -249,6 +262,8 @@ class DetSettings:
             lake_override_raw=None,
             lake_override_bronze=None,
             lake_override_ops=None,
+            bq_project=bq_project,
+            bq_dataset_prefix=bq_dataset_prefix,
             _secret_cache=cache,
         )
 
@@ -280,6 +295,8 @@ class DetSettings:
         secrets_file: Any = _MISSING,
         secrets_ttl_sec: Any = _MISSING,
         resolve_secret: Any = _MISSING,
+        bq_project: Any = _MISSING,
+        bq_dataset_prefix: Any = _MISSING,
     ) -> DetSettings:
         """Return a copy with CLI/embedder flag overrides applied."""
         kwargs: dict[str, Any] = {}
@@ -373,6 +390,17 @@ class DetSettings:
             ttl = kwargs.get("secrets_ttl_sec", self.secrets_ttl_sec)
             kwargs["_secret_cache"] = cache
             kwargs["resolve_secret"] = _caching_lookup(resolve_secret, ttl_sec=ttl, cache=cache)
+        if bq_project is not _MISSING:
+            if bq_project is None or not str(bq_project).strip():
+                kwargs["bq_project"] = None
+            else:
+                kwargs["bq_project"] = str(bq_project).strip()
+        if bq_dataset_prefix is not _MISSING:
+            kwargs["bq_dataset_prefix"] = (
+                None
+                if bq_dataset_prefix is None or not str(bq_dataset_prefix).strip()
+                else str(bq_dataset_prefix).strip()
+            )
         return replace(self, **kwargs)
 
     def clear_secret_cache(self) -> None:

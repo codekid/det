@@ -18,8 +18,8 @@ class ThinBackend:
     Filesystem-only bronze writer (proof / migrate tests).
 
     Prefer ``DetBackend`` (``library: det``) for real pipelines — it covers
-    filesystem, DuckDB, and Postgres. Keep ``thin`` when you explicitly want a
-    minimal JSONL-only path.
+    filesystem, DuckDB, Postgres, Iceberg, and BigQuery. Keep ``thin`` when you
+    explicitly want a minimal JSONL-only path.
     """
 
     name = "thin"
