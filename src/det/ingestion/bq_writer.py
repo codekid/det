@@ -257,11 +257,28 @@ def bq_schema_columns(schema: dict[str, Any]) -> list[tuple[str, str]]:
     return out
 
 
-def bq_schema_from_json_schema(schema: dict[str, Any]) -> list[Any]:
-    """Build ``google.cloud.bigquery.SchemaField`` list from a DET JSON Schema."""
+def bq_schema_from_json_schema(
+    schema: dict[str, Any],
+    *,
+    partition: BigQueryDestinationPartitionConfig | None = None,
+) -> list[Any]:
+    """Build ``google.cloud.bigquery.SchemaField`` list from a DET JSON Schema.
+
+    When ``partition`` targets a payload column, override that column's BQ type
+    with ``partition.data_type`` so time partitioning is valid (JSON Schema
+    strings otherwise become STRING). Meta columns keep ``BQ_META_TYPES``.
+    """
     bigquery = require_bigquery()
+    columns = dict(bq_schema_columns(schema))
+    if partition is not None:
+        if partition.field not in columns:
+            raise ValueError(
+                f"partition_by.field {partition.field!r} is not a schema column"
+            )
+        if partition.field not in BQ_META_TYPES:
+            columns[partition.field] = partition.data_type.upper()
     fields: list[Any] = []
-    for name, bq_type in bq_schema_columns(schema):
+    for name, bq_type in columns.items():
         fields.append(bigquery.SchemaField(name, bq_type, mode="NULLABLE"))
     return fields
 
@@ -314,25 +331,17 @@ def write_to_bigquery(
     chunks = iter_chunks(records, chunk_rows)
     first_chunk = next(chunks, None)
     identity = resolve_run_identity(run_identity, first_chunk)
-    schema_fields = bq_schema_from_json_schema(json_schema)
+    layout = bq_layout_destination(config)
+    partition = resolve_bq_partition_by(layout)
+    schema_fields = bq_schema_from_json_schema(json_schema, partition=partition)
     client = bigquery.Client(project=project)
 
     dataset_ref = bigquery.Dataset(f"{project}.{dataset}")
     client.create_dataset(dataset_ref, exists_ok=True)
 
     table_ref = bigquery.Table(table_id, schema=schema_fields)
-    apply_bq_table_layout(table_ref, bigquery, bq_layout_destination(config))
-    try:
-        client.get_table(table_id)
-    except Exception as exc:
-        # google.api_core.exceptions.NotFound — avoid hard dep on google-api-core.
-        if type(exc).__name__ != "NotFound" and "NotFound" not in type(exc).__name__:
-            # Also accept 404-style messages from older clients.
-            msg = str(exc).lower()
-            if "not found" not in msg and "404" not in msg:
-                raise
-        client.create_table(table_ref)
-        logger.info("created BigQuery table", table=table_id)
+    apply_bq_table_layout(table_ref, bigquery, layout)
+    client.create_table(table_ref, exists_ok=True)
 
     start, end, run = identity
     # project/dataset/table are normalized BQ idents; values are query params.
@@ -374,10 +383,21 @@ def write_to_bigquery(
         if on_chunk is not None:
             on_chunk()
 
-    if first_chunk is not None:
-        _load_chunk(first_chunk)
-        for chunk in chunks:
-            _load_chunk(chunk)
+    try:
+        if first_chunk is not None:
+            _load_chunk(first_chunk)
+            for chunk in chunks:
+                _load_chunk(chunk)
+    except Exception:
+        try:
+            client.query(delete_sql, job_config=job_config).result()
+        except Exception:
+            logger.warning(
+                "failed to clean partial BigQuery load",
+                table=table_id,
+                exc_info=True,
+            )
+        raise
 
     logger.info(
         "bigquery load finished",

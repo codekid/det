@@ -482,6 +482,21 @@ def test_set_overrides_are_order_independent():
     assert a == b
 
 
+def test_set_overrides_reject_duplicate_keys():
+    with pytest.raises(ValueError, match="duplicate --set key"):
+        extract_write_argv(
+            "noaa.storm_events",
+            "2026-08-06",
+            set_=["destination.type=filesystem", "destination.type=bigquery"],
+        )
+    with pytest.raises(ValueError, match="duplicate --set key"):
+        export_bq_write_argv(
+            "noaa.storm_events",
+            "2026-08-06",
+            set_=["a=1", "a=2"],
+        )
+
+
 def test_dbt_full_refresh_and_target_are_bound():
     mid = "scm_" + ("ab" * 8)
     base = dbt_write_argv("noaa.storm_events")

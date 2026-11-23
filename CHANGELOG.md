@@ -25,6 +25,11 @@ Releases older than **0.9.0**: [GitHub Releases](https://github.com/codekid/det/
 - `det export-bq` — push existing filesystem or Iceberg bronze into BigQuery
   (Path B exploration). Same naming and replace-partition writer; gated by
   approvals like other write commands.
+- Harden BigQuery / export-bq (post-review): apply `partition_by.data_type` to
+  the load schema, idempotent `create_table(exists_ok=True)`, delete partial
+  loads on chunk failure, load config before claiming approval, reject
+  duplicate `--set` keys in approval digests, and fix Iceberg multi-run export
+  + row-cap fail-closed behavior.
 
 ## [0.11.2] - 2026-11-09
 

@@ -477,9 +477,29 @@ def _norm_relpath(value: str) -> str:
 
 
 def _set_argv(set_: Sequence[str] | None) -> list[str]:
-    """``--set`` overrides, sorted so flag order cannot change the digest."""
+    """``--set`` overrides, sorted so flag order cannot change the digest.
+
+    Duplicate keys are rejected. ``apply_overrides`` is last-value-wins in typed
+    order, so sorting alone would let two argv lists share a digest while loading
+    different effective configs.
+    """
+    items = [str(s) for s in (set_ or [])]
+    seen: set[str] = set()
+    for item in items:
+        key, sep, _ = item.partition("=")
+        if not sep:
+            raise ValueError(f"Override must be dotted.key=value, got: {item!r}")
+        key = key.strip()
+        if not key:
+            raise ValueError(f"Override key must be non-empty: {item!r}")
+        if key in seen:
+            raise ValueError(
+                f"duplicate --set key {key!r}; repeating a key would desync "
+                "the approval digest from last-value-wins load order"
+            )
+        seen.add(key)
     argv: list[str] = []
-    for item in sorted(str(s) for s in (set_ or [])):
+    for item in sorted(items):
         argv.extend(["--set", item])
     return argv
 

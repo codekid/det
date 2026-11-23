@@ -80,6 +80,9 @@ def export_bq(
         lake_path_bronze=lake_path_bronze,
         lake_path_ops=lake_path_ops,
     )
+    # Load before claiming so config/schema errors never leave an orphan claim.
+    config = load_pipeline_config(resolved.path, overrides=set_)
+    json_schema = load_json_schema(resolve_path(root, config.schema_path))
     claimed = _gate_approval(
         root,
         "export-bq",
@@ -97,8 +100,6 @@ def export_bq(
         ctx=ctx,
         settings=settings,
     )
-    config = load_pipeline_config(resolved.path, overrides=set_)
-    json_schema = load_json_schema(resolve_path(root, config.schema_path))
     total_rows = 0
     batches_written = 0
     try:

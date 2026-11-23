@@ -14,11 +14,13 @@ from det.ingestion.bq_writer import (
     bq_normalize_ident,
     bq_project_from_settings,
     bq_schema_columns,
+    bq_schema_from_json_schema,
     bq_table_for_config,
     bq_type_for_prop,
     resolve_bq_partition_by,
 )
 from det.runtime.config import DestinationConfig, PipelineConfig
+from det.runtime.config.destination import BigQueryDestinationPartitionConfig
 from det.runtime.settings import DetSettings
 
 
@@ -231,3 +233,36 @@ def test_require_partition_filter_custom_field_rejected_at_resolve() -> None:
     )
     with pytest.raises(ValueError, match="incompatible with replace-by-run"):
         resolve_bq_partition_by(dest)
+
+
+def test_bq_schema_partition_overrides_payload_string_type() -> None:
+    pytest.importorskip("google.cloud.bigquery")
+    schema = {
+        "type": "object",
+        "properties": {
+            "event_time": {"type": "string"},
+            "event_id": {"type": "integer"},
+        },
+    }
+    part = BigQueryDestinationPartitionConfig(
+        field="event_time",
+        data_type="timestamp",
+        granularity="day",
+    )
+    fields = bq_schema_from_json_schema(schema, partition=part)
+    by_name = {f.name: f.field_type for f in fields}
+    assert by_name["event_time"] == "TIMESTAMP"
+    assert by_name["event_id"] == "INT64"
+    assert by_name["__extract_run_datetime"] == "TIMESTAMP"
+
+
+def test_bq_schema_partition_missing_field_raises() -> None:
+    pytest.importorskip("google.cloud.bigquery")
+    schema = {"type": "object", "properties": {"event_id": {"type": "integer"}}}
+    part = BigQueryDestinationPartitionConfig(
+        field="event_time",
+        data_type="timestamp",
+        granularity="day",
+    )
+    with pytest.raises(ValueError, match="not a schema column"):
+        bq_schema_from_json_schema(schema, partition=part)
