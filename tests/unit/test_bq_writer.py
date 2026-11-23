@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from pydantic import ValidationError
 
 from det.ingestion.bq_writer import (
     BQ_META_TYPES,
+    _rows_to_ndjson,
     bq_dataset_for_config,
     bq_layout_destination,
     bq_normalize_ident,
@@ -116,6 +118,25 @@ def test_bq_type_for_prop_scalars() -> None:
     assert bq_type_for_prop({"type": "number"}) == "FLOAT64"
     assert bq_type_for_prop({"type": "boolean"}) == "BOOL"
     assert bq_type_for_prop({"type": "string"}) == "STRING"
+
+
+def test_bq_type_number_precedes_integer_union() -> None:
+    """JSON Schema number∪integer must load as FLOAT64 so fractions survive."""
+    prop = {"type": ["integer", "number", "null"]}
+    assert bq_type_for_prop(prop) == "FLOAT64"
+    cols = dict(
+        bq_schema_columns(
+            {
+                "type": "object",
+                "properties": {"amount": prop, "count": {"type": "integer"}},
+            }
+        )
+    )
+    assert cols["amount"] == "FLOAT64"
+    assert cols["count"] == "INT64"
+    payload = json.loads(_rows_to_ndjson([{"amount": 1.5, "count": 2}]).decode())
+    assert payload["amount"] == 1.5
+    assert isinstance(payload["amount"], float)
 
 
 def test_bq_type_for_prop_nested() -> None:

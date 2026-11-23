@@ -224,14 +224,19 @@ def _allowed_types(prop: dict[str, Any]) -> set[str]:
 
 
 def bq_type_for_prop(prop: dict[str, Any]) -> str:
-    """Map a JSON Schema property to a BigQuery type name. Nested → JSON."""
+    """Map a JSON Schema property to a BigQuery type name. Nested → JSON.
+
+    ``number`` wins over ``integer`` when both appear (e.g.
+    ``type: [integer, number, "null"]``) so fractional values stay representable
+    as FLOAT64. Integer-only schemas still map to INT64.
+    """
     if is_object_prop(prop) or is_array_prop(prop):
         return "JSON"
     allowed = _allowed_types(prop)
-    if "integer" in allowed:
-        return "INT64"
     if "number" in allowed:
         return "FLOAT64"
+    if "integer" in allowed:
+        return "INT64"
     if "boolean" in allowed:
         return "BOOL"
     return "STRING"
