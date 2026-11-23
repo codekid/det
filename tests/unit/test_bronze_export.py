@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
 import pytest
+import yaml
+from typer.testing import CliRunner
 
+from det.cli.app import app
 from det.runtime.bronze_export import load_bronze_export_rows
 from det.runtime.config import PipelineConfig
 from det.runtime.meta import to_partition_value
@@ -174,6 +179,110 @@ def test_iceberg_groups_multiple_runs_without_pregroup_reject() -> None:
         "2026-08-06T12:00:00+00:00",
         "2026-08-06T13:00:00+00:00",
     }
+
+
+def test_export_bq_cli_leases_each_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """export-bq must hold a pipeline lease across DELETE+load for each identity."""
+
+    monkeypatch.setenv("DET_LOCK", "0")
+    monkeypatch.setenv("DET_GCP_PROJECT", "det-test")
+    monkeypatch.delenv("DET_REQUIRE_APPROVAL", raising=False)
+
+    schema = tmp_path / "schema.yaml"
+    schema.write_text(
+        yaml.safe_dump(
+            {
+                "type": "object",
+                "properties": {"event_id": {"type": "integer"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    pipe = tmp_path / "pipe.yaml"
+    pipe.write_text(
+        yaml.safe_dump(
+            {
+                "name": "noaa.storm_events",
+                "source": {"type": "noaa.storm_events"},
+                "schema": str(schema),
+                "destination": {"type": "filesystem"},
+                "wire_version": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    identity = (
+        "2026-08-06T00:00:00+00:00",
+        "2026-08-07T00:00:00+00:00",
+        "2026-08-06T12:00:00+00:00",
+    )
+    leases: list[dict[str, Any]] = []
+    refreshes: list[str] = []
+    writes: list[dict[str, Any]] = []
+
+    @contextmanager
+    def fake_lease(*_a: Any, **kwargs: Any):
+        leases.append(kwargs)
+        yield SimpleNamespace(store=None)
+
+    def fake_refresh(**kwargs: Any) -> None:
+        refreshes.append("refresh")
+
+    def fake_write(*_a: Any, **kwargs: Any) -> Path:
+        writes.append(kwargs)
+        on_chunk = kwargs.get("on_chunk")
+        if on_chunk is not None:
+            on_chunk()
+        return Path("bq/det-test/bronze_noaa/storm_events_v1")
+
+    monkeypatch.setattr("det.cli.export_cmd.pipeline_lease", fake_lease)
+    monkeypatch.setattr("det.cli.export_cmd.refresh_bronze_locks", fake_refresh)
+    monkeypatch.setattr(
+        "det.cli.export_cmd.load_bronze_export_rows",
+        lambda *_a, **_k: [
+            (
+                identity,
+                [
+                    {
+                        "event_id": 1,
+                        "__interval_start_datetime": identity[0],
+                        "__interval_end_datetime": identity[1],
+                        "__extract_run_datetime": identity[2],
+                    }
+                ],
+            )
+        ],
+    )
+    monkeypatch.setattr("det.cli.export_cmd.write_to_bigquery", fake_write)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "export-bq",
+            "-p",
+            str(pipe),
+            "-s",
+            "2026-08-06",
+            "-e",
+            "2026-08-07",
+            "--project-root",
+            str(tmp_path),
+            "--lake-path",
+            str(tmp_path / "lake"),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert len(leases) == 1
+    assert leases[0]["pipeline"] == "noaa.storm_events"
+    assert leases[0]["interval_start"] == identity[0]
+    assert leases[0]["interval_end"] == identity[1]
+    assert leases[0]["command"] == "export-bq"
+    assert len(writes) == 1
+    assert writes[0]["run_identity"] == identity
+    assert writes[0]["on_chunk"] is not None
+    # on_chunk during write + explicit refresh after write
+    assert len(refreshes) >= 2
 
 
 def test_iceberg_over_cap_raises() -> None:

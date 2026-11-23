@@ -25,6 +25,7 @@ from det.cli.common import (
     _resolve_pipeline,
     _settings,
 )
+from det.destinations.models import lake_roots_for
 from det.ingestion.bq_writer import (
     bq_dataset_for_config,
     bq_project_from_settings,
@@ -34,6 +35,12 @@ from det.ingestion.bq_writer import (
 from det.runtime.approval import export_bq_write_argv
 from det.runtime.bronze_export import load_bronze_export_rows
 from det.runtime.config import load_pipeline_config, resolve_path
+from det.runtime.lease import (
+    LeaseHeldError,
+    pipeline_lease,
+    refresh_bronze_locks,
+    resolve_lease_options,
+)
 from det.runtime.settings import use_settings
 from det.validation.jsonschema_validator import load_json_schema
 
@@ -64,6 +71,11 @@ def export_bq(
     ),
     lake_path_ops: str | None = typer.Option(None, "--lake-path-ops", help=_LAKE_PATH_OPS_HELP),
     set_: list[str] = typer.Option([], "--set"),
+    lock_ttl_sec: int | None = typer.Option(
+        None,
+        "--lock-ttl-sec",
+        help="Lake lease TTL in seconds (default: DET_LOCK_TTL_SEC or 7200)",
+    ),
     project_root: Path | None = typer.Option(None, "--project-root", help=_PROJECT_ROOT_HELP),
     approval: str | None = typer.Option(None, "--approval", help=_APPROVAL_HELP),
     require_approval: bool = typer.Option(False, "--require-approval", help=_REQUIRE_APPROVAL_HELP),
@@ -79,6 +91,7 @@ def export_bq(
         lake_path_raw=lake_path_raw,
         lake_path_bronze=lake_path_bronze,
         lake_path_ops=lake_path_ops,
+        lock_ttl_sec=lock_ttl_sec,
     )
     # Load before claiming so config/schema errors never leave an orphan claim.
     config = load_pipeline_config(resolved.path, overrides=set_)
@@ -102,6 +115,9 @@ def export_bq(
     )
     total_rows = 0
     batches_written = 0
+    project = ""
+    dataset = ""
+    table = ""
     try:
         with _claimed_approval_work(claimed, approval, root, settings=settings):
             with use_settings(settings):
@@ -125,17 +141,58 @@ def export_bq(
                     config, settings, bq_dataset_override=bq_dataset
                 )
                 table = bq_table_for_config(config)
+                ops_lake = lake_roots_for(root, settings=settings).ops
+                lease_opts = resolve_lease_options(
+                    settings=settings,
+                    pipeline=config,
+                    ttl_sec=settings.effective_lock_ttl(lock_ttl_sec),
+                    owner=settings.lock_owner,
+                    enabled=settings.locks_enabled,
+                )
+                # Per-run lease (same interval grain as load/migrate) so two
+                # export-bq processes cannot DELETE+APPEND the same identity.
                 for identity, rows in batches:
-                    write_to_bigquery(
-                        rows,
-                        config=config,
-                        json_schema=json_schema,
-                        settings=settings,
-                        bq_dataset_override=bq_dataset,
-                        run_identity=identity,
-                    )
+                    run_start, run_end, _run = identity
+                    with pipeline_lease(
+                        ops_lake,
+                        pipeline=config.name,
+                        interval_start=run_start,
+                        interval_end=run_end,
+                        command="export-bq",
+                        ttl_sec=settings.effective_lock_ttl(lock_ttl_sec),
+                        owner=settings.lock_owner,
+                        enabled=settings.locks_enabled,
+                        options=lease_opts,
+                        resolve_secret=settings.resolve_secret,
+                    ) as lease:
+                        lease_store = None if lease is None else lease.store
+
+                        def refresh_locks(
+                            *,
+                            _lease=lease,
+                            _store=lease_store,
+                        ) -> None:
+                            refresh_bronze_locks(
+                                pipeline_lease=_lease,
+                                dataset_lock=None,
+                                lease_store=_store,
+                            )
+
+                        write_to_bigquery(
+                            rows,
+                            config=config,
+                            json_schema=json_schema,
+                            settings=settings,
+                            bq_dataset_override=bq_dataset,
+                            run_identity=identity,
+                            on_chunk=refresh_locks,
+                        )
+                        refresh_locks()
                     total_rows += len(rows)
                     batches_written += 1
+    except LeaseHeldError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
