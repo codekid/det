@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from det.ingestion.bq_writer import (
     BQ_META_TYPES,
+    _nested_json_fields,
     _rows_to_ndjson,
     bq_dataset_for_config,
     bq_layout_destination,
@@ -142,6 +143,45 @@ def test_bq_type_number_precedes_integer_union() -> None:
 def test_bq_type_for_prop_nested() -> None:
     assert bq_type_for_prop({"type": "object", "properties": {"a": {"type": "string"}}}) == "JSON"
     assert bq_type_for_prop({"type": "array", "items": {"type": "string"}}) == "JSON"
+
+
+def test_rows_to_ndjson_decodes_iceberg_nested_json_strings_only() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "payload": {"type": "object", "properties": {"a": {"type": "integer"}}},
+            "tags": {"type": "array", "items": {"type": "string"}},
+            "note": {"type": "string"},
+        },
+    }
+    nested = _nested_json_fields(schema)
+    assert nested == frozenset({"payload", "tags"})
+    raw = {
+        "payload": json.dumps({"a": 1}),
+        "tags": json.dumps(["x", "y"]),
+        "note": '{"keep":"as-string"}',
+        "already": {"b": 2},
+    }
+    line = json.loads(
+        _rows_to_ndjson([raw], nested_fields=nested).decode().strip()
+    )
+    assert line["payload"] == {"a": 1}
+    assert line["tags"] == ["x", "y"]
+    assert line["note"] == '{"keep":"as-string"}'
+    assert line["already"] == {"b": 2}
+
+
+def test_rows_to_ndjson_rejects_invalid_nested_json_text() -> None:
+    with pytest.raises(ValueError, match="invalid JSON"):
+        _rows_to_ndjson(
+            [{"payload": "{not-json"}],
+            nested_fields=frozenset({"payload"}),
+        )
+    with pytest.raises(ValueError, match="object/array"):
+        _rows_to_ndjson(
+            [{"payload": '"just-a-string"'}],
+            nested_fields=frozenset({"payload"}),
+        )
 
 
 def test_bq_schema_columns_appends_meta() -> None:

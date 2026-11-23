@@ -296,10 +296,59 @@ def _jsonable_cell(value: Any) -> Any:
     return value
 
 
-def _rows_to_ndjson(rows: Sequence[dict[str, Any]]) -> bytes:
+def _nested_json_fields(schema: dict[str, Any]) -> frozenset[str]:
+    """Property names whose JSON Schema type is object or array (BQ JSON columns)."""
+    props = schema.get("properties") or {}
+    if not isinstance(props, dict):
+        return frozenset()
+    out: set[str] = set()
+    for name, prop in props.items():
+        if (
+            isinstance(name, str)
+            and isinstance(prop, dict)
+            and (is_object_prop(prop) or is_array_prop(prop))
+        ):
+            out.add(name)
+    return frozenset(out)
+
+
+def _decode_nested_json_string(value: str, *, field: str) -> Any:
+    """Parse Iceberg-serialized nested JSON text into a dict/list for BQ JSON load."""
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"nested field {field!r} must be JSON object/array text for BigQuery JSON "
+            f"load, got invalid JSON"
+        ) from exc
+    if not isinstance(decoded, (dict, list)):
+        raise ValueError(
+            f"nested field {field!r} must decode to object/array for BigQuery JSON "
+            f"load, got {type(decoded).__name__}"
+        )
+    return decoded
+
+
+def _rows_to_ndjson(
+    rows: Sequence[dict[str, Any]],
+    *,
+    nested_fields: frozenset[str] | None = None,
+) -> bytes:
+    """Serialize rows as NDJSON.
+
+    Iceberg stores object/array props as JSON strings; decode those fields (only)
+    so BigQuery JSON columns receive structured values. Ordinary string columns
+    are left alone even when their text is valid JSON.
+    """
+    nested = nested_fields or frozenset()
     buf = io.BytesIO()
     for row in rows:
-        payload = {k: _jsonable_cell(v) for k, v in row.items()}
+        payload: dict[str, Any] = {}
+        for key, value in row.items():
+            cell = value
+            if key in nested and isinstance(cell, str):
+                cell = _decode_nested_json_string(cell, field=key)
+            payload[key] = _jsonable_cell(cell)
         buf.write(json.dumps(payload, default=str).encode("utf-8"))
         buf.write(b"\n")
     return buf.getvalue()
@@ -366,6 +415,7 @@ def write_to_bigquery(
     client.query(delete_sql, job_config=job_config).result()
 
     total = 0
+    nested_fields = _nested_json_fields(json_schema)
     load_config = bigquery.LoadJobConfig(
         source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
         schema=schema_fields,
@@ -376,7 +426,7 @@ def write_to_bigquery(
     def _load_chunk(chunk: list[dict[str, Any]]) -> None:
         nonlocal total
         assert_chunk_matches_identity(chunk, identity)
-        payload = _rows_to_ndjson(chunk)
+        payload = _rows_to_ndjson(chunk, nested_fields=nested_fields)
         job = client.load_table_from_file(
             io.BytesIO(payload),
             table_id,
