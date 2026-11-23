@@ -19,14 +19,11 @@ from det.runtime.config.dbt import (
     _require_dbt_col_id,
 )
 from det.runtime.config.destination import (
-    BigQueryDestinationConfig,
-    BigQueryDestinationPartitionConfig,
     DestinationConfig,
     IcebergDestinationConfig,
     IcebergMaintainConfig,
     IcebergPartition,
     MedallionConfig,
-    RunGrainPartition,
 )
 from det.runtime.config.lease import LeaseConfig
 from det.runtime.config.load import (
@@ -40,8 +37,6 @@ from det.runtime.config.source import IngestionConfig, SourceConfig, ValidationC
 
 __all__ = [
     "AdaptScope",
-    "BigQueryDestinationConfig",
-    "BigQueryDestinationPartitionConfig",
     "BigQueryPartitionConfig",
     "BigQuerySilverConfig",
     "DbtConfig",
@@ -58,7 +53,6 @@ __all__ = [
     "MedallionConfig",
     "PipelineConfig",
     "RelationConfig",
-    "RunGrainPartition",
     "SourceConfig",
     "ValidationConfig",
     "ViewWarnConfig",

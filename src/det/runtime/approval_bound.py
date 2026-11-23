@@ -98,17 +98,6 @@ APPROVAL_BOUND_PARAMS: dict[str, frozenset[str]] = {
         }
     ),
     "iceberg-register": frozenset({*LAKE_LAYER_PARAMS, "pipeline", "skip_ops", "apply"}),
-    "export-bq": frozenset(
-        {
-            "pipeline",
-            "interval_start",
-            "interval_end",
-            "extract_run_datetime",
-            "bq_dataset",
-            *LAKE_LAYER_PARAMS,
-            "set_",
-        }
-    ),
     "lock-release": frozenset(
         {
             "pipeline",

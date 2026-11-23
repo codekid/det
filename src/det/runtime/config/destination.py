@@ -16,26 +16,11 @@ from pydantic import (
 
 from det.runtime.secrets import looks_like_secret_name
 
-# DET replace-by-extract-run grain (Iceberg create-time profile + BigQuery default
-# time partition). Not hive layout and not warehouse source-column layout.
-RunGrainPartition = Literal["extract_run", "none"]
-# Back-compat alias — Iceberg writers historically imported this name.
-IcebergPartition = RunGrainPartition
-
-# Payload / meta column ids for destination.bigquery.partition_by / cluster_by.
-_BQ_COL_OR_META = re.compile(r"^(?:[a-z][a-z0-9_]*|__[a-z][a-z0-9_]*)$")
+# Iceberg bronze partition profile (create-time only; not hive layout).
+IcebergPartition = Literal["extract_run", "none"]
 
 # Maintain duration fields: Nh / Nd (same family as catch-up lookback).
 _ICEBERG_DURATION = re.compile(r"^(\d+)([HhDd])$")
-
-
-def _require_bq_col_or_meta(name: str, *, where: str) -> str:
-    text = str(name).strip()
-    if not _BQ_COL_OR_META.match(text):
-        raise ValueError(
-            f"{where}: column id must be snake_case or DET meta (__*), got {name!r}"
-        )
-    return text
 
 
 def _require_iceberg_duration(value: str | None, *, where: str) -> str | None:
@@ -104,89 +89,9 @@ class IcebergDestinationConfig(BaseModel):
         return out
 
 
-class BigQueryDestinationPartitionConfig(BaseModel):
-    """BigQuery physical time partition (source/query grain — not DET run grain)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    field: str
-    # Integer range partitioning needs start/end/interval; bronze supports time types.
-    data_type: Literal["timestamp", "date", "datetime"] = "timestamp"
-    granularity: Literal["hour", "day", "month", "year"] = "day"
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        out = dict(data)
-        if out.get("granularity") is None:
-            out["granularity"] = "day"
-        data_type = out.get("data_type", "timestamp")
-        if data_type == "date" and out.get("granularity") == "hour":
-            raise ValueError(
-                "destination.bigquery.partition_by.granularity 'hour' is not valid "
-                "when data_type is date"
-            )
-        return out
-
-    @model_validator(mode="after")
-    def _validate_field(self) -> BigQueryDestinationPartitionConfig:
-        _require_bq_col_or_meta(
-            self.field, where="destination.bigquery.partition_by.field"
-        )
-        return self
-
-
-class BigQueryDestinationConfig(BaseModel):
-    """BigQuery-only bronze layout (physical partition + clustering)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    # Source/query grain. When set, wins over destination.partition extract_run default.
-    partition_by: BigQueryDestinationPartitionConfig | None = None
-    cluster_by: list[str] = Field(default_factory=list)
-    require_partition_filter: bool = False
-
-    @field_validator("cluster_by", mode="before")
-    @classmethod
-    def _as_str_list(cls, v: Any) -> list[str]:
-        if v is None:
-            return []
-        if isinstance(v, str):
-            text = v.strip()
-            return [text] if text else []
-        if not isinstance(v, list):
-            raise ValueError("destination.bigquery.cluster_by must be a list of column names")
-        out: list[str] = []
-        for item in v:
-            name = str(item).strip()
-            if name:
-                out.append(name)
-        return out
-
-    @model_validator(mode="after")
-    def _validate_layout(self) -> BigQueryDestinationConfig:
-        if len(self.cluster_by) > 4:
-            raise ValueError(
-                "destination.bigquery.cluster_by supports at most 4 columns (BigQuery limit)"
-            )
-        for name in self.cluster_by:
-            _require_bq_col_or_meta(name, where="destination.bigquery.cluster_by")
-        if self.require_partition_filter and self.partition_by is None:
-            # extract_run default still partitions; require_partition_filter needs an
-            # explicit partition_by field so the filter column is unambiguous in YAML.
-            raise ValueError(
-                "destination.bigquery.require_partition_filter requires partition_by"
-            )
-        return self
-
-
 class DestinationConfig(BaseModel):
     # Lake bronze default. ``filesystem`` is explicit JSONL (thin/dev).
-    # ``bigquery`` lands bronze in BQ (project from DET_GCP_PROJECT; dataset
-    # derives as {prefix}_{provider} unless bq_dataset is set).
-    type: Literal["filesystem", "duckdb", "postgres", "iceberg", "bigquery"] = "iceberg"
+    type: Literal["filesystem", "duckdb", "postgres", "iceberg"] = "iceberg"
     # Ignored for lake roots (layout 2). Kept so existing YAML still loads;
     # ``det check`` warns when set. Use DET_LAKE_PATH / --lake-path /
     # DET_LAKE_PATH_{RAW,BRONZE,OPS} — never destination.path.
@@ -200,25 +105,19 @@ class DestinationConfig(BaseModel):
     # Medallion prefix for SQL destinations (default bronze) → schema bronze_{provider}.
     # Not the lake dataset path and not the final SQL schema name.
     dataset: str | None = None
-    # duckdb: database file path (required). postgres: DSN. iceberg/bigquery: unused
-    # (Hadoop catalog is the lake root; BQ project comes from DET_GCP_PROJECT).
+    # duckdb: database file path (required). postgres: DSN. iceberg: unused
+    # (Hadoop catalog is the lake root).
     connection: str | None = None
     # postgres only: name of the env var holding the DSN, mirroring auth_env on a
     # source. Preferred over connection so credentials never live in committed YAML.
     connection_env: str | None = None
-    # bigquery only: full dataset id override (e.g. my_exploration). When unset,
-    # dataset derives as {DET_BQ_DATASET_PREFIX or bronze}_{provider}.
-    # Project never lives in YAML — use DET_GCP_PROJECT.
-    bq_dataset: str | None = None
-    # DET run grain for iceberg + bigquery: ``extract_run`` (default) or ``none``.
-    # Iceberg: create-time identity transforms. BigQuery: default time partition on
-    # ``__extract_run_datetime`` unless ``bigquery.partition_by`` overrides.
-    # Forbidden on filesystem/duckdb/postgres.
-    partition: RunGrainPartition | None = None
+    # Iceberg only: ``extract_run`` = identity on interval start/end + extract run
+    # (hive grain; default) or ``none`` (unpartitioned). Applied on create_table;
+    # live mismatch hard-fails until ``det migrate --recreate-iceberg`` or a
+    # manual wipe. Forbidden on other types.
+    partition: IcebergPartition | None = None
     # Iceberg only: create-time table props + maintain plan knobs for external runners.
     iceberg: IcebergDestinationConfig | None = None
-    # BigQuery only: physical layout (source partition_by / cluster_by).
-    bigquery: BigQueryDestinationConfig | None = None
 
     @model_validator(mode="after")
     def connection_required_for_db_destinations(self) -> DestinationConfig:
@@ -254,13 +153,13 @@ class DestinationConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def partition_run_grain_destinations(self) -> DestinationConfig:
-        if self.partition is not None and self.type not in {"iceberg", "bigquery"}:
+    def partition_iceberg_only(self) -> DestinationConfig:
+        if self.partition is not None and self.type != "iceberg":
             raise ValueError(
                 "destination.partition is only supported when destination.type is "
-                f"iceberg or bigquery, got {self.type}"
+                f"iceberg, got {self.type}"
             )
-        if self.type in {"iceberg", "bigquery"} and self.partition is None:
+        if self.type == "iceberg" and self.partition is None:
             self.partition = "extract_run"
         return self
 
@@ -272,37 +171,6 @@ class DestinationConfig(BaseModel):
                 f"iceberg, got {self.type}"
             )
         return self
-
-    @model_validator(mode="after")
-    def bigquery_block_bigquery_only(self) -> DestinationConfig:
-        if self.bigquery is not None and self.type != "bigquery":
-            raise ValueError(
-                "destination.bigquery is only supported when destination.type is "
-                f"bigquery, got {self.type}"
-            )
-        return self
-
-    @model_validator(mode="after")
-    def bq_dataset_bigquery_only(self) -> DestinationConfig:
-        raw = (self.bq_dataset or "").strip()
-        if raw and self.type != "bigquery":
-            raise ValueError(
-                "destination.bq_dataset is only supported when destination.type is "
-                f"bigquery, got {self.type}"
-            )
-        if self.bq_dataset is not None:
-            self.bq_dataset = raw or None
-        return self
-
-    @property
-    def run_grain_partition(self) -> RunGrainPartition:
-        """Resolved DET run grain (default extract_run) for iceberg/bigquery."""
-        if self.type not in {"iceberg", "bigquery"}:
-            raise ValueError(
-                "run_grain_partition requires destination.type iceberg or bigquery, "
-                f"got {self.type}"
-            )
-        return self.partition or "extract_run"
 
     @property
     def iceberg_partition(self) -> IcebergPartition:
