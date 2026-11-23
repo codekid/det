@@ -76,21 +76,11 @@ def test_iceberg_partition_none_allowed():
     assert dest.partition == "none"
 
 
-def test_partition_rejected_on_non_run_grain_destinations():
+def test_partition_rejected_on_non_iceberg():
     with pytest.raises(ValidationError, match="partition"):
         DestinationConfig(type="filesystem", partition="none")
     with pytest.raises(ValidationError, match="partition"):
         DestinationConfig(type="duckdb", connection="./x.duckdb", partition="extract_run")
-
-
-def test_partition_allowed_on_bigquery():
-    dest = DestinationConfig(type="bigquery", partition="extract_run")
-    assert dest.partition == "extract_run"
-    assert dest.run_grain_partition == "extract_run"
-    none = DestinationConfig(type="bigquery", partition="none")
-    assert none.partition == "none"
-    defaulted = DestinationConfig(type="bigquery")
-    assert defaulted.partition == "extract_run"
 
 
 def test_small_pipeline_yamls_use_partition_none(project_root):

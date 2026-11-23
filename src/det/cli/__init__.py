@@ -5,7 +5,6 @@ from __future__ import annotations
 # Register Typer commands (side-effect imports).
 from det.cli import approvals as approvals  # noqa: F401
 from det.cli import dbt_cmd as dbt_cmd  # noqa: F401
-from det.cli import export_cmd as export_cmd  # noqa: F401
 from det.cli import extract_load as extract_load  # noqa: F401
 from det.cli import inspect_cmd as inspect_cmd  # noqa: F401
 from det.cli import migrate_prune as migrate_prune  # noqa: F401
