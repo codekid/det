@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -21,9 +23,11 @@ from det.ingestion.bq_writer import (
     bq_table_for_config,
     bq_type_for_prop,
     resolve_bq_partition_by,
+    write_to_bigquery,
 )
 from det.runtime.config import DestinationConfig, PipelineConfig
 from det.runtime.config.destination import BigQueryDestinationPartitionConfig
+from det.runtime.lease import LeaseFencedError
 from det.runtime.settings import DetSettings
 
 
@@ -327,3 +331,200 @@ def test_bq_schema_partition_missing_field_raises() -> None:
     )
     with pytest.raises(ValueError, match="not a schema column"):
         bq_schema_from_json_schema(schema, partition=part)
+
+
+def _fake_bq_module():
+    class _Job:
+        def result(self) -> None:
+            return None
+
+    class _Client:
+        def __init__(self, project: str | None = None) -> None:
+            self.project = project
+            self.queries: list[str] = []
+            self.loads = 0
+
+        def create_dataset(self, *_a: object, **_k: object) -> None:
+            return None
+
+        def create_table(self, *_a: object, **_k: object) -> None:
+            return None
+
+        def query(self, sql: str, job_config: object = None) -> _Job:
+            self.queries.append(sql)
+            return _Job()
+
+        def load_table_from_file(self, *_a: object, **_k: object) -> _Job:
+            self.loads += 1
+            return _Job()
+
+    class _Dataset:
+        def __init__(self, _ref: str) -> None:
+            return None
+
+    class _Table:
+        def __init__(self, _ref: str, schema: object = None) -> None:
+            self.time_partitioning = None
+            self.clustering_fields = None
+            self.require_partition_filter = False
+
+    class _TimePartitioning:
+        def __init__(self, **_k: object) -> None:
+            return None
+
+    class _TimePartitioningType:
+        DAY = "DAY"
+        HOUR = "HOUR"
+        MONTH = "MONTH"
+        YEAR = "YEAR"
+
+    class _LoadJobConfig:
+        def __init__(self, **_k: object) -> None:
+            return None
+
+    class _SourceFormat:
+        NEWLINE_DELIMITED_JSON = "NEWLINE_DELIMITED_JSON"
+
+    class _WriteDisposition:
+        WRITE_APPEND = "WRITE_APPEND"
+
+    class _ScalarQueryParameter:
+        def __init__(self, *_a: object, **_k: object) -> None:
+            return None
+
+    class _QueryJobConfig:
+        def __init__(self, **_k: object) -> None:
+            return None
+
+    class _SchemaField:
+        def __init__(self, name: str, field_type: str, mode: str = "NULLABLE") -> None:
+            self.name = name
+            self.field_type = field_type
+            self.mode = mode
+
+    mod = type(sys)("google.cloud.bigquery")
+    mod.Client = _Client
+    mod.Dataset = _Dataset
+    mod.Table = _Table
+    mod.TimePartitioning = _TimePartitioning
+    mod.TimePartitioningType = _TimePartitioningType
+    mod.LoadJobConfig = _LoadJobConfig
+    mod.SourceFormat = _SourceFormat
+    mod.WriteDisposition = _WriteDisposition
+    mod.ScalarQueryParameter = _ScalarQueryParameter
+    mod.QueryJobConfig = _QueryJobConfig
+    mod.SchemaField = _SchemaField
+    return mod
+
+
+def _bq_write_fixture(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, list[Any]]:
+    fake = _fake_bq_module()
+    clients: list[Any] = []
+    real_client = fake.Client
+
+    def _tracking_client(project: str | None = None) -> Any:
+        client = real_client(project=project)
+        clients.append(client)
+        return client
+
+    fake.Client = _tracking_client  # type: ignore[misc, assignment]
+    monkeypatch.setitem(sys.modules, "google.cloud.bigquery", fake)
+    monkeypatch.setattr(
+        "det.ingestion.bq_writer.require_bigquery",
+        lambda: fake,
+    )
+    return fake, clients
+
+
+def test_write_to_bigquery_fences_before_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, clients = _bq_write_fixture(monkeypatch)
+    identity = (
+        "2026-08-06T00:00:00+00:00",
+        "2026-08-07T00:00:00+00:00",
+        "2026-08-06T12:00:00+00:00",
+    )
+    rows = [
+        {
+            "event_id": 1,
+            "__interval_start_datetime": identity[0],
+            "__interval_end_datetime": identity[1],
+            "__extract_run_datetime": identity[2],
+        }
+    ]
+    cfg = _storm_config()
+    settings = DetSettings.from_env(project_root=Path.cwd()).with_overrides(
+        bq_project="det-test"
+    )
+    schema = {"type": "object", "properties": {"event_id": {"type": "integer"}}}
+
+    def ensure_held() -> None:
+        raise LeaseFencedError("expired")
+
+    with pytest.raises(LeaseFencedError, match="expired"):
+        write_to_bigquery(
+            rows,
+            config=cfg,
+            json_schema=schema,
+            settings=settings,
+            run_identity=identity,
+            ensure_held=ensure_held,
+        )
+
+    assert clients
+    client = clients[0]
+    assert client.queries == []
+    assert client.loads == 0
+
+
+def test_write_to_bigquery_fences_before_mutations_and_skips_cleanup_when_stolen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, clients = _bq_write_fixture(monkeypatch)
+
+    identity = (
+        "2026-08-06T00:00:00+00:00",
+        "2026-08-07T00:00:00+00:00",
+        "2026-08-06T12:00:00+00:00",
+    )
+    rows = [
+        {
+            "event_id": 1,
+            "__interval_start_datetime": identity[0],
+            "__interval_end_datetime": identity[1],
+            "__extract_run_datetime": identity[2],
+        }
+    ]
+    cfg = _storm_config()
+    settings = DetSettings.from_env(project_root=Path.cwd()).with_overrides(
+        bq_project="det-test"
+    )
+    schema = {"type": "object", "properties": {"event_id": {"type": "integer"}}}
+
+    fence_calls = {"n": 0}
+
+    def ensure_held() -> None:
+        fence_calls["n"] += 1
+        # First call is pre-DELETE; fail before the load mutation.
+        if fence_calls["n"] >= 2:
+            raise LeaseFencedError("stolen")
+
+    with pytest.raises(LeaseFencedError, match="stolen"):
+        write_to_bigquery(
+            rows,
+            config=cfg,
+            json_schema=schema,
+            settings=settings,
+            run_identity=identity,
+            ensure_held=ensure_held,
+        )
+
+    assert clients
+    client = clients[0]
+    # One DELETE before the fenced load; no cleanup DELETE after fence loss.
+    assert len(client.queries) == 1
+    assert "DELETE FROM" in client.queries[0]
+    assert client.loads == 0
+    # pre-DELETE + pre-load + cleanup fence probe
+    assert fence_calls["n"] == 3

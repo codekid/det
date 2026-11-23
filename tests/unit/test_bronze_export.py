@@ -255,13 +255,17 @@ def test_export_bq_cli_leases_each_run(tmp_path: Path, monkeypatch: pytest.Monke
     @contextmanager
     def fake_lease(*_a: Any, **kwargs: Any):
         leases.append(kwargs)
-        yield SimpleNamespace(store=None)
+        # token="" → assert_lease_held no-ops (DET_LOCK=0 style); still exercises wiring
+        yield SimpleNamespace(store=None, token="")
 
     def fake_refresh(**kwargs: Any) -> None:
         refreshes.append("refresh")
 
     def fake_write(*_a: Any, **kwargs: Any) -> Path:
         writes.append(kwargs)
+        ensure_held = kwargs.get("ensure_held")
+        if ensure_held is not None:
+            ensure_held()
         on_chunk = kwargs.get("on_chunk")
         if on_chunk is not None:
             on_chunk()
@@ -312,6 +316,7 @@ def test_export_bq_cli_leases_each_run(tmp_path: Path, monkeypatch: pytest.Monke
     assert len(writes) == 1
     assert writes[0]["run_identity"] == identity
     assert writes[0]["on_chunk"] is not None
+    assert writes[0]["ensure_held"] is not None
     # on_chunk during write + explicit refresh after write
     assert len(refreshes) >= 2
 

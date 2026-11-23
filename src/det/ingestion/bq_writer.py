@@ -25,6 +25,7 @@ from det.optional_deps import require_bigquery
 from det.runtime.config import DestinationConfig, PipelineConfig
 from det.runtime.config.destination import BigQueryDestinationPartitionConfig
 from det.runtime.ids import medallion_prefix, parse_canonical_id
+from det.runtime.lease import LeaseFencedError
 from det.runtime.schema_shapes import is_array_prop, is_object_prop
 from det.runtime.settings import DetSettings, get_active_settings
 
@@ -364,6 +365,7 @@ def write_to_bigquery(
     chunk_rows: int = 10_000,
     run_identity: tuple[str, str, str] | None = None,
     on_chunk: Callable[[], None] | None = None,
+    ensure_held: Callable[[], None] | None = None,
 ) -> Path:
     """
     Replace-by-extract-run DET bronze write into BigQuery.
@@ -372,6 +374,11 @@ def write_to_bigquery(
     ``destination.bigquery``), deletes any rows for this extract run, then loads
     NDJSON via a BQ load job. Returns a logical path
     ``bq/{project}/{dataset}/{table}``.
+
+    ``ensure_held`` is a hard ownership fence (e.g. ``assert_lease_held``) called
+    before DELETE and each load. Soft heartbeats belong in ``on_chunk``. On
+    failure, cleanup DELETE runs only while the fence still passes — never after
+    lease loss, so a stolen owner’s rows are not removed.
     """
     bigquery = require_bigquery()
     active = settings if settings is not None else get_active_settings()
@@ -412,6 +419,12 @@ def write_to_bigquery(
             bigquery.ScalarQueryParameter("run", "TIMESTAMP", run),
         ]
     )
+
+    def _fence() -> None:
+        if ensure_held is not None:
+            ensure_held()
+
+    _fence()
     client.query(delete_sql, job_config=job_config).result()
 
     total = 0
@@ -425,6 +438,7 @@ def write_to_bigquery(
 
     def _load_chunk(chunk: list[dict[str, Any]]) -> None:
         nonlocal total
+        _fence()
         assert_chunk_matches_identity(chunk, identity)
         payload = _rows_to_ndjson(chunk, nested_fields=nested_fields)
         job = client.load_table_from_file(
@@ -445,13 +459,21 @@ def write_to_bigquery(
                 _load_chunk(chunk)
     except Exception:
         try:
-            client.query(delete_sql, job_config=job_config).result()
-        except Exception:
+            _fence()
+        except LeaseFencedError:
             logger.warning(
-                "failed to clean partial BigQuery load",
+                "skipping partial BigQuery cleanup; lease no longer held",
                 table=table_id,
-                exc_info=True,
             )
+        else:
+            try:
+                client.query(delete_sql, job_config=job_config).result()
+            except Exception:
+                logger.warning(
+                    "failed to clean partial BigQuery load",
+                    table=table_id,
+                    exc_info=True,
+                )
         raise
 
     logger.info(

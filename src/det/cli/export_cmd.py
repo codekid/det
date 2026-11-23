@@ -36,7 +36,9 @@ from det.runtime.approval import export_bq_write_argv
 from det.runtime.bronze_export import load_bronze_export_rows
 from det.runtime.config import load_pipeline_config, resolve_path
 from det.runtime.lease import (
+    LeaseFencedError,
     LeaseHeldError,
+    assert_lease_held,
     pipeline_lease,
     refresh_bronze_locks,
     resolve_lease_options,
@@ -178,6 +180,13 @@ def export_bq(
                                 lease_store=_store,
                             )
 
+                        def ensure_held(
+                            *,
+                            _lease=lease,
+                            _store=lease_store,
+                        ) -> None:
+                            assert_lease_held(_lease, store=_store)
+
                         write_to_bigquery(
                             rows,
                             config=config,
@@ -186,11 +195,13 @@ def export_bq(
                             bq_dataset_override=bq_dataset,
                             run_identity=identity,
                             on_chunk=refresh_locks,
+                            ensure_held=ensure_held,
                         )
+                        ensure_held()
                         refresh_locks()
                     total_rows += len(rows)
                     batches_written += 1
-    except LeaseHeldError as exc:
+    except (LeaseHeldError, LeaseFencedError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     except ValueError as exc:
