@@ -8,7 +8,30 @@ breaks — not a full commit log.
 
 Releases older than **0.9.0**: [GitHub Releases](https://github.com/codekid/det/releases).
 
-## [0.11.2] - Unreleased
+## [0.12.0] - Unreleased
+
+### Added
+
+- `destination.type: bigquery` — native bronze writer. Project from
+  `DET_GCP_PROJECT` (never YAML). Dataset defaults to `{prefix}_{provider}`
+  (`bronze_noaa` for `noaa.storm_events`); override via `DET_BQ_DATASET_PREFIX`
+  or `destination.bq_dataset`. Table is `{source}_v{wire_version}`. Replace-by-
+  extract-run via DELETE + BQ load job. Requires `uv sync --extra bigquery`.
+- `destination.partition` (`extract_run` | `none`) is DET run grain for
+  **iceberg and bigquery** (default `extract_run`). BigQuery maps `extract_run`
+  to a time partition on `__extract_run_datetime`.
+- `destination.bigquery.partition_by` / `cluster_by` — BigQuery-native source
+  layout. When `partition_by` is set it wins over the extract_run default.
+- `det export-bq` — push existing filesystem or Iceberg bronze into BigQuery
+  (Path B exploration). Same naming and replace-partition writer; gated by
+  approvals like other write commands.
+- Harden BigQuery / export-bq (post-review): apply `partition_by.data_type` to
+  the load schema, idempotent `create_table(exists_ok=True)`, delete partial
+  loads on chunk failure, load config before claiming approval, reject
+  duplicate `--set` keys in approval digests, and fix Iceberg multi-run export
+  + row-cap fail-closed behavior.
+
+## [0.11.2] - 2026-11-09
 
 ### Fixed
 

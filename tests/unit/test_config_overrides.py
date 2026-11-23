@@ -76,11 +76,21 @@ def test_iceberg_partition_none_allowed():
     assert dest.partition == "none"
 
 
-def test_partition_rejected_on_non_iceberg():
+def test_partition_rejected_on_non_run_grain_destinations():
     with pytest.raises(ValidationError, match="partition"):
         DestinationConfig(type="filesystem", partition="none")
     with pytest.raises(ValidationError, match="partition"):
         DestinationConfig(type="duckdb", connection="./x.duckdb", partition="extract_run")
+
+
+def test_partition_allowed_on_bigquery():
+    dest = DestinationConfig(type="bigquery", partition="extract_run")
+    assert dest.partition == "extract_run"
+    assert dest.run_grain_partition == "extract_run"
+    none = DestinationConfig(type="bigquery", partition="none")
+    assert none.partition == "none"
+    defaulted = DestinationConfig(type="bigquery")
+    assert defaulted.partition == "extract_run"
 
 
 def test_small_pipeline_yamls_use_partition_none(project_root):
@@ -129,6 +139,19 @@ def test_override_values_are_parsed_as_yaml():
 def test_override_requires_assignment_form():
     with pytest.raises(ValueError):
         apply_overrides({}, ["ingestion.library"])
+
+
+def test_override_rejects_dotted_prefix_overlaps():
+    with pytest.raises(ValueError, match="overlaps"):
+        apply_overrides(
+            {},
+            [
+                "destination={type: bigquery}",
+                "destination.bq_dataset=explore",
+            ],
+        )
+    with pytest.raises(ValueError, match="duplicate"):
+        apply_overrides({}, ["a.b=1", "a.b=2"])
 
 
 def test_in_tree_storm_events_silver_is_incremental(project_root):

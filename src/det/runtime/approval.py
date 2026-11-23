@@ -35,6 +35,7 @@ from det.runtime.approval_store import (
     enrich_heartbeat_fields,
     open_approval_store,
 )
+from det.runtime.config.load import assert_compatible_override_keys
 from det.runtime.meta import identity_iso, to_interval_datetime
 from det.runtime.silver_catchup.ids import resolve_catchup_candidate_scope
 
@@ -477,9 +478,16 @@ def _norm_relpath(value: str) -> str:
 
 
 def _set_argv(set_: Sequence[str] | None) -> list[str]:
-    """``--set`` overrides, sorted so flag order cannot change the digest."""
+    """``--set`` overrides, sorted so flag order cannot change the digest.
+
+    Duplicate keys and dotted-prefix overlaps (``destination`` vs
+    ``destination.bq_dataset``) are rejected so one digest cannot map to two
+    effective configs under last-value-wins ``apply_overrides``.
+    """
+    items = [str(s) for s in (set_ or [])]
+    assert_compatible_override_keys(items)
     argv: list[str] = []
-    for item in sorted(str(s) for s in (set_ or [])):
+    for item in sorted(items):
         argv.extend(["--set", item])
     return argv
 
@@ -895,6 +903,46 @@ def silver_catchup_cleanup_write_argv(
         argv.extend(["--manifest-id", mid])
     else:
         argv.extend(["--created-before", identity_iso(before)])
+    return argv
+
+
+def export_bq_write_argv(
+    pipeline: str,
+    interval_start: str,
+    interval_end: str | None = None,
+    *,
+    extract_run_datetime: str | None = None,
+    bq_dataset: str | None = None,
+    lake_path: str | None = None,
+    lake_path_raw: str | None = None,
+    lake_path_bronze: str | None = None,
+    lake_path_ops: str | None = None,
+    set_: Sequence[str] | None = None,
+) -> list[str]:
+    argv = [
+        "export",
+        "bq",
+        "-p",
+        _norm_pipeline(pipeline),
+        "-s",
+        _require_interval(interval_start),
+    ]
+    end = _norm_interval(interval_end)
+    if end:
+        argv.extend(["-e", end])
+    if extract_run_datetime:
+        argv.extend(["--extract-run-datetime", str(extract_run_datetime).strip()])
+    if bq_dataset:
+        argv.extend(["--bq-dataset", str(bq_dataset).strip()])
+    argv.extend(
+        _lake_argv(
+            lake_path,
+            lake_path_raw=lake_path_raw,
+            lake_path_bronze=lake_path_bronze,
+            lake_path_ops=lake_path_ops,
+        )
+    )
+    argv.extend(_set_argv(set_))
     return argv
 
 

@@ -23,6 +23,7 @@ from det.runtime.approval import (
     create_approval,
     dbt_write_argv,
     effective_status,
+    export_bq_write_argv,
     extract_write_argv,
     init_pipeline_write_argv,
     list_approval_records,
@@ -479,6 +480,39 @@ def test_set_overrides_are_order_independent():
     a = extract_write_argv("noaa.storm_events", "2026-08-06", set_=["b=2", "a=1"])
     b = extract_write_argv("noaa.storm_events", "2026-08-06", set_=["a=1", "b=2"])
     assert a == b
+
+
+def test_set_overrides_reject_duplicate_keys():
+    with pytest.raises(ValueError, match="duplicate --set key"):
+        extract_write_argv(
+            "noaa.storm_events",
+            "2026-08-06",
+            set_=["destination.type=filesystem", "destination.type=bigquery"],
+        )
+    with pytest.raises(ValueError, match="duplicate --set key"):
+        export_bq_write_argv(
+            "noaa.storm_events",
+            "2026-08-06",
+            set_=["a=1", "a=2"],
+        )
+
+
+def test_set_overrides_reject_dotted_prefix_overlaps():
+    with pytest.raises(ValueError, match="overlaps"):
+        export_bq_write_argv(
+            "noaa.storm_events",
+            "2026-08-06",
+            set_=[
+                "destination={type: bigquery}",
+                "destination.bq_dataset=explore",
+            ],
+        )
+    with pytest.raises(ValueError, match="overlaps"):
+        extract_write_argv(
+            "noaa.storm_events",
+            "2026-08-06",
+            set_=["destination.bq_dataset=explore", "destination={type: bigquery}"],
+        )
 
 
 def test_dbt_full_refresh_and_target_are_bound():
@@ -954,6 +988,7 @@ def test_bound_params_match_write_argv_signatures():
         "init-pipeline": init_pipeline_write_argv,
         "biglake-register": biglake_register_write_argv,
         "iceberg-register": iceberg_register_write_argv,
+        "export-bq": export_bq_write_argv,
         "lock-release": lock_release_write_argv,
         "silver-catchup-plan": silver_catchup_plan_write_argv,
         "silver-catchup-cleanup": silver_catchup_cleanup_write_argv,
