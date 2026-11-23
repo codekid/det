@@ -13,18 +13,57 @@ from det.runtime.config.pipeline import PipelineConfig
 from det.runtime.pipelines import resolve_pipeline_ref
 
 
+def parse_override_assignment(assignment: str) -> tuple[str, str]:
+    """Split ``dotted.key=value`` into ``(key, raw_value)``."""
+    key, sep, value = str(assignment).partition("=")
+    if not sep:
+        raise ValueError(f"Override must be dotted.key=value, got: {assignment!r}")
+    key = key.strip()
+    if not key:
+        raise ValueError(f"Override key must be non-empty: {assignment!r}")
+    return key, value
+
+
+def assert_compatible_override_keys(assignments: Sequence[str]) -> list[str]:
+    """
+    Return override keys; reject duplicates and dotted-prefix overlaps.
+
+    ``destination=…`` plus ``destination.bq_dataset=…`` is order-dependent under
+    last-value-wins apply. Approval digests sort ``--set`` flags, so overlapping
+    keys would let one digest map to two effective configs.
+    """
+    keys: list[str] = []
+    seen: set[str] = set()
+    for assignment in assignments:
+        key, _ = parse_override_assignment(assignment)
+        if key in seen:
+            raise ValueError(
+                f"duplicate --set key {key!r}; repeating a key would desync "
+                "the approval digest from last-value-wins load order"
+            )
+        for other in seen:
+            if key.startswith(f"{other}.") or other.startswith(f"{key}."):
+                raise ValueError(
+                    f"--set key {key!r} overlaps {other!r}; parent and nested "
+                    "keys cannot both be set (approval digest would not bind a "
+                    "unique effective config)"
+                )
+        seen.add(key)
+        keys.append(key)
+    return keys
+
+
 def apply_overrides(raw: dict[str, Any], assignments: Sequence[str]) -> dict[str, Any]:
     """
     Apply `dotted.key=value` assignments over a parsed pipeline mapping.
 
     Values are parsed as YAML so ints, bools, and null work as expected.
     """
+    assert_compatible_override_keys(assignments)
     out = deepcopy(raw)
     for assignment in assignments:
-        key, sep, value = assignment.partition("=")
-        if not sep:
-            raise ValueError(f"Override must be dotted.key=value, got: {assignment!r}")
-        parts = [p for p in key.strip().split(".") if p]
+        key, value = parse_override_assignment(assignment)
+        parts = [p for p in key.split(".") if p]
         if not parts:
             raise ValueError(f"Override key must be non-empty: {assignment!r}")
         cursor: dict[str, Any] = out

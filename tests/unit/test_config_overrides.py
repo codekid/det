@@ -141,6 +141,19 @@ def test_override_requires_assignment_form():
         apply_overrides({}, ["ingestion.library"])
 
 
+def test_override_rejects_dotted_prefix_overlaps():
+    with pytest.raises(ValueError, match="overlaps"):
+        apply_overrides(
+            {},
+            [
+                "destination={type: bigquery}",
+                "destination.bq_dataset=explore",
+            ],
+        )
+    with pytest.raises(ValueError, match="duplicate"):
+        apply_overrides({}, ["a.b=1", "a.b=2"])
+
+
 def test_in_tree_storm_events_silver_is_incremental(project_root):
     silver = (project_root / "dbt/models/silver/silver_noaa__storm_events.sql").read_text(
         encoding="utf-8"

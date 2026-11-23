@@ -497,6 +497,24 @@ def test_set_overrides_reject_duplicate_keys():
         )
 
 
+def test_set_overrides_reject_dotted_prefix_overlaps():
+    with pytest.raises(ValueError, match="overlaps"):
+        export_bq_write_argv(
+            "noaa.storm_events",
+            "2026-08-06",
+            set_=[
+                "destination={type: bigquery}",
+                "destination.bq_dataset=explore",
+            ],
+        )
+    with pytest.raises(ValueError, match="overlaps"):
+        extract_write_argv(
+            "noaa.storm_events",
+            "2026-08-06",
+            set_=["destination.bq_dataset=explore", "destination={type: bigquery}"],
+        )
+
+
 def test_dbt_full_refresh_and_target_are_bound():
     mid = "scm_" + ("ab" * 8)
     base = dbt_write_argv("noaa.storm_events")

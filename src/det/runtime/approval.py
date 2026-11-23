@@ -35,6 +35,7 @@ from det.runtime.approval_store import (
     enrich_heartbeat_fields,
     open_approval_store,
 )
+from det.runtime.config.load import assert_compatible_override_keys
 from det.runtime.meta import identity_iso, to_interval_datetime
 from det.runtime.silver_catchup.ids import resolve_catchup_candidate_scope
 
@@ -479,25 +480,12 @@ def _norm_relpath(value: str) -> str:
 def _set_argv(set_: Sequence[str] | None) -> list[str]:
     """``--set`` overrides, sorted so flag order cannot change the digest.
 
-    Duplicate keys are rejected. ``apply_overrides`` is last-value-wins in typed
-    order, so sorting alone would let two argv lists share a digest while loading
-    different effective configs.
+    Duplicate keys and dotted-prefix overlaps (``destination`` vs
+    ``destination.bq_dataset``) are rejected so one digest cannot map to two
+    effective configs under last-value-wins ``apply_overrides``.
     """
     items = [str(s) for s in (set_ or [])]
-    seen: set[str] = set()
-    for item in items:
-        key, sep, _ = item.partition("=")
-        if not sep:
-            raise ValueError(f"Override must be dotted.key=value, got: {item!r}")
-        key = key.strip()
-        if not key:
-            raise ValueError(f"Override key must be non-empty: {item!r}")
-        if key in seen:
-            raise ValueError(
-                f"duplicate --set key {key!r}; repeating a key would desync "
-                "the approval digest from last-value-wins load order"
-            )
-        seen.add(key)
+    assert_compatible_override_keys(items)
     argv: list[str] = []
     for item in sorted(items):
         argv.extend(["--set", item])
