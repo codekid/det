@@ -121,15 +121,22 @@ def _load_filesystem_batches(
     extract_run_datetime: str | None,
     settings: DetSettings | None,
 ) -> list[tuple[tuple[str, str, str], list[dict[str, Any]]]]:
+    # Probe one past the list cap so a partial window cannot silently omit runs.
     runs = walk_hive_runs(
         bronze_dataset_dir(config, project_root, settings=settings),
         root=project_root,
-        limit=DEFAULT_LIST_LIMIT,
+        limit=DEFAULT_LIST_LIMIT + 1,
         interval_start=interval_start,
         interval_end=interval_end,
         normalize_iso=True,
         require_committed=True,
     )
+    if len(runs) > DEFAULT_LIST_LIMIT:
+        raise ValueError(
+            f"filesystem export matched more than {DEFAULT_LIST_LIMIT} committed "
+            "runs in the window; refusing a partial export (narrow -s/-e or "
+            "--extract-run-datetime)"
+        )
     want: str | None = None
     if extract_run_datetime is not None:
         want = identity_iso(extract_run_datetime)

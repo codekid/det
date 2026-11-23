@@ -181,6 +181,37 @@ def test_iceberg_groups_multiple_runs_without_pregroup_reject() -> None:
     }
 
 
+def test_filesystem_export_raises_when_list_cap_exceeded(tmp_path: Path) -> None:
+    cfg = _fs_config(tmp_path)
+    over = [
+        {
+            "interval_start": "2026-08-06T00:00:00+00:00",
+            "interval_end": "2026-08-07T00:00:00+00:00",
+            "extract_run_datetime": f"2026-08-06T12:00:{i:02d}+00:00",
+            "path": f"bronze/run_{i}",
+        }
+        for i in range(201)
+    ]
+    with (
+        patch(
+            "det.runtime.bronze_export.walk_hive_runs",
+            return_value=over,
+        ),
+        patch(
+            "det.runtime.bronze_export.bronze_dataset_dir",
+            return_value=tmp_path / "bronze",
+        ),
+        patch("det.runtime.bronze_export.DEFAULT_LIST_LIMIT", 200),
+    ):
+        with pytest.raises(ValueError, match="more than 200 committed runs"):
+            load_bronze_export_rows(
+                cfg,
+                project_root=tmp_path,
+                interval_start="2026-08-06",
+                interval_end="2026-08-07",
+            )
+
+
 def test_export_bq_cli_leases_each_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """export-bq must hold a pipeline lease across DELETE+load for each identity."""
 
